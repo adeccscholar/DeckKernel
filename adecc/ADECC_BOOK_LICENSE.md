@@ -133,9 +133,8 @@ Recommended wording:
 
 ```text
 This product uses software components from the adecc C++ libraries.
-Copyright (c) adecc.
-Used under the adecc Book License associated with
-"Rethinking C++ (C++ neu denken)".
+Copyright (c) adecc Systemhaus GmbH.
+Used under the adecc Book License associated with "Rethinking C++ (C++ neu denken)".
 ```
 
 Reasonable changes to formatting or surrounding text are permitted as long as the acknowledgement remains recognisable and the origin of the covered adecc components is not obscured.

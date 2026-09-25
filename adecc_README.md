@@ -32,9 +32,8 @@ Recommended wording:
 
 ```text
 This product uses software components from the adecc C++ libraries.
-Copyright (c) adecc.
-Used under the adecc Book License associated with
-"Rethinking C++ (C++ neu denken)".
+Copyright (c) adecc Systemhaus GmbH.
+Used under the adecc Book License associated with "Rethinking C++ (C++ neu denken)".
 ```
 
 The covered adecc sources are written primarily for education, professional development, experimentation, and reusable example-oriented library use. They are provided **"AS IS"**, without warranty of any kind, to the maximum extent permitted by applicable law. Anyone using them in proprietary or production software remains responsible for review, testing, validation, security, and suitability for the intended purpose.
