@@ -233,7 +233,7 @@ First, DeckKernel can use modern C++ language and library features instead of te
 
 Second, the Community Edition makes it possible for eligible students, hobby developers, freelancers, and small teams to follow the project without first purchasing a professional C++Builder license.
 
-The project should therefore be useful both for experienced C++ developers and for people who want to see what a modern native C++ application looks like in practice.
+For DeckKernel, **C++Builder 13 CE is the leading development environment**, but it is not intended to become a technical boundary around the project.
 
 C++Builder Community Edition:
 
@@ -244,6 +244,235 @@ Community Edition FAQ:
 https://www.embarcadero.com/products/delphi/starter/faq
 
 C++Builder itself is subject to Embarcadero's own license and eligibility requirements. The DeckKernel license grants no rights to C++Builder.
+
+---
+
+## C++ as a common foundation
+
+C++ is a standardized programming language with implementations on most relevant desktop, server, embedded, and infrastructure platforms.
+
+That matters for DeckKernel.
+
+The project is not intended to be tied conceptually to one operating system, one vendor, or one compiler. C++Builder 13 CE leads the project because it is the environment we want to use, demonstrate, and promote, but the larger goal is to keep as much of the code base as possible in **standard C++**.
+
+Large parts of modern software are built directly in C++ or rely on C and C++ libraries underneath higher-level languages, frameworks, runtimes, databases, browsers, game engines, networking stacks, compression libraries, cryptographic libraries, and operating-system components.
+
+Many libraries that appear to belong to other language ecosystems ultimately depend on native C or C++ implementations, wrap them, bind to them, or port their algorithms and architecture.
+
+That makes C++ especially interesting for a learning project like DeckKernel:
+
+> It sits close enough to the platform to expose real systems engineering, while still being standardized and portable enough to build substantial cross-platform software.
+
+DeckKernel should make that visible in practice rather than only state it as a theoretical advantage.
+
+---
+
+## From an ecosystem project into the real world
+
+DeckKernel also continues work from an earlier project.
+
+In that project, a broad set of important open-source C and C++ libraries was made available for the modern C++Builder toolchain.
+
+The intention was larger than simply getting libraries to compile.
+
+It was about demonstrating that the current C++Builder toolchain can once again participate seriously in the wider C and C++ ecosystem and that important upstream projects can be built, tested, integrated, and used with it.
+
+Those libraries now become part of the foundation of DeckKernel.
+
+This gives the new project an additional purpose:
+
+> DeckKernel should provide evidence in the real world that these libraries are not only buildable, but actually usable together in a substantial application.
+
+Networking, TLS, JSON, XML, compression, archive handling, databases, HTTP, asynchronous I/O, and later server functionality are not artificial showcase features here. They are needed by the application itself.
+
+That makes DeckKernel a practical integration test across a broad part of the native C++ ecosystem.
+
+```mermaid
+flowchart LR
+    A[Open-source C and C++ ecosystem] --> B[Ported and integrated libraries]
+    B --> C[C++Builder 13 CE]
+    B --> D[Other conforming C++ toolchains]
+
+    C --> E[DeckKernel]
+    D --> E
+
+    E --> F[Desktop Application]
+    E --> G[Analysis Core]
+    E --> H[Database Access]
+    E --> I[Networking]
+    E --> J[Possible Server]
+```
+
+---
+
+## C++Builder leads, standard C++ keeps the door open
+
+The project should make a clear distinction between **the preferred toolchain** and **the portable architecture**.
+
+C++Builder 13 CE is the leading environment for DeckKernel.
+
+It is the environment used in the streams, the environment against which the project is developed first, and the environment we explicitly want to show as a modern and serious C++ development platform.
+
+But DeckKernel should not close the door to other compilers or platforms.
+
+Where functionality can be expressed in standard C++, it should be expressed in standard C++.
+
+Where platform-specific code is necessary, it should be isolated behind narrow interfaces.
+
+For example:
+
+```mermaid
+flowchart TB
+    CORE[Standard C++ Core]
+
+    CORE --> NET[Networking Abstraction]
+    CORE --> DB[Database Abstraction]
+    CORE --> SEC[Security / Certificate Abstraction]
+    CORE --> FS[Platform Services]
+
+    SEC --> WIN[Windows Certificate Store]
+    SEC --> UNIX[Linux / Unix Certificate Handling]
+    SEC --> OTHER[Other Platform Backend]
+
+    NET --> ASIO[Boost.Asio / Beast]
+    NET --> CURL[libcurl]
+```
+
+A Windows-specific implementation for certificate handling may be the first implementation.
+
+That should not mean that the rest of the application depends on Windows.
+
+The same interface can later be implemented for another operating system, another TLS integration, or another compiler environment.
+
+The same principle applies to other platform-dependent services.
+
+This is important because portability is not achieved by avoiding platform capabilities. It is achieved by **containing them**.
+
+---
+
+## Standard C++ first, replaceable platform layers where necessary
+
+The intended architectural direction is therefore:
+
+- domain logic in standard C++,
+- data models in standard C++,
+- analysis and simulation in standard C++,
+- networking logic on portable libraries where practical,
+- database access through replaceable backends,
+- platform-specific functionality behind explicit interfaces,
+- user interfaces allowed to differ by platform,
+- server components designed so they can be built independently of the desktop frontend.
+
+A possible future structure is:
+
+```mermaid
+flowchart TB
+    DOMAIN[Standard C++ Domain Model]
+    ANALYSIS[Standard C++ Analysis]
+    SIM[Standard C++ Simulation]
+    SERVICES[Standard C++ Services]
+
+    DOMAIN --> SERVICES
+    ANALYSIS --> SERVICES
+    SIM --> SERVICES
+
+    SERVICES --> PLATFORM[Platform Interfaces]
+
+    PLATFORM --> WIN[Windows Implementation]
+    PLATFORM --> LINUX[Linux Implementation]
+    PLATFORM --> OTHER[Other Platform Implementation]
+
+    SERVICES --> DESKTOP[C++Builder Desktop Frontend]
+    SERVICES --> SERVER[Portable C++ Server]
+    SERVER --> WEB[Web Frontend]
+    SERVER --> MOBILE[Mobile Frontend]
+```
+
+This is not a promise that every platform will be supported immediately.
+
+It is a design goal that keeps such support possible.
+
+---
+
+## Why the open-source libraries matter
+
+The third-party libraries used by DeckKernel are not merely conveniences.
+
+They are part of the lesson.
+
+Boost.Asio, Boost.Beast, libcurl, OpenSSL, PostgreSQL, SQLite, zlib, libarchive, nlohmann/json, pugixml, and the other libraries in the stack represent mature pieces of the wider C and C++ ecosystem.
+
+Many of them form infrastructure used directly or indirectly by software written in many other languages.
+
+Using them inside DeckKernel has several educational advantages:
+
+- we can learn where abstraction boundaries really work,
+- we can see how portable libraries interact with platform APIs,
+- we can study build systems and dependency management,
+- we can compare different implementation strategies,
+- we can measure performance instead of guessing,
+- we can observe transitive dependencies,
+- we can discuss licensing using real software,
+- and we can demonstrate that a modern C++ application is usually part of an ecosystem rather than an isolated executable.
+
+The point is not to use as many libraries as possible.
+
+The point is to understand why each one exists, where it belongs, and how it behaves in a real application.
+
+---
+
+## Learning across generations
+
+There is another kind of portability in DeckKernel that matters just as much as compiler portability.
+
+Knowledge should move between generations.
+
+My sons bring a game that matters to them, with its own language, strategies, habits, communities, and problems.
+
+I bring decades of experience with programming, architecture, databases, systems, and C++.
+
+Neither side owns the whole project.
+
+That creates the interesting part.
+
+A deck can become a database problem.
+
+A question about mana can become a probability problem.
+
+A card search can become an API and indexing problem.
+
+A collection can become a data-modelling problem.
+
+A game night can create a simulation question.
+
+A website can become a discussion about backends, frontends, protocols, and security.
+
+And a compiler can suddenly become relevant to someone who originally only wanted to understand why a deck behaves the way it does.
+
+That is where DeckKernel should be fun.
+
+The project should have enough technical depth to remain interesting for experienced developers, but enough connection to the real game that players can recognise their own questions in it.
+
+Ideally, people should be able to enter the project from very different directions and still find something familiar.
+
+```mermaid
+flowchart LR
+    GAME[Fun with the Game] --> PROJECT[DeckKernel]
+    CODE[Fun with Programming] --> PROJECT
+    FAMILY[Generations Learning Together] --> PROJECT
+    COMMUNITY[Community Ideas] --> PROJECT
+
+    PROJECT --> LEARN[Learn]
+    PROJECT --> BUILD[Build]
+    PROJECT --> DISCUSS[Discuss]
+    PROJECT --> EXPERIMENT[Experiment]
+```
+
+That combination is intentional.
+
+DeckKernel should be serious software engineering without losing the reason the project exists in the first place:
+
+**because building something together around a game should be interesting and fun.**
 
 ---
 
