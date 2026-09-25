@@ -138,9 +138,25 @@ The public license does not grant permission for commercial use.
 
 In particular, publishing the source code is not intended to allow unrelated third parties to turn DeckKernel, modified DeckKernel versions, or DeckKernel-derived software into a commercial product or commercial service.
 
-Any commercial use would require a separate written license from the relevant copyright holder or copyright holders.
+DeckKernel application code remains subject to this non-commercial project model.
 
-Because of that restriction, DeckKernel should be described as **source-available**, not as OSI-approved open-source software.
+There is one deliberately separated first-party library area:
+
+```text
+adecc/
+```
+
+Reusable adecc library sources placed below this directory remain available publicly under the project's non-commercial license, but may additionally be used under the separate **adecc Book License** by eligible purchasers of **Rethinking C++ (C++ neu denken)**.
+
+This supplemental license applies only to DeckKernel-owned source code located below `adecc/`. It does **not** extend to the DeckKernel application as a whole, DeckKernel-specific domain logic outside that directory, third-party libraries, Scryfall data, or Magic: The Gathering intellectual property.
+
+The supplemental terms are documented separately in:
+
+```text
+ADECC_BOOK_LICENSE.md
+```
+
+Because of the commercial-use restriction on the public project, DeckKernel should be described as **source-available**, not as OSI-approved open-source software.
 
 Third-party libraries remain under their own licenses.
 
@@ -473,6 +489,99 @@ That combination is intentional.
 DeckKernel should be serious software engineering without losing the reason the project exists in the first place:
 
 **because building something together around a game should be interesting and fun.**
+
+---
+
+## Books behind the project
+
+DeckKernel is also connected to two book projects.
+
+They are not required in order to understand or participate in DeckKernel, but they provide a deeper treatment of ideas that appear in the project.
+
+### Rethinking C++ (C++ neu denken)
+
+**Rethinking C++ (C++ neu denken)** is planned for publication in the coming weeks.
+
+The book grows out of work around modern C++, architecture, compiler behaviour, reusable libraries, C++Builder 13, and the integration of established open-source projects.
+
+Parts of the reusable adecc libraries used by DeckKernel originate from, were refined during, or were tested as part of the C++Builder 13 work and the preparation of this book.
+
+DeckKernel gives these components something that isolated compiler tests cannot provide:
+
+> use in a real application, in combination with networking, databases, compression, security, structured data, and later possibly a server.
+
+The book explores many of the C++ concepts behind those components in greater depth. DeckKernel, in turn, can show how those ideas behave when they meet a real-world domain and have to work together.
+
+The licensing boundary is deliberately simple:
+
+```mermaid
+flowchart TB
+    DK[DeckKernel Repository]
+
+    DK --> APP[DeckKernel application and project-specific code]
+    DK --> ADECC["adecc/ reusable library sources"]
+    DK --> THIRD[Third-party libraries]
+
+    APP --> PNC[PolyForm Noncommercial 1.0.0]
+    ADECC --> PNC2[PolyForm Noncommercial 1.0.0]
+    ADECC --> BOOK["Additional adecc Book License for eligible readers of Rethinking C++"]
+    THIRD --> UPSTREAM[Respective upstream licenses]
+```
+
+For public use, the adecc sources remain available under the DeckKernel non-commercial license.
+
+A legitimate purchaser of **Rethinking C++ (C++ neu denken)** may additionally receive the rights defined in `ADECC_BOOK_LICENSE.md`, including use of the eligible `adecc/` sources in proprietary software.
+
+Use under the supplemental licence requires attribution to the **adecc C++ libraries** and is provided on an explicit **"AS IS"** basis without warranty, to the maximum extent permitted by applicable law. This reflects the educational, professional-development, and experimental origin of these reusable components; production users remain responsible for their own review, testing, validation, and security.
+
+This additional license does not turn DeckKernel itself into a commercially reusable code base. Its scope is defined by the directory boundary.
+
+### The Structure of Information (Die Struktur der Information)
+
+A second planned book, **The Structure of Information (Die Struktur der Information)**, goes deeper into another area that DeckKernel will increasingly encounter: data modelling, identity, relations, persistence, database architecture, and the distinction between information itself and the systems used to store it.
+
+DeckKernel is a particularly useful domain for these questions.
+
+A card application quickly has to distinguish between concepts such as:
+
+- a conceptual card,
+- a specific printing,
+- language and finish,
+- external identifiers,
+- a physical card in a collection,
+- a card slot in a deck,
+- versions of a deck,
+- analysis results,
+- and historical states.
+
+Likewise, using SQLite locally and PostgreSQL for shared or server-backed data raises questions that are broader than SQL syntax or a particular database API.
+
+**The Structure of Information (Die Struktur der Information)** is intended to discuss these concepts in greater depth.
+
+Together, the two books and DeckKernel form three different perspectives on the same work:
+
+```mermaid
+flowchart LR
+    CPP["Rethinking C++\n(C++ neu denken)"] --> DK[DeckKernel]
+    INFO["The Structure of Information\n(Die Struktur der Information)"] --> DK
+
+    CPP --> C1[Language and Architecture]
+    CPP --> C2[Reusable C++ Components]
+    CPP --> C3[Toolchains and Ecosystem]
+
+    INFO --> I1[Information Models]
+    INFO --> I2[Identity and Relations]
+    INFO --> I3[Databases and Persistence]
+
+    DK --> REAL[Real-world Application]
+    REAL --> TEST[Ideas Tested in Practice]
+```
+
+The books can go deeper into concepts than a README or stream can.
+
+DeckKernel can test whether those concepts remain useful in practice.
+
+And the project community can challenge both with new questions.
 
 ---
 
@@ -903,6 +1012,14 @@ Price information, if added later, is informational only.
 
 - PolyForm Noncommercial License 1.0.0  
   https://polyformproject.org/licenses/noncommercial/1.0.0/
+
+- adecc Book License  
+  See `ADECC_BOOK_LICENSE.md`
+
+### Related books
+
+- **Rethinking C++ (C++ neu denken)** — planned publication
+- **The Structure of Information (Die Struktur der Information)** — planned publication
 
 ### Selected third parties
 
