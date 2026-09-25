@@ -67,3 +67,22 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# special embarcadero files or directories
+__history
+__astcache
+__recovery
+*.local
+*.skincfg
+
+# special directories
+Win32
+Win64
+Win64x
+Release
+Debug
+out
+.vs
+
+#the thirdparty libraries are distributed as archive separately
+ThirdParty
