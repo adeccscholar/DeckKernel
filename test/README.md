@@ -73,14 +73,19 @@ The equivalent DDL is available in `schema.sql` for pgAdmin and inspection.
 | --- | --- |
 | `DECKKERNEL_PGHOST` | `127.0.0.1` |
 | `DECKKERNEL_PGPORT` | `5432` |
-| `DECKKERNEL_PGDATABASE` | `deckkernel_test` |
-| `DECKKERNEL_PGUSER` | `postgres` |
+| `DECKKERNEL_PGDATABASE` | `DeckKernel` |
+| `DECKKERNEL_PGUSER` | `deckkernel_user` |
 | `DECKKERNEL_PGPASSWORD` | empty |
 | `DECKKERNEL_PGSSLMODE` | `prefer` |
-| `DECKKERNEL_PG_INTEGRATED` | false |
+| `DECKKERNEL_PG_INTEGRATED` | true |
 | `DECKKERNEL_PG_GSSENCMODE` | `disable` |
+| `DECKKERNEL_PG_GSSLIB` | empty, use libpq Windows default |
+| `DECKKERNEL_PG_KRBSRVNAME` | `postgres` |
 
 The test prints the OpenSSL version and curl TLS backend before network or database work.
+
+For the concrete local Windows setup, including the PostgreSQL role, pg_hba.conf,
+pg_ident.conf, and SSPI verification, see `POSTGRESQL_SSPI.md`.
 
 ## Scryfall behavior
 
