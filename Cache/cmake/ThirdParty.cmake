@@ -50,8 +50,12 @@ set(CURL_ROOT          "${ADECC_TP_CURL_ROOT}")
 set(PostgreSQL_ROOT    "${ADECC_TP_LIBPQ_ROOT}")
 set(libpqxx_ROOT       "${ADECC_TP_LIBPQXX_ROOT}")
 set(nlohmann_json_ROOT "${ADECC_TP_NLOHMANN_JSON_ROOT}")
-set(OPENSSL_ROOT_DIR   "${ADECC_TP_OPENSSL_ROOT}")
-set(OpenSSL_ROOT       "${ADECC_TP_OPENSSL_ROOT}")
+# CMake 4.1.1 FindOpenSSL must not receive OPENSSL_ROOT_DIR here.
+# On WIN32 that activates NO_DEFAULT_PATH inside FindOpenSSL and hides the
+# BuildEngine configuration-specific lib/win64/<Configuration> directory.
+# The exact library directory is already supplied through CMAKE_LIBRARY_PATH.
+set(OPENSSL_INCLUDE_DIR "${ADECC_TP_OPENSSL_ROOT}/include")
+
 set(ZLIB_ROOT          "${ADECC_TP_ZLIB_ROOT}")
 
 if(NOT TARGET nlohmann_json::nlohmann_json)
