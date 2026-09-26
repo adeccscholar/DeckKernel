@@ -213,19 +213,37 @@ std::size_t WriteFile(
 void ConfigureCurl(
    CURL* const pCurl,
    std::string const& strUrl,
-   curl_slist* const pHeaders
+   curl_slist* const pHeaders,
+   std::array<char, CURL_ERROR_SIZE>& arrError
 ) {
    if (pCurl == nullptr) {
       throw std::runtime_error{ "curl_easy_init returned null" };
       }
 
+   curl_easy_setopt(pCurl, CURLOPT_ERRORBUFFER, arrError.data());
    curl_easy_setopt(pCurl, CURLOPT_URL, strUrl.c_str());
    curl_easy_setopt(pCurl, CURLOPT_FOLLOWLOCATION, 1L);
+   curl_easy_setopt(pCurl, CURLOPT_MAXREDIRS, 5L);
    curl_easy_setopt(pCurl, CURLOPT_FAILONERROR, 1L);
-   curl_easy_setopt(pCurl, CURLOPT_USERAGENT, "DeckKernel/0.1 Scryfall functional test");
+   curl_easy_setopt(
+      pCurl,
+      CURLOPT_USERAGENT,
+      "adecc-DeckKernel/0.1 (+https://github.com/adeccscholar/DeckKernel)"
+      );
    curl_easy_setopt(pCurl, CURLOPT_HTTPHEADER, pHeaders);
+   curl_easy_setopt(pCurl, CURLOPT_ACCEPT_ENCODING, "");
+   curl_easy_setopt(pCurl, CURLOPT_SSL_VERIFYPEER, 1L);
+   curl_easy_setopt(pCurl, CURLOPT_SSL_VERIFYHOST, 2L);
    curl_easy_setopt(pCurl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+#if defined CURLSSLOPT_NATIVE_CA
+   curl_easy_setopt(
+      pCurl,
+      CURLOPT_SSL_OPTIONS,
+      static_cast<long>(CURLSSLOPT_NATIVE_CA)
+      );
+#endif
    curl_easy_setopt(pCurl, CURLOPT_PROTOCOLS_STR, "https");
+   curl_easy_setopt(pCurl, CURLOPT_REDIR_PROTOCOLS_STR, "https");
    }
 
 
@@ -243,7 +261,8 @@ std::string HttpGet(std::string const& strUrl) {
    using header_ptr_ty = std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)>;
    header_ptr_ty upHeaders{ pRawHeaders, &curl_slist_free_all };
 
-   ConfigureCurl(upCurl.get(), strUrl, upHeaders.get());
+   std::array<char, CURL_ERROR_SIZE> arrError{};
+   ConfigureCurl(upCurl.get(), strUrl, upHeaders.get(), arrError);
 
    std::string strResult;
    curl_easy_setopt(upCurl.get(), CURLOPT_WRITEFUNCTION, &WriteString);
@@ -253,7 +272,11 @@ std::string HttpGet(std::string const& strUrl) {
 
    if (iResult != CURLE_OK) {
       throw std::runtime_error{
-         std::format("HTTPS request failed for {}: {}", strUrl, curl_easy_strerror(iResult))
+         std::format(
+            "HTTPS request failed for {}: {}",
+            strUrl,
+            arrError[0] != '\0' ? arrError.data() : curl_easy_strerror(iResult)
+            )
          };
       }
 
@@ -283,7 +306,8 @@ void DownloadFile(std::string const& strUrl, std::filesystem::path const& aTarge
    using header_ptr_ty = std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)>;
    header_ptr_ty upHeaders{ pRawHeaders, &curl_slist_free_all };
 
-   ConfigureCurl(upCurl.get(), strUrl, upHeaders.get());
+   std::array<char, CURL_ERROR_SIZE> arrError{};
+   ConfigureCurl(upCurl.get(), strUrl, upHeaders.get(), arrError);
 
    curl_easy_setopt(upCurl.get(), CURLOPT_WRITEFUNCTION, &WriteFile);
    curl_easy_setopt(upCurl.get(), CURLOPT_WRITEDATA, &osFile);
@@ -292,7 +316,11 @@ void DownloadFile(std::string const& strUrl, std::filesystem::path const& aTarge
 
    if (iResult != CURLE_OK) {
       throw std::runtime_error{
-         std::format("bulk download failed for {}: {}", strUrl, curl_easy_strerror(iResult))
+         std::format(
+            "bulk download failed for {}: {}",
+            strUrl,
+            arrError[0] != '\0' ? arrError.data() : curl_easy_strerror(iResult)
+            )
          };
       }
    }
