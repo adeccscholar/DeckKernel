@@ -50,18 +50,69 @@ After the test proves the backend contract, it can be moved to its final adapter
 Run the DeckKernel bootstrap from the repository root first:
 
 ```bat
-cmake -P bootstrap\Bootstrap.cmake
+cmake -P bootstrap\\Bootstrap.cmake
 ```
 
-Then configure and build from a C++Builder Developer Command Prompt:
+Use separate single-configuration build trees for Debug and Release.
+
+Debug:
 
 ```bat
-cmake -S test -B build\test -G Ninja
-cmake --build build\test
+cmake -S test -B test\\build\\Debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build test\\build\\Debug
+```
+
+Release:
+
+```bat
+cmake -S test -B test\\build\\Release -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build test\\build\\Release
+```
+
+The executables are written to:
+
+```text
+test\\build\\Debug\\bin\\deckkernel_scryfall_postgres_test.exe
+test\\build\\Release\\bin\\deckkernel_scryfall_postgres_test.exe
 ```
 
 The locked dependency set already contains curl, OpenSSL, nlohmann/json, libpq,
 libpqxx, and zlib.
+
+## Install
+
+The install step creates a runnable directory containing the executable and the
+configuration-specific BuildEngine runtime DLLs from curl, OpenSSL, libpq,
+libpqxx, and zlib.
+
+Debug:
+
+```bat
+cmake --install test\\build\\Debug --prefix test\\install\\Debug
+```
+
+Release:
+
+```bat
+cmake --install test\\build\\Release --prefix test\\install\\Release
+```
+
+The runnable installations are:
+
+```text
+test\\install\\Debug\\bin\\
+test\\install\\Release\\bin\\
+```
+
+Run, for example:
+
+```bat
+test\\install\\Debug\\bin\\deckkernel_scryfall_postgres_test.exe
+```
+
+The DLLs are copied from the configuration-specific
+`ThirdParty/<package>/bin/win64/<Debug|Release>` directories. This keeps Debug
+and Release runtime closures separate.
 
 ## PostgreSQL configuration
 
