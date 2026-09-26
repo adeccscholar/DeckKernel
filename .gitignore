@@ -90,4 +90,5 @@ out
 /Cache/BootstrapTools.cmake
 /Cache/ThirdPartyPackages.cmake
 /Cache/archives/
+/Cache/tools/
 /Cache/bootstrap-state/

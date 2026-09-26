@@ -11,11 +11,7 @@ cmake_minimum_required(VERSION 3.25)
 # extracts the packages described by Cache/thirdparty.lock.
 # ---------------------------------------------------------------------------
 
-get_filename_component(
-   ADECC_REPOSITORY_ROOT
-   "${CMAKE_CURRENT_LIST_DIR}/.."
-   ABSOLUTE
-)
+get_filename_component(ADECC_REPOSITORY_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
 
 set(ADECC_CACHE_ROOT      "${ADECC_REPOSITORY_ROOT}/Cache")
 set(ADECC_ARCHIVE_ROOT    "${ADECC_CACHE_ROOT}/archives")
@@ -66,25 +62,113 @@ if(NOT EXISTS "${ADECC_BCC64X_EXECUTABLE}")
 endif()
 
 if(NOT ADECC_BCC64X_EXECUTABLE OR NOT EXISTS "${ADECC_BCC64X_EXECUTABLE}")
-   message(FATAL_ERROR
-      "bcc64x was not found below BDS or on PATH. BDS=${ADECC_BDS_ROOT}"
+   message(FATAL_ERROR "bcc64x was not found below BDS or on PATH. BDS=${ADECC_BDS_ROOT}"
    )
 endif()
 file(TO_CMAKE_PATH "${ADECC_BCC64X_EXECUTABLE}" ADECC_BCC64X_EXECUTABLE)
 
-find_program(
-   ADECC_NINJA_EXECUTABLE
-   NAMES ninja.exe ninja
-   HINTS
-      "${ADECC_CMAKE_BIN_DIR}"
-      "${ADECC_BDS_ROOT}/bin64"
-      "${ADECC_BDS_ROOT}/bin"
-   NO_CACHE
+# Ninja is part of the pinned project toolchain. Always use the project-local
+# copy below Cache/tools so the build does not depend on an arbitrary Ninja
+# installation found on PATH.
+set(ADECC_NINJA_ROOT "${ADECC_CACHE_ROOT}/tools/ninja/${ADECC_NINJA_VERSION}")
+set(ADECC_NINJA_DOWNLOAD_ROOT "${ADECC_CACHE_ROOT}/tools/downloads")
+set(ADECC_NINJA_ARCHIVE "${ADECC_NINJA_DOWNLOAD_ROOT}/ninja-${ADECC_NINJA_VERSION}-win.zip")
+set(ADECC_NINJA_EXECUTABLE "${ADECC_NINJA_ROOT}/ninja.exe")
+
+file(MAKE_DIRECTORY "${ADECC_NINJA_ROOT}" "${ADECC_NINJA_DOWNLOAD_ROOT}")
+
+# A valid local ninja.exe is sufficient. If it is missing or has the wrong
+# version, recreate it from the pinned official archive.
+set(_adecc_ninja_local_ok FALSE)
+if(EXISTS "${ADECC_NINJA_EXECUTABLE}")
+   execute_process(
+      COMMAND "${ADECC_NINJA_EXECUTABLE}" --version
+      RESULT_VARIABLE _adecc_ninja_local_result
+      OUTPUT_VARIABLE _adecc_ninja_local_version
+      ERROR_VARIABLE  _adecc_ninja_local_error
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      ERROR_STRIP_TRAILING_WHITESPACE
+   )
+   if(_adecc_ninja_local_result EQUAL 0 AND
+      _adecc_ninja_local_version STREQUAL ADECC_NINJA_VERSION)
+      set(_adecc_ninja_local_ok TRUE)
+   endif()
+endif()
+
+if(NOT _adecc_ninja_local_ok)
+   set(_adecc_ninja_archive_ok FALSE)
+   if(EXISTS "${ADECC_NINJA_ARCHIVE}")
+      file(SIZE "${ADECC_NINJA_ARCHIVE}" _adecc_ninja_archive_size)
+      file(SHA256 "${ADECC_NINJA_ARCHIVE}" _adecc_ninja_archive_sha256)
+      string(TOLOWER "${_adecc_ninja_archive_sha256}" _adecc_ninja_archive_sha256)
+      string(TOLOWER "${ADECC_NINJA_SHA256}" _adecc_ninja_expected_sha256)
+      if("${_adecc_ninja_archive_size}" STREQUAL "${ADECC_NINJA_ARCHIVE_SIZE}" AND
+         _adecc_ninja_archive_sha256 STREQUAL _adecc_ninja_expected_sha256)
+         set(_adecc_ninja_archive_ok TRUE)
+      endif()
+   endif()
+
+   if(NOT _adecc_ninja_archive_ok)
+      file(REMOVE "${ADECC_NINJA_ARCHIVE}")
+      message(STATUS "[DOWNLOAD] Ninja ${ADECC_NINJA_VERSION}")
+      file(
+         DOWNLOAD
+         "${ADECC_NINJA_URL}"
+         "${ADECC_NINJA_ARCHIVE}"
+         EXPECTED_HASH "SHA256=${ADECC_NINJA_SHA256}"
+         TLS_VERIFY ON
+         SHOW_PROGRESS
+         STATUS _adecc_ninja_download_status
+      )
+
+      list(GET _adecc_ninja_download_status 0 _adecc_ninja_download_code)
+      list(GET _adecc_ninja_download_status 1 _adecc_ninja_download_text)
+      if(NOT _adecc_ninja_download_code EQUAL 0)
+         file(REMOVE "${ADECC_NINJA_ARCHIVE}")
+         message(FATAL_ERROR
+            "Ninja download failed: ${_adecc_ninja_download_text}\n"
+            "${ADECC_NINJA_URL}"
+         )
+      endif()
+
+      file(SIZE "${ADECC_NINJA_ARCHIVE}" _adecc_ninja_download_size)
+      if(NOT "${_adecc_ninja_download_size}" STREQUAL "${ADECC_NINJA_ARCHIVE_SIZE}")
+         file(REMOVE "${ADECC_NINJA_ARCHIVE}")
+         message(FATAL_ERROR
+            "Ninja archive size mismatch: expected ${ADECC_NINJA_ARCHIVE_SIZE}, "
+            "got ${_adecc_ninja_download_size}"
+         )
+      endif()
+   endif()
+
+   file(REMOVE_RECURSE "${ADECC_NINJA_ROOT}")
+   file(MAKE_DIRECTORY "${ADECC_NINJA_ROOT}")
+   file(
+      ARCHIVE_EXTRACT
+      INPUT "${ADECC_NINJA_ARCHIVE}"
+      DESTINATION "${ADECC_NINJA_ROOT}"
+   )
+endif()
+
+if(NOT EXISTS "${ADECC_NINJA_EXECUTABLE}")
+   message(FATAL_ERROR "Ninja could not be provisioned: ${ADECC_NINJA_EXECUTABLE}")
+endif()
+
+file(TO_CMAKE_PATH "${ADECC_NINJA_EXECUTABLE}" ADECC_NINJA_EXECUTABLE)
+execute_process(
+   COMMAND "${ADECC_NINJA_EXECUTABLE}" --version
+   RESULT_VARIABLE _adecc_ninja_result
+   OUTPUT_VARIABLE ADECC_NINJA_ACTUAL_VERSION
+   ERROR_VARIABLE  _adecc_ninja_stderr
+   OUTPUT_STRIP_TRAILING_WHITESPACE
+   ERROR_STRIP_TRAILING_WHITESPACE
 )
-if(ADECC_NINJA_EXECUTABLE)
-   file(TO_CMAKE_PATH "${ADECC_NINJA_EXECUTABLE}" ADECC_NINJA_EXECUTABLE)
-else()
-   set(ADECC_NINJA_EXECUTABLE "")
+if(NOT _adecc_ninja_result EQUAL 0 OR
+   NOT ADECC_NINJA_ACTUAL_VERSION STREQUAL ADECC_NINJA_VERSION)
+   message(FATAL_ERROR
+      "Ninja version check failed. Expected ${ADECC_NINJA_VERSION}, "
+      "got '${ADECC_NINJA_ACTUAL_VERSION}'. ${_adecc_ninja_stderr}"
+   )
 endif()
 
 execute_process(
@@ -117,17 +201,15 @@ _adecc_append_set("${ADECC_TOOLS_FILE}" ADECC_BCC64X_VERSION_TEXT "${ADECC_BCC64
 _adecc_append_set("${ADECC_TOOLS_FILE}" ADECC_CMAKE_EXECUTABLE "${ADECC_CMAKE_EXECUTABLE}")
 _adecc_append_set("${ADECC_TOOLS_FILE}" ADECC_CMAKE_VERSION "${CMAKE_VERSION}")
 _adecc_append_set("${ADECC_TOOLS_FILE}" ADECC_NINJA_EXECUTABLE "${ADECC_NINJA_EXECUTABLE}")
+_adecc_append_set("${ADECC_TOOLS_FILE}" ADECC_NINJA_VERSION "${ADECC_NINJA_ACTUAL_VERSION}")
 
 message(STATUS "Repository root : ${ADECC_REPOSITORY_ROOT}")
 message(STATUS "BDS root        : ${ADECC_BDS_ROOT}")
 message(STATUS "bcc64x          : ${ADECC_BCC64X_EXECUTABLE}")
 message(STATUS "CMake           : ${ADECC_CMAKE_EXECUTABLE}")
 message(STATUS "CMake version   : ${CMAKE_VERSION}")
-if(ADECC_NINJA_EXECUTABLE)
-   message(STATUS "Ninja           : ${ADECC_NINJA_EXECUTABLE}")
-else()
-   message(WARNING "Ninja was not found. Bootstrap can continue, but project builds may need it.")
-endif()
+message(STATUS "Ninja           : ${ADECC_NINJA_EXECUTABLE}")
+message(STATUS "Ninja version   : ${ADECC_NINJA_ACTUAL_VERSION}")
 
 # ---------------------------------------------------------------------------
 # Lock file
