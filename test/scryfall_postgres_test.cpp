@@ -167,8 +167,14 @@ std::string Environment(char const* const szName, std::string_view const svFallb
    }
 
 
-bool EnvironmentFlag(char const* const szName) {
-   std::string const strValue = Environment(szName, "");
+bool EnvironmentFlag(
+   char const* const szName,
+   bool const boFallback
+) {
+   std::string const strValue = Environment(
+      szName,
+      boFallback ? "true" : "false"
+      );
 
    return strValue == "1" ||
           strValue == "true" ||
@@ -648,16 +654,21 @@ void ShowLatestCardsThroughSink(postgres_database_ty const& aDatabase) {
 adecc::db::postgres::postgres_credentials MakeCredentials() {
    adecc::db::postgres::postgres_credentials aCredentials;
 
-   aCredentials.strHost = Environment("DECKKERNEL_PGHOST", "127.0.0.1");
+   aCredentials.strHost = Environment("DECKKERNEL_PGHOST", "localhost");
    aCredentials.uPort = adecc::ConvertTo<std::uint16_t>(
       Environment("DECKKERNEL_PGPORT", "5432")
       );
-   aCredentials.strDatabase = Environment("DECKKERNEL_PGDATABASE", "deckkernel_test");
-   aCredentials.strUser = Environment("DECKKERNEL_PGUSER", "postgres");
+   aCredentials.strDatabase = Environment("DECKKERNEL_PGDATABASE", "DeckKernel");
+   aCredentials.strUser = Environment("DECKKERNEL_PGUSER", "");
    aCredentials.strPassword = Environment("DECKKERNEL_PGPASSWORD", "");
-   aCredentials.boIntegrated = EnvironmentFlag("DECKKERNEL_PG_INTEGRATED");
+   aCredentials.boIntegrated = EnvironmentFlag(
+      "DECKKERNEL_PG_INTEGRATED",
+      true
+      );
    aCredentials.strSslMode = Environment("DECKKERNEL_PGSSLMODE", "prefer");
    aCredentials.strGssEncMode = Environment("DECKKERNEL_PG_GSSENCMODE", "disable");
+   aCredentials.strGssLib = Environment("DECKKERNEL_PG_GSSLIB", "");
+   aCredentials.strKrbSrvName = Environment("DECKKERNEL_PG_KRBSRVNAME", "postgres");
    aCredentials.strApplicationName = "DeckKernel-Scryfall-Test";
 
    return aCredentials;
@@ -726,6 +737,13 @@ int main() {
       std::println(
          "PostgreSQL connection: {}",
          aDatabase.GetServer()
+         );
+
+      std::println(
+         "PostgreSQL authentication: {}",
+         aDatabase.Credentials().boIntegrated
+            ? "integrated SSPI"
+            : "password"
          );
 
       EnsureSchema(aDatabase);
