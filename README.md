@@ -261,6 +261,26 @@ https://www.embarcadero.com/products/delphi/starter/faq
 
 C++Builder itself is subject to Embarcadero's own license and eligibility requirements. The DeckKernel license grants no rights to C++Builder.
 
+### Preparing the development environment
+
+Before DeckKernel is configured or built for the first time, the repository bootstrap must be run from a **C++Builder Developer Command Prompt**.
+
+The bootstrap resolves the active RAD Studio / BCC64X and CMake installations, records their paths for later CMake use, provisions the required third-party packages, and prepares the project-local CMake package integration.
+
+DeckKernel's CMake/BCC64X workflow also requires **Ninja**. A separate manual Ninja installation is not required: the bootstrap uses the pinned project version and, when necessary, downloads and verifies the official Windows x64 Ninja release automatically. Internet access is therefore required for the initial bootstrap unless all required archives are already cached.
+
+The prerequisites and the complete one-command setup are documented in:
+
+**[bootstrap_readme.md](bootstrap_readme.md)**
+
+The intended first setup is:
+
+```bat
+cmake -P bootstrap\Bootstrap.cmake
+```
+
+This bootstrap step is part of the required development setup; contributors should run it before configuring or building DeckKernel.
+
 ---
 
 ## C++ as a common foundation

@@ -85,5 +85,9 @@ out
 .vs
 
 #the thirdparty libraries are distributed as archive separately
-ThirdParty
-Cache/Packages
+/ThirdParty/
+/Cache/Packages
+/Cache/BootstrapTools.cmake
+/Cache/ThirdPartyPackages.cmake
+/Cache/archives/
+/Cache/bootstrap-state/

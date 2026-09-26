@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<thirdPartyLock schemaVersion="2" toolchain="bcc64x" selectionSha256="83507426535937884e183b22712321a81a5d84ca1b068ad772c13be474c0e42f" disclaimer="DISCLAIMER.md">
+   <package name="boost" version="1.92.0" release="2026.09.26-1" archive="packages/boost-1.92.0-bcc64x.zip" size="57898831" sha256="961be5259b2db56bb309b17f46fdfa999a12b68e5c06161b07a4e3c662fdf4f7" />
+   <package name="brotli" version="1.2.0" release="2026.09.26-1" archive="packages/brotli-1.2.0-bcc64x.zip" size="1017574" sha256="22d61b1fd9a09683b7084159d9b9cd4444cae924f9038e15e25da4b062a71408" />
+   <package name="bzip2" version="1.0.8" release="2026.09.26-1" archive="packages/bzip2-1.0.8-bcc64x.zip" size="90307" sha256="527c77eb2319303b39796762bb4868639c4b094e5d78492d58e5eac0833875b2" />
+   <package name="cmark-gfm" version="0.29.0.gfm.13" release="2026.09.26-1" archive="packages/cmark-gfm-0.29.0.gfm.13-bcc64x.zip" size="297796" sha256="0571c5c971a7fcfb62e436f953719c55d5b5eee4e7708db6e354631f191eb0a2" />
+   <package name="curl" version="8.21.0" release="2026.09.26-1" archive="packages/curl-8.21.0-bcc64x.zip" size="1005859" sha256="14f207757c166766210288704ade40f3f59068fd2963af6e38000d97c1fb1acf" />
+   <package name="libarchive" version="3.8.9" release="2026.09.26-1" archive="packages/libarchive-3.8.9-bcc64x.zip" size="2687908" sha256="bbfc78b0f4ae162a2a2a6e93becb14d040fbb0b5b07a90baff5b189544bb545d" />
+   <package name="libpq" version="18.6" release="2026.09.26-1" archive="packages/libpq-18.6-bcc64x.zip" size="1341260" sha256="b742cf065d1251697aced2de7b8f313301b5909bbbb8c3eff42d497e7a183add" />
+   <package name="libpqxx" version="8.0.2" release="2026.09.26-1" archive="packages/libpqxx-8.0.2-bcc64x.zip" size="3080709" sha256="e82df675b729b20306e7a7a2f83ca50f1d44e7c0ba3b4ccda23b8bb970a0254d" />
+   <package name="libzip" version="1.11.4" release="2026.09.26-1" archive="packages/libzip-1.11.4-bcc64x.zip" size="364257" sha256="f882c9dbccc27e0196a3c92a45c8c72b9689b0315045d4651d3884531ba427c4" />
+   <package name="nlohmann-json" version="3.12.0" release="2026.09.26-1" archive="packages/nlohmann-json-3.12.0-bcc64x.zip" size="179760" sha256="196388c23498bfea25d690c321e1820f218b71c556d98e2123db6b7cf999260e" />
+   <package name="openssl" version="3.5.8" release="2026.09.26-1" archive="packages/openssl-3.5.8-bcc64x.zip" size="10947200" sha256="751c56ba069ace0d8ddd0cd2a70d3abbb87b4b647ccbe675229aad52ea282abe" />
+   <package name="pugixml" version="1.16" release="2026.09.26-1" archive="packages/pugixml-1.16-bcc64x.zip" size="995650" sha256="f86e784f5a2c53e6ae65affae43691a51ad54189a6ced917cc6b933f2d6ed6c0" />
+   <package name="sqlite" version="3.53.4" release="2026.09.26-1" archive="packages/sqlite-3.53.4-bcc64x.zip" size="1354457" sha256="16833cee059afb14d2bbe1616e4604054dbcdd2e3cf45f29efd2cc521fa96aaf" />
+   <package name="xz" version="5.8.3" release="2026.09.26-1" archive="packages/xz-5.8.3-bcc64x.zip" size="716494" sha256="3bfa5e02392df7ba45eda1cd1512da465998d1692218e891dca5d280b1c15bc1" />
+   <package name="zlib" version="1.3.2" release="2026.09.26-1" archive="packages/zlib-1.3.2-bcc64x.zip" size="938292" sha256="40a24a838fff2403b8540f8e97402d3be7cb00198093957a671d9c8792cbcdf0" />
+   <package name="zstd" version="1.5.7" release="2026.09.26-1" archive="packages/zstd-1.5.7-bcc64x.zip" size="1347272" sha256="81b7b94d2b7b30d966736bd9fde61e4c4ce6528c4806b1bb5e26155daae6c176" />
+</thirdPartyLock>
