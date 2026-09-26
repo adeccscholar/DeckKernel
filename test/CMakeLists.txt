@@ -75,6 +75,7 @@ target_compile_definitions(
    deckkernel_scryfall_postgres_test
    PRIVATE
       CHRONO_WORK_AROUND
+      CHRONO_MISSED_ZONEDB
 )
 
 target_link_libraries(
