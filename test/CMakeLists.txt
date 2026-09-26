@@ -43,6 +43,11 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+set(
+   CMAKE_RUNTIME_OUTPUT_DIRECTORY
+   "${CMAKE_BINARY_DIR}/bin"
+)
+
 include("${DECKKERNEL_ROOT}/Cache/cmake/ThirdParty.cmake")
 
 find_package(CURL REQUIRED)
@@ -89,3 +94,30 @@ target_link_libraries(
       nlohmann_json::nlohmann_json
       ZLIB::ZLIB
 )
+
+
+# ---------------------------------------------------------------------------
+# Installation
+# ---------------------------------------------------------------------------
+
+install(
+   TARGETS deckkernel_scryfall_postgres_test
+   RUNTIME DESTINATION bin
+)
+
+function(deckkernel_install_runtime_dlls thePackageRoot)
+   install(
+      DIRECTORY
+         "${thePackageRoot}/bin/win64/${ADECC_THIRDPARTY_CONFIGURATION}/"
+      DESTINATION bin
+      OPTIONAL
+      FILES_MATCHING
+         PATTERN "*.dll"
+   )
+endfunction()
+
+deckkernel_install_runtime_dlls("${ADECC_TP_CURL_ROOT}")
+deckkernel_install_runtime_dlls("${ADECC_TP_OPENSSL_ROOT}")
+deckkernel_install_runtime_dlls("${ADECC_TP_LIBPQ_ROOT}")
+deckkernel_install_runtime_dlls("${ADECC_TP_LIBPQXX_ROOT}")
+deckkernel_install_runtime_dlls("${ADECC_TP_ZLIB_ROOT}")
