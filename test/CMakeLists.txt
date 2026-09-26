@@ -71,6 +71,12 @@ target_include_directories(
       "${DECKKERNEL_ROOT}/adecc/cpp_core"
 )
 
+target_compile_definitions(
+   deckkernel_scryfall_postgres_test
+   PRIVATE
+      CHRONO_WORK_AROUND
+)
+
 target_link_libraries(
    deckkernel_scryfall_postgres_test
    PRIVATE
