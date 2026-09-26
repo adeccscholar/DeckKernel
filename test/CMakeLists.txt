@@ -1,5 +1,38 @@
 cmake_minimum_required(VERSION 3.25)
 
+get_filename_component(
+   DECKKERNEL_ROOT
+   "${CMAKE_CURRENT_LIST_DIR}/.."
+   ABSOLUTE
+)
+
+set(
+   ADECC_BOOTSTRAP_TOOLS
+   "${DECKKERNEL_ROOT}/Cache/BootstrapTools.cmake"
+)
+
+if(NOT EXISTS "${ADECC_BOOTSTRAP_TOOLS}")
+   message(FATAL_ERROR
+      "Missing ${ADECC_BOOTSTRAP_TOOLS}. Run: cmake -P bootstrap/Bootstrap.cmake"
+   )
+endif()
+
+include("${ADECC_BOOTSTRAP_TOOLS}")
+
+set(
+   CMAKE_CXX_COMPILER
+   "${ADECC_BCC64X_EXECUTABLE}"
+   CACHE FILEPATH
+   "DeckKernel C++ compiler"
+)
+
+set(
+   CMAKE_MAKE_PROGRAM
+   "${ADECC_NINJA_EXECUTABLE}"
+   CACHE FILEPATH
+   "DeckKernel Ninja executable"
+)
+
 project(
    DeckKernelScryfallPostgresTest
    VERSION 0.1.0
@@ -10,26 +43,12 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-get_filename_component(DECKKERNEL_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
-
-set(ADECC_THIRDPARTY_FILE
-   "${DECKKERNEL_ROOT}/Cache/cmake/ThirdParty.cmake"
-)
-
-if(EXISTS "${ADECC_THIRDPARTY_FILE}")
-   include("${ADECC_THIRDPARTY_FILE}")
-else()
-   message(
-      STATUS
-      "Cache/cmake/ThirdParty.cmake is not present; using the active CMake package search paths."
-   )
-endif()
+include("${DECKKERNEL_ROOT}/Cache/cmake/ThirdParty.cmake")
 
 find_package(CURL REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(PostgreSQL REQUIRED)
 find_package(libpqxx CONFIG REQUIRED)
-find_package(nlohmann_json REQUIRED)
 find_package(ZLIB REQUIRED)
 
 if(TARGET libpqxx::pqxx)
