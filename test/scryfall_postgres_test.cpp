@@ -659,7 +659,7 @@ adecc::db::postgres::postgres_credentials MakeCredentials() {
       Environment("DECKKERNEL_PGPORT", "5432")
       );
    aCredentials.strDatabase = Environment("DECKKERNEL_PGDATABASE", "DeckKernel");
-   aCredentials.strUser = Environment("DECKKERNEL_PGUSER", "");
+   aCredentials.strUser = Environment("DECKKERNEL_PGUSER", "deckkernel_user");
    aCredentials.strPassword = Environment("DECKKERNEL_PGPASSWORD", "");
    aCredentials.boIntegrated = EnvironmentFlag(
       "DECKKERNEL_PG_INTEGRATED",
