@@ -52,6 +52,11 @@ deckkernel_user
 as a PostgreSQL login role without a password and makes it owner of the
 `deckkernel_test` schema.
 
+The schema itself is an administrative deployment object. The functional test
+does not create the schema at runtime. It only creates and uses its test tables
+inside the already provisioned schema. This keeps `deckkernel_user` from needing
+the broader `CREATE` privilege on database `DeckKernel`.
+
 The role name deliberately does not have to be identical to the Windows account.
 The mapping between Windows identity and PostgreSQL role is handled by
 `pg_ident.conf`.
