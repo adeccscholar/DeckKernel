@@ -613,15 +613,6 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
       ")"
       );
 
-   aDatabase.ExecuteCommand(
-      "CREATE INDEX IF NOT EXISTS ix_scryfall_cards_oracle_id "
-      "ON deckkernel_test.scryfall_cards(oracle_id)"
-      );
-
-   aDatabase.ExecuteCommand(
-      "CREATE INDEX IF NOT EXISTS ix_scryfall_cards_released "
-      "ON deckkernel_test.scryfall_cards(released_at DESC)"
-      );
    }
 
 
@@ -629,24 +620,31 @@ void StoreProcess(
    postgres_database_ty& aDatabase,
    ParsedBulkData const& aParsed
 ) {
-   EnsureSchema(aDatabase);
-
-   std::vector<TScryfallSet::data_ty> vecSets;
-   vecSets.reserve(aParsed.mpSets.size());
-
-   std::ranges::transform(
-      aParsed.mpSets,
-      std::back_inserter(vecSets),
-      [](auto const& aEntry) {
-         return aEntry.second;
+   RunTimedProcess(
+      "  Schema",
+      [&aDatabase]() {
+         EnsureSchema(aDatabase);
          }
       );
 
    auto aTransaction = aDatabase.Transaction();
 
-   aDatabase.ExecuteCommand(
-      "TRUNCATE TABLE deckkernel_test.scryfall_cards, "
-      "deckkernel_test.scryfall_sets"
+   RunTimedProcess(
+      "  Prepare",
+      [&aDatabase]() {
+         aDatabase.ExecuteCommand(
+            "DROP INDEX IF EXISTS deckkernel_test.ix_scryfall_cards_oracle_id"
+            );
+
+         aDatabase.ExecuteCommand(
+            "DROP INDEX IF EXISTS deckkernel_test.ix_scryfall_cards_released"
+            );
+
+         aDatabase.ExecuteCommand(
+            "TRUNCATE TABLE deckkernel_test.scryfall_cards, "
+            "deckkernel_test.scryfall_sets"
+            );
+         }
       );
 
    auto aSetSink = aDatabase.template MakeOutputSink<
@@ -658,7 +656,14 @@ void StoreProcess(
          TScryfallSet::CreateInsertOutputParameters()
          );
 
-   aSetSink = vecSets;
+   auto rngSets = aParsed.mpSets | std::views::values;
+
+   RunTimedProcess(
+      "  Sets",
+      [&aSetSink, &rngSets]() {
+         aSetSink = rngSets;
+         }
+      );
 
    auto aCardSink = aDatabase.template MakeOutputSink<
       std::string,
@@ -671,9 +676,34 @@ void StoreProcess(
          TScryfallCard::CreateInsertOutputParameters()
          );
 
-   aCardSink = aParsed.vecCards;
+   RunTimedProcess(
+      "  Cards",
+      [&aCardSink, &aParsed]() {
+         aCardSink = aParsed.vecCards;
+         }
+      );
 
-   aTransaction.Commit();
+   RunTimedProcess(
+      "  Indexes",
+      [&aDatabase]() {
+         aDatabase.ExecuteCommand(
+            "CREATE INDEX ix_scryfall_cards_oracle_id "
+            "ON deckkernel_test.scryfall_cards(oracle_id)"
+            );
+
+         aDatabase.ExecuteCommand(
+            "CREATE INDEX ix_scryfall_cards_released "
+            "ON deckkernel_test.scryfall_cards(released_at DESC)"
+            );
+         }
+      );
+
+   RunTimedProcess(
+      "  Commit",
+      [&aTransaction]() {
+         aTransaction.Commit();
+         }
+      );
 
    std::println(
       "Stored {} cards and {} sets through adecc output sinks.",
