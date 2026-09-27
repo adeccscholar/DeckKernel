@@ -48,6 +48,14 @@ struct SetMetaData {
    static constexpr std::array<std::size_t, 0> arrReadOnlyIndices {};
    };
 
+/**
+\brief Persistent projection of one Scryfall set.
+\details
+The base class owns tuple/persistence mechanics. This concrete class names the tuple
+positions with domain selectors and manipulators as described in Rethinking C++
+(C++ neu denken). Selectors are const read access; same-named manipulators delegate
+validated/converting writes to SystemData::Set.
+*/
 class TScryfallSet final
    : public adecc::db::PersistentSystemData<set_types, SetMetaData> {
 public:
@@ -111,6 +119,13 @@ struct CardMetaData {
    static constexpr std::array<std::size_t, 0> arrReadOnlyIndices {};
    };
 
+/**
+\brief Persistent projection of one Scryfall card printing.
+\details
+The class deliberately stores only the subset required by the first functional test.
+Named selectors and manipulators hide tuple indices from application code while
+PersistentSystemData keeps the generic relational metadata and SQL builders.
+*/
 class TScryfallCard final
    : public adecc::db::PersistentSystemData<card_types, CardMetaData> {
 public:
