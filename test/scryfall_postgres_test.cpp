@@ -588,8 +588,6 @@ bool AskForBulkDownload(std::filesystem::path const& aPath) {
 
 
 void EnsureSchema(postgres_database_ty const& aDatabase) {
-   aDatabase.ExecuteCommand("CREATE SCHEMA IF NOT EXISTS deckkernel_test");
-
    aDatabase.ExecuteCommand(
       "CREATE TABLE IF NOT EXISTS deckkernel_test.scryfall_sets ("
       "id text PRIMARY KEY,"
