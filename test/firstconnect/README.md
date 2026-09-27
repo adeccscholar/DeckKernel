@@ -130,3 +130,68 @@ DECKKERNEL_PG_KRBSRVNAME
 - `schema.sql`: equivalent test schema/table DDL for inspection or manual setup.
 - `CMakeLists.txt`: standalone Debug/Release build and install entry point.
 - `adecc\\postgre\\pqxx_database.h`: reusable PostgreSQL/libpqxx adapter.
+
+
+## Why the example is written this way
+
+This program is intentionally more explicit than a minimal smoke test. It is the first
+functional example for other developers and therefore shows the technical boundaries
+rather than hiding them.
+
+The four processes make the data flow visible:
+
+```text
+Scryfall HTTPS
+   |
+   v
+Load
+   |
+   | local gzip/JSONL file
+   v
+Parse
+   |
+   | typed set/card tuples
+   v
+Store
+   |
+   | PostgreSQL tables
+   v
+Evaluate
+   |
+   v
+typed database range -> text grid
+```
+
+The JSON bulk format repeats set data in every card record. During parsing the example
+normalizes that external representation: sets are deduplicated by `set_id`, while every
+card printing keeps `set_id` as its foreign key. The database therefore receives data
+that already has a clear relational shape.
+
+## RAII and raw pointers
+
+Owned resources use RAII wherever the third-party API allows it:
+
+- libcurl easy handles are owned by `std::unique_ptr` with a custom deleter;
+- libcurl header lists are owned by a dedicated RAII class;
+- gzip streams are owned by `std::unique_ptr` with a zlib `gzclose` deleter;
+- files are owned by `std::ofstream` / `std::ifstream`;
+- PostgreSQL connections and transactions are owned by the adapter and transaction guards.
+
+Raw pointers remain only at C API boundaries. libcurl callback signatures require
+`char*` and `void*`, `curl_easy_setopt` consumes C handles, `std::getenv` returns a
+borrowed C string, and `curl_version_info` returns a library-owned borrowed structure.
+The source comments mark these cases and state whether ownership is transferred. No
+owning raw pointer is intentionally exposed by the example.
+
+## Third-party responsibilities
+
+- **curl**: HTTPS requests, redirects, response callbacks and Scryfall headers.
+- **OpenSSL**: TLS backend used by curl. Peer and hostname verification stay enabled.
+- **nlohmann/json**: JSON metadata and one-card-per-line JSONL parsing.
+- **zlib**: direct streaming read of Scryfall's single gzip-compressed JSONL payload.
+- **libpq/libpqxx**: PostgreSQL transport behind the adecc adapter.
+- **libarchive**: not used by this test. The payload is a gzip stream, not an archive with
+  multiple members, so using zlib directly keeps the first example smaller and clearer.
+
+The source documents the relevant third-party calls at the call site, including callback
+parameters, borrowed pointers and lifetime assumptions.
