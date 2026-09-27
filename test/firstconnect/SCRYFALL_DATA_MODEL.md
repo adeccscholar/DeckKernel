@@ -948,3 +948,482 @@ Scryfall owns these external domains. Before turning any current list into a har
 database constraint, verify the upstream definition again. New card mechanics and
 product types are a normal part of Magic, so extensibility is a functional requirement,
 not merely defensive programming.
+
+
+---
+
+# 22. Example data and REST calls
+
+This section turns the abstract field descriptions into concrete examples. The JSON
+fragments are intentionally shortened for teaching. They show the **shape and meaning**
+of Scryfall responses, not a byte-for-byte snapshot of one specific response at a fixed
+date. Fields that are irrelevant to the example are omitted.
+
+For current endpoint details, always check the official Scryfall API documentation:
+
+- Cards: https://scryfall.com/docs/api/cards
+- Sets: https://scryfall.com/docs/api/sets
+- Bulk data: https://scryfall.com/docs/api/bulk-data
+- Rulings: https://scryfall.com/docs/api/rulings
+- Catalogs: https://scryfall.com/docs/api/catalogs
+- Migrations: https://scryfall.com/docs/api/migrations
+- Lists / pagination: https://scryfall.com/docs/api/lists
+- Card layouts: https://scryfall.com/docs/api/layouts
+- Languages: https://scryfall.com/docs/api/languages
+
+Scryfall's API usage FAQ is also relevant for clients:
+
+https://scryfall.com/docs/faqs/i-m-having-trouble-accessing-the-scryfall-api-or-i-m-blocked-17
+
+It explicitly recommends a meaningful `User-Agent`, an `Accept` header, HTTPS/TLS,
+reasonable request rates and bulk data for large-scale synchronization.
+
+## 22.1 Bulk-data manifest request
+
+Request:
+
+```http
+GET https://api.scryfall.com/bulk-data
+Accept: application/json;q=0.9,*/*;q=0.8
+User-Agent: adecc-DeckKernel/0.1 (+https://github.com/adeccscholar/DeckKernel)
+```
+
+Shortened response shape:
+
+```json
+{
+  "object": "list",
+  "has_more": false,
+  "data": [
+    {
+      "object": "bulk_data",
+      "id": "<bulk-object-uuid>",
+      "type": "default_cards",
+      "updated_at": "2026-09-26T21:05:41.063+00:00",
+      "uri": "https://api.scryfall.com/bulk-data/<uuid>",
+      "name": "Default Cards",
+      "description": "...",
+      "download_uri": "https://data.scryfall.io/.../default-cards-....json",
+      "content_type": "application/json",
+      "content_encoding": "gzip",
+      "size": 123456789
+    }
+  ]
+}
+```
+
+Interpretation:
+
+- `object = list` says that the outer response is a Scryfall list object.
+- `data[]` contains the available bulk-data definitions.
+- `type = default_cards` is the export used by the first-connect lesson.
+- `updated_at` tells us whether the published snapshot changed.
+- `download_uri` is the current static-file location.
+- The file behind `download_uri` contains many Card objects.
+
+The application should therefore treat the first response like a **manifest**:
+
+```text
+manifest says what exists
+          |
+          v
+download_uri points to current snapshot
+          |
+          v
+snapshot contains the actual card objects
+```
+
+The manifest is control data, not card master data.
+
+## 22.2 Example object from the bulk file
+
+A shortened printing object can look conceptually like this:
+
+```json
+{
+  "object": "card",
+  "id": "<printing-uuid>",
+  "oracle_id": "<oracle-card-uuid>",
+  "name": "Lightning Bolt",
+  "lang": "en",
+  "released_at": "2010-07-16",
+  "layout": "normal",
+  "mana_cost": "{R}",
+  "cmc": 1.0,
+  "type_line": "Instant",
+  "oracle_text": "Lightning Bolt deals 3 damage to any target.",
+  "colors": ["R"],
+  "color_identity": ["R"],
+  "set_id": "<set-uuid>",
+  "set": "m11",
+  "set_name": "Magic 2011",
+  "collector_number": "149",
+  "rarity": "common",
+  "games": ["paper", "mtgo"],
+  "finishes": ["nonfoil", "foil"],
+  "legalities": {
+    "modern": "legal",
+    "legacy": "legal",
+    "commander": "legal"
+  },
+  "prices": {
+    "usd": "2.15",
+    "usd_foil": "8.40",
+    "eur": "1.80",
+    "tix": "0.05"
+  }
+}
+```
+
+The important lesson is that this is a **printing object**:
+
+- `id` identifies this exact edition;
+- `oracle_id` identifies the abstract Lightning Bolt across editions;
+- `set_id`, `set` and `set_name` say where this edition was published;
+- game-rule fields describe what the card does;
+- printing fields describe this concrete edition;
+- legalities and prices are current state/movement data.
+
+The first-connect parser deliberately takes only a small subset and normalizes the
+repeated set information:
+
+```text
+input card object
+   |
+   +--> set_id + set + set_name
+   |       |
+   |       +--> one deduplicated Set row
+   |
+   +--> id + oracle_id + name + set_id + released_at
+           |
+           +--> one Card-printing row
+```
+
+## 22.3 Get one named card through REST
+
+For an interactive application, a complete bulk download is unnecessary when the user
+only asks for one card.
+
+Example request:
+
+```http
+GET https://api.scryfall.com/cards/named?exact=Lightning%20Bolt
+Accept: application/json;q=0.9,*/*;q=0.8
+User-Agent: adecc-DeckKernel/0.1 (+https://github.com/adeccscholar/DeckKernel)
+```
+
+The response is one Card object with the same general shape as a card object in the bulk
+file.
+
+This is an important architectural point:
+
+```text
+bulk file Card object
+        and
+REST Card object
+        |
+        +--> same conceptual Scryfall entity
+```
+
+The access path differs; the data semantics do not.
+
+A REST lookup is useful for:
+
+- one card requested by a user;
+- filling a missing local object;
+- validating a specific Scryfall ID;
+- interactive UI operations.
+
+Bulk data is useful when most or all cards are required.
+
+## 22.4 Search cards through REST
+
+Example:
+
+```http
+GET https://api.scryfall.com/cards/search?q=type%3Adragon
+```
+
+Shortened list response:
+
+```json
+{
+  "object": "list",
+  "total_cards": 1234,
+  "has_more": true,
+  "next_page": "https://api.scryfall.com/cards/search?...&page=2",
+  "data": [
+    {
+      "object": "card",
+      "id": "<uuid>",
+      "name": "Example Dragon",
+      "...": "..."
+    }
+  ]
+}
+```
+
+Meaning:
+
+- `data[]` is the current page of Card objects;
+- `has_more` tells the client whether another page exists;
+- `next_page` is the REST URI for the next page;
+- `total_cards` is the number of cards across all result pages.
+
+A client should follow `next_page` instead of constructing undocumented pagination
+logic itself.
+
+See the official list documentation:
+
+https://scryfall.com/docs/api/lists
+
+## 22.5 Set REST example
+
+Request one set by code:
+
+```http
+GET https://api.scryfall.com/sets/m11
+```
+
+Shortened response:
+
+```json
+{
+  "object": "set",
+  "id": "<set-uuid>",
+  "code": "m11",
+  "name": "Magic 2011",
+  "set_type": "core",
+  "released_at": "2010-07-16",
+  "card_count": 249,
+  "digital": false,
+  "foil_only": false,
+  "nonfoil_only": false,
+  "search_uri": "https://api.scryfall.com/cards/search?...",
+  "scryfall_uri": "https://scryfall.com/sets/m11"
+}
+```
+
+For a viewer unfamiliar with Magic:
+
+- `Magic 2011` is the product/release;
+- `m11` is its compact code;
+- `core` describes the kind of product;
+- `card_count` describes Scryfall's current known object count for that set;
+- the set object does not contain all card objects inline;
+- `search_uri` points to a REST query that can enumerate cards in the set.
+
+This is a classic master-data object with a few fields, such as current counts and URIs,
+that can still change.
+
+## 22.6 Rulings REST example
+
+Cards can have additional explanatory rules notes.
+
+Conceptual request:
+
+```http
+GET https://api.scryfall.com/cards/<scryfall-card-id>/rulings
+```
+
+Shortened response:
+
+```json
+{
+  "object": "list",
+  "has_more": false,
+  "data": [
+    {
+      "object": "ruling",
+      "oracle_id": "<oracle-card-uuid>",
+      "source": "wotc",
+      "published_at": "2024-01-12",
+      "comment": "Example explanatory ruling text."
+    }
+  ]
+}
+```
+
+A ruling is not a new printing and not a replacement for Oracle text. It is an additional
+dated explanation of a card's rules behavior.
+
+This makes rulings naturally suitable for a separate entity:
+
+```text
+Oracle card 1
+     |
+     +--> 0..n rulings
+```
+
+Official documentation:
+
+https://scryfall.com/docs/api/rulings
+
+## 22.7 Catalog REST example
+
+Catalogs are useful for discovering the values Scryfall currently knows.
+
+A catalog response has the form:
+
+```json
+{
+  "object": "catalog",
+  "uri": "https://api.scryfall.com/catalog/...",
+  "total_values": 3,
+  "data": [
+    "Example value A",
+    "Example value B",
+    "Example value C"
+  ]
+}
+```
+
+This is particularly useful for lessons about domains: instead of assuming that every
+external vocabulary is fixed forever, a client can inspect Scryfall-maintained catalogs.
+
+Official documentation:
+
+https://scryfall.com/docs/api/catalogs
+
+## 22.8 Migration REST example
+
+Migrations describe exceptional corrections to Scryfall object identities.
+
+Shortened example:
+
+```json
+{
+  "object": "migration",
+  "id": "<migration-uuid>",
+  "performed_at": "2026-01-10",
+  "migration_strategy": "merge",
+  "old_scryfall_id": "<retired-card-uuid>",
+  "new_scryfall_id": "<replacement-card-uuid>",
+  "note": "Objects represented the same printing and were merged."
+}
+```
+
+Meaning:
+
+```text
+old Scryfall ID
+      |
+      | merge
+      v
+new Scryfall ID
+```
+
+or, for a delete:
+
+```text
+old Scryfall ID
+      |
+      X  no replacement
+```
+
+For our later data model this is the reason to treat Scryfall IDs as **external unique
+keys**, not as the conceptual internal identity of DeckKernel itself.
+
+Official documentation:
+
+https://scryfall.com/docs/api/migrations
+
+## 22.9 Multi-face card example
+
+A double-faced card differs fundamentally from a simple card. Important game fields move
+to `card_faces[]`.
+
+Shortened example:
+
+```json
+{
+  "object": "card",
+  "id": "<printing-uuid>",
+  "oracle_id": "<oracle-uuid>",
+  "layout": "transform",
+  "name": "Front Name // Back Name",
+  "card_faces": [
+    {
+      "name": "Front Name",
+      "mana_cost": "{1}{G}",
+      "type_line": "Creature — Example",
+      "oracle_text": "Example front-side rules.",
+      "power": "2",
+      "toughness": "2"
+    },
+    {
+      "name": "Back Name",
+      "mana_cost": "",
+      "type_line": "Creature — Example",
+      "oracle_text": "Example back-side rules.",
+      "power": "4",
+      "toughness": "4"
+    }
+  ]
+}
+```
+
+A viewer should therefore not assume that `name`, `mana_cost`, `oracle_text`,
+`power` or images always live at the root object.
+
+The `layout` field determines which representation is valid.
+
+Official layout documentation:
+
+https://scryfall.com/docs/api/layouts
+
+## 22.10 SQLite and PostgreSQL example representation
+
+The following is still **not** the final DeckKernel schema. It only demonstrates how the
+same externally supplied values can be represented in both databases.
+
+Scryfall input:
+
+```json
+{
+  "id": "4f0d...",
+  "oracle_id": "a8b1...",
+  "name": "Lightning Bolt",
+  "released_at": "2010-07-16",
+  "digital": false
+}
+```
+
+Possible PostgreSQL representation:
+
+```text
+scryfall_id   uuid/text     -> 4f0d...
+oracle_id     uuid/text     -> a8b1...
+name          text          -> Lightning Bolt
+released_at   date          -> 2010-07-16
+digital       boolean       -> false
+```
+
+Possible SQLite representation:
+
+```text
+scryfall_id   TEXT          -> 4f0d...
+oracle_id     TEXT          -> a8b1...
+name          TEXT          -> Lightning Bolt
+released_at   TEXT          -> 2010-07-16
+digital       INTEGER       -> 0
+```
+
+The later DeckKernel model may use its own integer primary keys and keep the Scryfall UUIDs
+as unique external identifiers. That decision remains outside the scope of this first
+structure assessment.
+
+## 22.11 Recommended REST versus bulk choice
+
+| Requirement | Prefer | Reason |
+| --- | --- | --- |
+| Initial complete local mirror | Bulk data | One large transfer, avoids many API calls |
+| Regular full refresh | Bulk manifest + bulk file | Compare `updated_at`, download only when needed |
+| Show one card interactively | REST | Small targeted request |
+| Search by user query | REST search | Server performs Scryfall search semantics |
+| Retrieve one set | REST | No need for full card snapshot |
+| Read rulings for one card | REST | Separate object family |
+| Discover current vocabularies | Catalog REST endpoints | Domain discovery |
+| Repair retired Scryfall IDs | Migration REST endpoints | Explicit identity-correction feed |
+| Offline analysis over all cards | Bulk data | Local processing is efficient and API-friendly |
+
