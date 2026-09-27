@@ -3,7 +3,10 @@
 
 BEGIN;
 
-CREATE SCHEMA IF NOT EXISTS deckkernel_test;
+CREATE SCHEMA IF NOT EXISTS deckkernel_test AUTHORIZATION deckkernel_user;
+ALTER SCHEMA deckkernel_test OWNER TO deckkernel_user;
+
+SET ROLE deckkernel_user;
 
 CREATE TABLE IF NOT EXISTS deckkernel_test.scryfall_sets (
    id   text PRIMARY KEY,
@@ -25,5 +28,7 @@ CREATE INDEX IF NOT EXISTS ix_scryfall_cards_oracle_id
 
 CREATE INDEX IF NOT EXISTS ix_scryfall_cards_released
    ON deckkernel_test.scryfall_cards(released_at DESC);
+
+RESET ROLE;
 
 COMMIT;
