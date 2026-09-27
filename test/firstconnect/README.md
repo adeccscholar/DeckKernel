@@ -76,17 +76,14 @@ test\firstconnect\install\Release\bin\deckkernel_scryfall_postgres_test.exe
 
 ## What the test does
 
-The test:
+The executable is structured into four explicit, independently timed processes:
 
-1. resolves Scryfall `default_cards` bulk metadata over HTTPS;
-2. uses a same-day cached bulk file when requested;
-3. parses the cards and set information;
-4. connects to PostgreSQL using integrated Windows SSPI authentication;
-5. creates the test tables and indexes inside the pre-provisioned
-   `deckkernel_test` schema when necessary;
-6. truncates and reloads the test data;
-7. reads the newest 20 cards through the typed adecc database range;
-8. sends the result through both text-grid paths.
+1. **Load** resolves Scryfall `default_cards` metadata and downloads or reuses the same-day bulk file.
+2. **Parse** reads the bulk file and creates the typed Scryfall card and set data.
+3. **Store** ensures the test tables exist, truncates them and writes the parsed data through adecc output sinks.
+4. **Evaluate** reads the newest 20 cards through the typed database range and sends them through both text-grid paths.
+
+The PostgreSQL connection uses integrated Windows SSPI authentication.
 
 The query deliberately aliases the two selected `name` columns as
 `card_name` and `set_name`. The PostgreSQL adapter resolves result fields by
@@ -123,7 +120,8 @@ DECKKERNEL_PG_KRBSRVNAME
 
 ## Files
 
-- `scryfall_postgres_test.cpp`: end-to-end test.
-- `postgres_pqxx_database.h`: current PostgreSQL/libpqxx adapter candidate.
+- `scryfall_postgres_test.cpp`: four timed processes: load, parse, store and evaluate.
+- `scryfall_model.h`: persistent Scryfall data definitions, metadata, selectors and manipulators.
 - `schema.sql`: equivalent test schema/table DDL for inspection or manual setup.
 - `CMakeLists.txt`: standalone Debug/Release build and install entry point.
+- `adecc\\postgre\\pqxx_database.h`: reusable PostgreSQL/libpqxx adapter.
