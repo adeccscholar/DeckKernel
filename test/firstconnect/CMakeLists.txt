@@ -43,12 +43,32 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(NOT CMAKE_BUILD_TYPE)
+   message(FATAL_ERROR
+      "CMAKE_BUILD_TYPE must be Debug or Release for the firstconnect test."
+   )
+endif()
+
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug" AND
+   NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+   message(FATAL_ERROR
+      "Unsupported CMAKE_BUILD_TYPE='${CMAKE_BUILD_TYPE}'. Use Debug or Release."
+   )
+endif()
+
+# Keep BuildEngine ThirdParty selection strictly coupled to this single-config
+# Ninja build. This intentionally overrides a stale/cache-provided value.
+set(ADECC_THIRDPARTY_CONFIGURATION "${CMAKE_BUILD_TYPE}")
+
 set(
    CMAKE_RUNTIME_OUTPUT_DIRECTORY
    "${CMAKE_BINARY_DIR}/bin"
 )
 
 include("${DECKKERNEL_ROOT}/Cache/cmake/ThirdParty.cmake")
+
+message(STATUS "firstconnect build type       : ${CMAKE_BUILD_TYPE}")
+message(STATUS "firstconnect runtime config   : ${ADECC_THIRDPARTY_CONFIGURATION}")
 
 find_package(CURL REQUIRED)
 find_package(OpenSSL REQUIRED)
@@ -105,14 +125,14 @@ target_link_libraries(
 
 install(
    TARGETS deckkernel_scryfall_postgres_test
-   RUNTIME DESTINATION bin
+   RUNTIME DESTINATION .
 )
 
 function(deckkernel_install_runtime_dlls thePackageRoot)
    install(
       DIRECTORY
          "${thePackageRoot}/bin/win64/${ADECC_THIRDPARTY_CONFIGURATION}/"
-      DESTINATION bin
+      DESTINATION .
       OPTIONAL
       FILES_MATCHING
          PATTERN "*.dll"
