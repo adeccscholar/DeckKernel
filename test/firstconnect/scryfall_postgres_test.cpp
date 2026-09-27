@@ -4,25 +4,22 @@
 /**
 \file scryfall_postgres_test.cpp
 \brief End-to-end Scryfall bulk-data, PostgreSQL, and adecc core functional test.
-\details
-Downloads Scryfall default card bulk data over HTTPS, parses the card stream, stores the
-minimal card and set model through PersistentSystemData and database output sinks, reads
-the newest 20 cards through the typed PostgreSQL query range, and transfers the result
-directly into the text-grid abstraction.
 
-The test intentionally exercises curl, OpenSSL, nlohmann/json, zlib, libpq/libpqxx,
-the PostgreSQL adapter, PersistentSystemData, typed database ranges, output sinks, and
-the backend-neutral text grid in one small program.
+\details
+Separates the functional test into four explicit processes: load, parse, store and
+evaluate. Each process is timed independently. The persistent Scryfall model is kept in
+scryfall_model.h, while the PostgreSQL/libpqxx adapter is supplied from adecc/postgre.
 
 \author Volker Hillmann (adecc Systemhaus GmbH)
-\date 26.09.2026
+\date 27.09.2026
 */
 
-#include "postgres_pqxx_database.h"
+#include "scryfall_model.h"
+
+#include "pqxx_database.h"
 
 #include "convert_integral.h"
 #include "database.h"
-#include "system_data_persistent.h"
 #include "text_grid_wrapper.h"
 
 #include <curl/curl.h>
@@ -33,13 +30,14 @@ the backend-neutral text grid in one small program.
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
-#include <chrono>
 #include <ctime>
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <iterator>
 #include <map>
@@ -51,6 +49,7 @@ the backend-neutral text grid in one small program.
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -58,87 +57,29 @@ namespace deckkernel::test {
 
 using json_ty = nlohmann::json;
 
-using set_types = adecc::defined_type_list<
-   std::string,
-   std::string,
-   std::string
-   >;
-
-struct SetMetaData {
-   static constexpr std::string_view svTableName = "deckkernel_test.scryfall_sets";
-
-   static constexpr std::array<std::string_view, 3> arrAttributeNames {
-      "id",
-      "code",
-      "name"
-      };
-
-   static constexpr std::array<std::size_t, 1> arrKeyIndices { 0 };
-   static constexpr std::optional<std::size_t> optIdentityIndex {};
-   static constexpr std::array<std::size_t, 0> arrReadOnlyIndices {};
-   };
-
-class TScryfallSet final
-   : public adecc::db::PersistentSystemData<set_types, SetMetaData> {
-public:
-   using base_ty = adecc::db::PersistentSystemData<set_types, SetMetaData>;
-   using base_ty::base_ty;
-   using base_ty::operator=;
-   };
-
-
-using card_types = adecc::defined_type_list<
-   std::string,
-   std::optional<std::string>,
-   std::string,
-   std::string,
-   adecc::date_ty
-   >;
-
-struct CardMetaData {
-   static constexpr std::string_view svTableName = "deckkernel_test.scryfall_cards";
-
-   static constexpr std::array<std::string_view, 5> arrAttributeNames {
-      "id",
-      "oracle_id",
-      "name",
-      "set_id",
-      "released_at"
-      };
-
-   static constexpr std::array<std::size_t, 1> arrKeyIndices { 0 };
-   static constexpr std::optional<std::size_t> optIdentityIndex {};
-   static constexpr std::array<std::size_t, 0> arrReadOnlyIndices {};
-   };
-
-class TScryfallCard final
-   : public adecc::db::PersistentSystemData<card_types, CardMetaData> {
-public:
-   using base_ty = adecc::db::PersistentSystemData<card_types, CardMetaData>;
-   using base_ty::base_ty;
-   using base_ty::operator=;
-   };
-
-
 using postgres_database_ty = adecc::db::logical_database<
    adecc::db::postgres::postgres_database,
    adecc::db::postgres::fw_query
    >;
 
-
-/**
-\brief Description of the selected Scryfall bulk download.
-*/
 struct BulkDescriptor {
    std::string strDownloadUri;
    std::string strUpdatedAt;
    bool boGzipJsonLines{ false };
    };
 
+struct LoadedBulkData {
+   BulkDescriptor aDescriptor;
+   std::filesystem::path aPath;
+   bool boDownloaded{ false };
+   };
 
-/**
-\brief Owns global curl initialization for the lifetime of the test.
-*/
+struct ParsedBulkData {
+   std::map<std::string, TScryfallSet::data_ty> mpSets;
+   std::vector<TScryfallCard::data_ty> vecCards;
+   };
+
+
 class CurlRuntime final {
 public:
    CurlRuntime() {
@@ -158,6 +99,40 @@ public:
       curl_global_cleanup();
       }
    };
+
+
+template <typename fn_ty>
+using process_result_ty = std::invoke_result_t<fn_ty>;
+
+
+template <typename fn_ty>
+process_result_ty<fn_ty> RunTimedProcess(
+   std::string_view const svName,
+   fn_ty&& fnProcess
+) {
+   auto const aStart = std::chrono::steady_clock::now();
+
+   if constexpr (std::is_void_v<process_result_ty<fn_ty>>) {
+      std::invoke(std::forward<fn_ty>(fnProcess));
+
+      double const flSeconds = std::chrono::duration<double>(
+         std::chrono::steady_clock::now() - aStart
+         ).count();
+
+      std::println("[TIME] {:<10}: {:.3f} s", svName, flSeconds);
+      }
+   else {
+      process_result_ty<fn_ty> aResult =
+         std::invoke(std::forward<fn_ty>(fnProcess));
+
+      double const flSeconds = std::chrono::duration<double>(
+         std::chrono::steady_clock::now() - aStart
+         ).count();
+
+      std::println("[TIME] {:<10}: {:.3f} s", svName, flSeconds);
+      return aResult;
+      }
+   }
 
 
 std::string Environment(char const* const szName, std::string_view const svFallback) {
@@ -207,7 +182,6 @@ std::size_t WriteFile(
    std::size_t const uBytes = uSize * uCount;
    auto* const pStream = static_cast<std::ofstream*>(pUser);
    pStream->write(pData, static_cast<std::streamsize>(uBytes));
-
    return *pStream ? uBytes : 0U;
    }
 
@@ -349,7 +323,6 @@ BulkDescriptor ResolveBulkData() {
 
       aResult.strDownloadUri = aEntry.at("download_uri").get<std::string>();
       aResult.boGzipJsonLines = aResult.strDownloadUri.ends_with(".gz");
-
       return aResult;
       }
 
@@ -357,10 +330,96 @@ BulkDescriptor ResolveBulkData() {
    }
 
 
+bool IsFileFromToday(std::filesystem::path const& aPath) {
+   if (!std::filesystem::exists(aPath)) {
+      return false;
+      }
+
+   auto const aFileTime = std::filesystem::last_write_time(aPath);
+   auto const aSystemTime = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+      aFileTime - std::filesystem::file_time_type::clock::now() +
+      std::chrono::system_clock::now()
+      );
+
+   std::time_t const iFileTime = std::chrono::system_clock::to_time_t(aSystemTime);
+   std::time_t const iNow = std::time(nullptr);
+
+   std::tm aFileLocal{};
+   std::tm aNowLocal{};
+
+#if defined _WIN32
+   localtime_s(&aFileLocal, &iFileTime);
+   localtime_s(&aNowLocal, &iNow);
+#else
+   localtime_r(&iFileTime, &aFileLocal);
+   localtime_r(&iNow, &aNowLocal);
+#endif
+
+   return aFileLocal.tm_year == aNowLocal.tm_year &&
+          aFileLocal.tm_yday == aNowLocal.tm_yday;
+   }
+
+
+bool AskForBulkDownload(std::filesystem::path const& aPath) {
+   if (!IsFileFromToday(aPath)) {
+      return true;
+      }
+
+   std::print(
+      "Bulk data file '{}' is from today. Download it again? [y/N]: ",
+      aPath.string()
+      );
+
+   std::string strAnswer;
+   std::getline(std::cin, strAnswer);
+
+   std::ranges::transform(
+      strAnswer,
+      strAnswer.begin(),
+      [](unsigned char const chValue) {
+         return static_cast<char>(std::tolower(chValue));
+         }
+      );
+
+   return strAnswer == "y" || strAnswer == "yes";
+   }
+
+
+LoadedBulkData LoadProcess() {
+   BulkDescriptor aBulk = ResolveBulkData();
+
+   std::println(
+      "Scryfall default_cards updated at: {}",
+      aBulk.strUpdatedAt.empty() ? "<not supplied>" : aBulk.strUpdatedAt
+      );
+
+   std::filesystem::path const aBulkPath =
+      std::filesystem::temp_directory_path() /
+      (aBulk.boGzipJsonLines
+         ? "deckkernel-scryfall-default-cards.jsonl.gz"
+         : "deckkernel-scryfall-default-cards.json");
+
+   bool const boDownload = AskForBulkDownload(aBulkPath);
+
+   if (boDownload) {
+      std::println("Downloading bulk data to: {}", aBulkPath.string());
+      DownloadFile(aBulk.strDownloadUri, aBulkPath);
+      }
+   else {
+      std::println("Using today's existing bulk data: {}", aBulkPath.string());
+      }
+
+   return LoadedBulkData{
+      .aDescriptor = std::move(aBulk),
+      .aPath = aBulkPath,
+      .boDownloaded = boDownload
+      };
+   }
+
+
 void AppendCard(
    json_ty const& aCard,
-   std::map<std::string, TScryfallSet::data_ty>& mpSets,
-   std::vector<TScryfallCard::data_ty>& vecCards
+   ParsedBulkData& aParsed
 ) {
    std::string const strId = aCard.at("id").get<std::string>();
    std::string const strSetId = aCard.at("set_id").get<std::string>();
@@ -376,7 +435,7 @@ void AppendCard(
       optOracleId = it->get<std::string>();
       }
 
-   mpSets.try_emplace(
+   aParsed.mpSets.try_emplace(
       strSetId,
       TScryfallSet::data_ty{
          strSetId,
@@ -385,7 +444,7 @@ void AppendCard(
          }
       );
 
-   vecCards.emplace_back(
+   aParsed.vecCards.emplace_back(
       strId,
       std::move(optOracleId),
       strName,
@@ -397,8 +456,7 @@ void AppendCard(
 
 void ReadGzipJsonLines(
    std::filesystem::path const& aPath,
-   std::map<std::string, TScryfallSet::data_ty>& mpSets,
-   std::vector<TScryfallCard::data_ty>& vecCards
+   ParsedBulkData& aParsed
 ) {
    gzFile pFile = gzopen(aPath.string().c_str(), "rb");
 
@@ -460,7 +518,7 @@ void ReadGzipJsonLines(
             };
 
          if (!svLine.empty()) {
-            AppendCard(json_ty::parse(svLine), mpSets, vecCards);
+            AppendCard(json_ty::parse(svLine), aParsed);
             }
 
          uStart = uNewLine + 1;
@@ -468,15 +526,14 @@ void ReadGzipJsonLines(
       }
 
    if (!strPending.empty()) {
-      AppendCard(json_ty::parse(strPending), mpSets, vecCards);
+      AppendCard(json_ty::parse(strPending), aParsed);
       }
    }
 
 
 void ReadPlainBulk(
    std::filesystem::path const& aPath,
-   std::map<std::string, TScryfallSet::data_ty>& mpSets,
-   std::vector<TScryfallCard::data_ty>& vecCards
+   ParsedBulkData& aParsed
 ) {
    std::ifstream isFile{ aPath, std::ios::binary };
 
@@ -501,7 +558,7 @@ void ReadPlainBulk(
       json_ty const aCards = json_ty::parse(isFile);
 
       for (json_ty const& aCard : aCards) {
-         AppendCard(aCard, mpSets, vecCards);
+         AppendCard(aCard, aParsed);
          }
 
       return;
@@ -511,79 +568,29 @@ void ReadPlainBulk(
 
    while (std::getline(isFile, strLine)) {
       if (!strLine.empty()) {
-         AppendCard(json_ty::parse(strLine), mpSets, vecCards);
+         AppendCard(json_ty::parse(strLine), aParsed);
          }
       }
    }
 
 
-void ReadBulkData(
-   std::filesystem::path const& aPath,
-   bool const boGzipJsonLines,
-   std::map<std::string, TScryfallSet::data_ty>& mpSets,
-   std::vector<TScryfallCard::data_ty>& vecCards
-) {
-   if (boGzipJsonLines) {
-      ReadGzipJsonLines(aPath, mpSets, vecCards);
+ParsedBulkData ParseProcess(LoadedBulkData const& aLoaded) {
+   ParsedBulkData aParsed;
+
+   if (aLoaded.aDescriptor.boGzipJsonLines) {
+      ReadGzipJsonLines(aLoaded.aPath, aParsed);
       }
    else {
-      ReadPlainBulk(aPath, mpSets, vecCards);
-      }
-   }
-
-
-bool IsFileFromToday(std::filesystem::path const& aPath) {
-   if (!std::filesystem::exists(aPath)) {
-      return false;
+      ReadPlainBulk(aLoaded.aPath, aParsed);
       }
 
-   auto const aFileTime = std::filesystem::last_write_time(aPath);
-   auto const aSystemTime = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
-      aFileTime - std::filesystem::file_time_type::clock::now() +
-      std::chrono::system_clock::now()
+   std::println(
+      "Parsed {} cards from {} sets.",
+      aParsed.vecCards.size(),
+      aParsed.mpSets.size()
       );
 
-   std::time_t const iFileTime = std::chrono::system_clock::to_time_t(aSystemTime);
-   std::time_t const iNow = std::time(nullptr);
-
-   std::tm aFileLocal{};
-   std::tm aNowLocal{};
-
-#if defined _WIN32
-   localtime_s(&aFileLocal, &iFileTime);
-   localtime_s(&aNowLocal, &iNow);
-#else
-   localtime_r(&iFileTime, &aFileLocal);
-   localtime_r(&iNow, &aNowLocal);
-#endif
-
-   return aFileLocal.tm_year == aNowLocal.tm_year &&
-          aFileLocal.tm_yday == aNowLocal.tm_yday;
-   }
-
-
-bool AskForBulkDownload(std::filesystem::path const& aPath) {
-   if (!IsFileFromToday(aPath)) {
-      return true;
-      }
-
-   std::print(
-      "Bulk data file '{}' is from today. Download it again? [y/N]: ",
-      aPath.string()
-      );
-
-   std::string strAnswer;
-   std::getline(std::cin, strAnswer);
-
-   std::ranges::transform(
-      strAnswer,
-      strAnswer.begin(),
-      [](unsigned char const chValue) {
-         return static_cast<char>(std::tolower(chValue));
-         }
-      );
-
-   return strAnswer == "y" || strAnswer == "yes";
+   return aParsed;
    }
 
 
@@ -618,16 +625,17 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
    }
 
 
-void StoreBulkData(
+void StoreProcess(
    postgres_database_ty& aDatabase,
-   std::map<std::string, TScryfallSet::data_ty> const& mpSets,
-   std::vector<TScryfallCard::data_ty> const& vecCards
+   ParsedBulkData const& aParsed
 ) {
+   EnsureSchema(aDatabase);
+
    std::vector<TScryfallSet::data_ty> vecSets;
-   vecSets.reserve(mpSets.size());
+   vecSets.reserve(aParsed.mpSets.size());
 
    std::ranges::transform(
-      mpSets,
+      aParsed.mpSets,
       std::back_inserter(vecSets),
       [](auto const& aEntry) {
          return aEntry.second;
@@ -663,9 +671,15 @@ void StoreBulkData(
          TScryfallCard::CreateInsertOutputParameters()
          );
 
-   aCardSink = vecCards;
+   aCardSink = aParsed.vecCards;
 
    aTransaction.Commit();
+
+   std::println(
+      "Stored {} cards and {} sets through adecc output sinks.",
+      aParsed.vecCards.size(),
+      aParsed.mpSets.size()
+      );
    }
 
 
@@ -734,6 +748,15 @@ void ShowLatestCardsThroughSink(postgres_database_ty const& aDatabase) {
    }
 
 
+void EvaluateProcess(postgres_database_ty const& aDatabase) {
+   std::println("\nNewest 20 cards: direct range assignment to text grid");
+   ShowLatestCards(aDatabase);
+
+   std::println("\nNewest 20 cards: std::ranges::copy to text-grid sink");
+   ShowLatestCardsThroughSink(aDatabase);
+   }
+
+
 adecc::db::postgres::postgres_credentials MakeCredentials() {
    adecc::db::postgres::postgres_credentials aCredentials;
 
@@ -781,41 +804,18 @@ int main() {
             : "<unknown>"
          );
 
-      BulkDescriptor const aBulk = ResolveBulkData();
-
-      std::println(
-         "Scryfall default_cards updated at: {}",
-         aBulk.strUpdatedAt.empty() ? "<not supplied>" : aBulk.strUpdatedAt
+      LoadedBulkData const aLoaded = RunTimedProcess(
+         "Load",
+         []() {
+            return LoadProcess();
+            }
          );
 
-      std::filesystem::path const aBulkPath =
-         std::filesystem::temp_directory_path() /
-         (aBulk.boGzipJsonLines
-            ? "deckkernel-scryfall-default-cards.jsonl.gz"
-            : "deckkernel-scryfall-default-cards.json");
-
-      if (AskForBulkDownload(aBulkPath)) {
-         std::println("Downloading bulk data to: {}", aBulkPath.string());
-         DownloadFile(aBulk.strDownloadUri, aBulkPath);
-         }
-      else {
-         std::println("Using today's existing bulk data: {}", aBulkPath.string());
-         }
-
-      std::map<std::string, TScryfallSet::data_ty> mpSets;
-      std::vector<TScryfallCard::data_ty> vecCards;
-
-      ReadBulkData(
-         aBulkPath,
-         aBulk.boGzipJsonLines,
-         mpSets,
-         vecCards
-         );
-
-      std::println(
-         "Parsed {} cards from {} sets.",
-         vecCards.size(),
-         mpSets.size()
+      ParsedBulkData const aParsed = RunTimedProcess(
+         "Parse",
+         [&aLoaded]() {
+            return ParseProcess(aLoaded);
+            }
          );
 
       postgres_database_ty aDatabase{
@@ -834,20 +834,19 @@ int main() {
             : "password"
          );
 
-      EnsureSchema(aDatabase);
-      StoreBulkData(aDatabase, mpSets, vecCards);
-
-      std::println(
-         "Stored {} cards and {} sets through adecc output sinks.",
-         vecCards.size(),
-         mpSets.size()
+      RunTimedProcess(
+         "Store",
+         [&aDatabase, &aParsed]() {
+            StoreProcess(aDatabase, aParsed);
+            }
          );
 
-      std::println("\nNewest 20 cards: direct range assignment to text grid");
-      ShowLatestCards(aDatabase);
-
-      std::println("\nNewest 20 cards: std::ranges::copy to text-grid sink");
-      ShowLatestCardsThroughSink(aDatabase);
+      RunTimedProcess(
+         "Evaluate",
+         [&aDatabase]() {
+            EvaluateProcess(aDatabase);
+            }
+         );
 
       std::println("\nFunctional test completed successfully.");
       return 0;
