@@ -1427,3 +1427,283 @@ structure assessment.
 | Repair retired Scryfall IDs | Migration REST endpoints | Explicit identity-correction feed |
 | Offline analysis over all cards | Bulk data | Local processing is efficient and API-friendly |
 
+
+
+---
+
+# 23. Domain sources: Catalog API, documented domains and observed values
+
+This section answers a different question from the field descriptions above:
+
+> Can DeckKernel obtain the allowed values directly from Scryfall, or would we merely be
+> observing values that happen to occur in the current data?
+
+That distinction matters. A value observed in bulk data proves only that the value is
+currently used. It does **not** prove that the set of observed values is the complete
+allowed domain.
+
+For domain handling we therefore distinguish five source classes:
+
+| Source class | Meaning |
+| --- | --- |
+| **Catalog API** | Scryfall exposes a dedicated REST endpoint returning the current value list |
+| **Documented domain** | Scryfall documentation / maintained API types define the values, but there is no dedicated Catalog endpoint |
+| **Observed from Bulk** | Values can be collected with DISTINCT/grouping from the current bulk snapshot |
+| **Observed from REST objects** | Values can be collected from current REST responses but are not separately delivered |
+| **Open string** | No closed domain should be assumed |
+
+## 23.1 Catalog response shape
+
+Every Catalog endpoint returns the same basic structure:
+
+```http
+GET https://api.scryfall.com/catalog/creature-types
+Accept: application/json;q=0.9,*/*;q=0.8
+User-Agent: adecc-DeckKernel/0.1 (+https://github.com/adeccscholar/DeckKernel)
+```
+
+Conceptual response:
+
+```json
+{
+  "object": "catalog",
+  "uri": "https://api.scryfall.com/catalog/creature-types",
+  "total_values": 3,
+  "data": [
+    "Dragon",
+    "Elf",
+    "Wizard"
+  ]
+}
+```
+
+The real `data[]` list is much larger. Catalog responses contain **values only**; they
+do not provide a stable numeric ID, description, localized label or version number for
+each value.
+
+That has an architectural consequence for DeckKernel:
+
+```text
+Scryfall Catalog
+      |
+      | value string only
+      v
+local domain value
+      |
+      +--> optional internal integer key
+      +--> Scryfall value string as UNIQUE external value
+      +--> local description / translation / ordering
+      +--> active / first_seen / last_seen metadata
+```
+
+The exact later schema is intentionally not decided here, but an extension mechanism will
+be necessary if DeckKernel wants descriptions, translations or stable internal IDs.
+
+## 23.2 Catalog endpoints currently available
+
+The following Catalog endpoints are exposed by Scryfall clients that track the documented
+Catalog API:
+
+| Catalog | REST endpoint | Meaning | Expected growth |
+| --- | --- | --- | --- |
+| Card names | `/catalog/card-names` | English non-token card names known to Scryfall | **High**; every new set can add names |
+| Artist names | `/catalog/artist-names` | Artist names used on Scryfall printings | **High** |
+| Word bank | `/catalog/word-bank` | English words occurring on Magic cards | **High** |
+| Creature types | `/catalog/creature-types` | Creature subtype vocabulary such as Dragon or Elf | **Medium/High**; new types appear |
+| Planeswalker types | `/catalog/planeswalker-types` | Planeswalker subtype vocabulary | **Low/Medium** |
+| Land types | `/catalog/land-types` | Land subtype vocabulary | **Low/Medium** |
+| Artifact types | `/catalog/artifact-types` | Artifact subtype vocabulary | **Medium** |
+| Enchantment types | `/catalog/enchantment-types` | Enchantment subtype vocabulary | **Medium** |
+| Spell types | `/catalog/spell-types` | Instant/sorcery spell subtype vocabulary | **Medium** |
+| Powers | `/catalog/powers` | Power values currently used on cards | **Medium** |
+| Toughnesses | `/catalog/toughnesses` | Toughness values currently used on cards | **Medium** |
+| Loyalties | `/catalog/loyalties` | Loyalty values currently used on Planeswalkers | **Medium** |
+| Watermarks | `/catalog/watermarks` | Printed watermark names | **Medium** |
+| Keyword abilities | `/catalog/keyword-abilities` | Rules keyword abilities such as Flying | **High over long time** |
+| Keyword actions | `/catalog/keyword-actions` | Rules keyword actions such as Destroy/Exile-style named actions | **Medium/High** |
+| Ability words | `/catalog/ability-words` | Italicized ability-word vocabulary | **Medium** |
+
+Official Catalog documentation:
+
+https://scryfall.com/docs/api/catalogs
+
+### Practical use
+
+These endpoints are the strongest source available for those vocabularies because the
+value list is delivered separately by Scryfall rather than inferred from card rows.
+
+For large catalogs such as card names, artist names, word bank or creature types, this
+document deliberately does not duplicate all live values. They should be fetched from the
+Catalog endpoint when needed.
+
+## 23.3 Catalog values that are useful as examples
+
+The values below are examples of the live catalog categories, not a complete hard-coded
+domain.
+
+### Creature types
+
+Typical values include:
+
+`Angel`, `Beast`, `Bird`, `Cat`, `Cleric`, `Dragon`, `Elf`, `Goblin`,
+`Human`, `Knight`, `Merfolk`, `Soldier`, `Vampire`, `Warrior`, `Wizard`,
+`Zombie`.
+
+The authoritative current list should come from:
+
+```http
+GET https://api.scryfall.com/catalog/creature-types
+```
+
+### Powers and toughnesses
+
+These catalogs demonstrate why combat values are strings rather than integers.
+
+Typical values can include ordinary numbers as well as symbolic values such as:
+
+`0`, `1`, `2`, `3`, `4`, `5`, `*`.
+
+The exact current list must be retrieved from:
+
+```http
+GET https://api.scryfall.com/catalog/powers
+GET https://api.scryfall.com/catalog/toughnesses
+```
+
+### Keyword abilities
+
+Typical examples include:
+
+`Flying`, `First strike`, `Double strike`, `Trample`, `Vigilance`,
+`Deathtouch`, `Lifelink`, `Menace`, `Haste`, `Ward`.
+
+The current complete list comes from:
+
+```http
+GET https://api.scryfall.com/catalog/keyword-abilities
+```
+
+### Watermarks
+
+Watermarks are visual faction/product marks printed behind rules text on some cards.
+The current values should be retrieved from:
+
+```http
+GET https://api.scryfall.com/catalog/watermarks
+```
+
+## 23.4 Domains without a dedicated Catalog endpoint
+
+The following important domains are **not** represented by the Catalog endpoint list
+above. Their complete domain therefore comes from Scryfall documentation / maintained API
+types, while current usage can additionally be observed from bulk or REST objects.
+
+| Domain | Separate Catalog? | Primary source | Can be observed in Bulk? | Extension expectation |
+| --- | ---: | --- | ---: | --- |
+| SetType | no | Documented domain / API type | yes | **Medium**; new product categories are possible |
+| Color | no | Documented Magic/Scryfall domain | yes | **Very low** |
+| Mana produced | no | Documented domain | yes | **Very low** |
+| Rarity | no | Documented domain | yes | **Low/Medium** |
+| Finish | no | Documented domain | yes | **Medium**; new treatments can appear |
+| Legality status | no | Documented domain | yes | **Very low** |
+| Format | no dedicated Catalog | Documented API type | yes through `legalities` keys | **High** over time |
+| Language | no dedicated Catalog | Documented language list | yes | **Low/Medium** |
+| Layout | no dedicated Catalog | Documented layout domain | yes | **Medium/High** as new mechanics appear |
+| Game/platform | no dedicated Catalog | Documented domain | yes | **Low/Medium** |
+| ImageStatus | no | Documented domain | yes | **Low** |
+| BorderColor | no | Documented domain | yes | **Low** |
+| SecurityStamp | no | Documented domain | yes | **Medium** |
+| FrameEffect | no | Documented domain | yes | **High**; new visual treatments appear |
+| Frame | no closed domain | Open string in maintained API types | yes | **High / open** |
+| PromoType | no dedicated Catalog | Externally maintained string vocabulary | yes | **High / open** |
+
+### Important interpretation rule
+
+For these domains, a DISTINCT scan of the bulk file gives:
+
+> values currently present in this snapshot
+
+It does **not** give:
+
+> every value Scryfall may legally return
+
+Therefore the bulk file must not be treated as the domain definition.
+
+## 23.5 Existing documented domain values
+
+For completeness, the currently documented values already listed earlier in this document
+can be summarized by source:
+
+| Domain | Current values in this document | Source kind |
+| --- | --- | --- |
+| Color | W, U, B, R, G, C where applicable | Documented domain |
+| Rarity | common, uncommon, rare, mythic, special, bonus | Documented domain |
+| Finish | nonfoil, foil, etched | Documented domain |
+| Legality | legal, not_legal, restricted, banned | Documented domain |
+| Language | en, es, fr, de, it, pt, ja, ko, ru, zhs, zht, he, la, grc, ar, sa, ph | Documented domain |
+| Game | paper, mtgo, arena, astral, sega | Documented domain |
+| ImageStatus | missing, placeholder, lowres, highres_scan | Documented domain |
+| BorderColor | black, white, borderless, silver, gold | Documented domain |
+| SecurityStamp | oval, triangle, acorn, circle, arena, heart | Documented domain |
+| SetType | values listed in section 17.1 | Documented domain |
+| Layout | values listed in section 17.9 | Documented domain |
+| FrameEffect | values listed in section 17.14 | Documented domain |
+
+Those lists should be considered snapshots of the documented domain as of this review, not
+permanent DeckKernel enums.
+
+## 23.6 Domains that should explicitly support extension
+
+The following groups are particularly likely to grow and should not be modelled as code
+that fails on an unknown value:
+
+| Domain/group | Why growth is likely |
+| --- | --- |
+| Card names | Every new card adds values |
+| Artist names | New artists enter the game |
+| Creature/other card subtypes | New mechanics and creature concepts add types |
+| Keyword abilities/actions | New rules mechanics are introduced regularly |
+| Ability words | New mechanics can introduce new ability words |
+| SetType | New product categories can appear |
+| Layout | New physical/gameplay card structures are introduced |
+| Format | New organized/community/digital formats appear |
+| Finish | New printing treatments are introduced |
+| FrameEffect | New showcase/visual treatments appear frequently |
+| PromoType | Marketing/product categories change regularly |
+| Watermarks | New factions/products may add marks |
+
+By contrast, values such as the five Magic colors or legality states are much more stable,
+although a tolerant parser is still preferable for external data.
+
+## 23.7 Proposed extension mechanism concept
+
+No final DeckKernel schema is defined here, but the data source strongly suggests the
+following capabilities for later design:
+
+```text
+external value
+   |
+   +-- source             Catalog / documented / observed
+   +-- external text      exact Scryfall value
+   +-- internal ID        optional integer key
+   +-- display text       our explanation
+   +-- translation        optional
+   +-- first_seen         optional
+   +-- last_seen          optional
+   +-- active             optional
+   +-- unknown/new flag   optional
+```
+
+A synchronization process could then:
+
+1. fetch Catalog-backed domains directly from Scryfall;
+2. compare them with locally known values;
+3. insert previously unseen values without breaking the import;
+4. flag new values for review and documentation;
+5. keep local descriptions/translations separate from Scryfall's raw value.
+
+For non-Catalog domains, the same extension mechanism can use the documented list as the
+baseline and report unknown values discovered in REST/Bulk data.
+
+This lets DeckKernel remain strict enough to notice changes without becoming brittle when
+Scryfall adds a new value.
