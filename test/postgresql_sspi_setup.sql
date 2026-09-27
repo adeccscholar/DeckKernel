@@ -24,3 +24,19 @@ CREATE SCHEMA IF NOT EXISTS deckkernel_test AUTHORIZATION deckkernel_user;
 ALTER SCHEMA deckkernel_test OWNER TO deckkernel_user;
 
 GRANT USAGE, CREATE ON SCHEMA deckkernel_test TO deckkernel_user;
+
+
+-- Existing test tables may have been created earlier by an administrator.
+-- Transfer them to the functional-test role so CREATE INDEX, TRUNCATE and
+-- subsequent schema-local DDL run with the same ownership model as fresh tables.
+DO $$
+BEGIN
+   IF to_regclass('deckkernel_test.scryfall_cards') IS NOT NULL THEN
+      ALTER TABLE deckkernel_test.scryfall_cards OWNER TO deckkernel_user;
+   END IF;
+
+   IF to_regclass('deckkernel_test.scryfall_sets') IS NOT NULL THEN
+      ALTER TABLE deckkernel_test.scryfall_sets OWNER TO deckkernel_user;
+   END IF;
+END
+$$;
