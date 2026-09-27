@@ -87,6 +87,12 @@ endif()
 add_executable(
    deckkernel_scryfall_postgres_test
    scryfall_postgres_test.cpp
+   scryfall_load.cpp
+   scryfall_load.h
+   scryfall_parse.cpp
+   scryfall_parse.h
+   scryfall_database.cpp
+   scryfall_database.h
    scryfall_model.h
    "${DECKKERNEL_ROOT}/adecc/postgre/pqxx_database.h"
 )
