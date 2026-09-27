@@ -53,9 +53,15 @@ as a PostgreSQL login role without a password and makes it owner of the
 `deckkernel_test` schema.
 
 The schema itself is an administrative deployment object. The functional test
-does not create the schema at runtime. It only creates and uses its test tables
-inside the already provisioned schema. This keeps `deckkernel_user` from needing
-the broader `CREATE` privilege on database `DeckKernel`.
+does not create the schema at runtime. It creates and uses its test tables inside
+the already provisioned schema. This keeps `deckkernel_user` from needing the
+broader `CREATE` privilege on database `DeckKernel`.
+
+If the test tables already exist from an earlier administrator-run test, rerun
+`postgresql_sspi_setup.sql`. The script transfers ownership of the existing
+`scryfall_sets` and `scryfall_cards` tables to `deckkernel_user`. This is
+required because PostgreSQL table ownership, not merely schema privileges,
+controls operations such as creating indexes on an existing table.
 
 The role name deliberately does not have to be identical to the Windows account.
 The mapping between Windows identity and PostgreSQL role is handled by
