@@ -68,25 +68,19 @@ public:
       }
 
    template <typename value_ty>
-      requires requires(TScryfallSet& aData, value_ty&& aValue) {
-         aData.template Set<0>(std::forward<value_ty>(aValue));
-         }
+      requires adecc::HasConvertTo<value_ty, element_ty<0>>
    void Id(value_ty&& aValue) {
       Set<0>(std::forward<value_ty>(aValue));
       }
 
    template <typename value_ty>
-      requires requires(TScryfallSet& aData, value_ty&& aValue) {
-         aData.template Set<1>(std::forward<value_ty>(aValue));
-         }
+      requires adecc::HasConvertTo<value_ty, element_ty<1>>
    void Code(value_ty&& aValue) {
       Set<1>(std::forward<value_ty>(aValue));
       }
 
    template <typename value_ty>
-      requires requires(TScryfallSet& aData, value_ty&& aValue) {
-         aData.template Set<2>(std::forward<value_ty>(aValue));
-         }
+      requires adecc::HasConvertTo<value_ty, element_ty<2>>
    void Name(value_ty&& aValue) {
       Set<2>(std::forward<value_ty>(aValue));
       }
@@ -145,41 +139,31 @@ public:
       }
 
    template <typename value_ty>
-      requires requires(TScryfallCard& aData, value_ty&& aValue) {
-         aData.template Set<0>(std::forward<value_ty>(aValue));
-         }
+      requires adecc::HasConvertTo<value_ty, element_ty<0>>
    void Id(value_ty&& aValue) {
       Set<0>(std::forward<value_ty>(aValue));
       }
 
    template <typename value_ty>
-      requires requires(TScryfallCard& aData, value_ty&& aValue) {
-         aData.template Set<1>(std::forward<value_ty>(aValue));
-         }
+      requires adecc::HasConvertTo<value_ty, element_ty<1>>
    void OracleId(value_ty&& aValue) {
       Set<1>(std::forward<value_ty>(aValue));
       }
 
    template <typename value_ty>
-      requires requires(TScryfallCard& aData, value_ty&& aValue) {
-         aData.template Set<2>(std::forward<value_ty>(aValue));
-         }
+      requires adecc::HasConvertTo<value_ty, element_ty<2>>
    void Name(value_ty&& aValue) {
       Set<2>(std::forward<value_ty>(aValue));
       }
 
    template <typename value_ty>
-      requires requires(TScryfallCard& aData, value_ty&& aValue) {
-         aData.template Set<3>(std::forward<value_ty>(aValue));
-         }
+      requires adecc::HasConvertTo<value_ty, element_ty<3>>
    void SetId(value_ty&& aValue) {
       Set<3>(std::forward<value_ty>(aValue));
       }
 
    template <typename value_ty>
-      requires requires(TScryfallCard& aData, value_ty&& aValue) {
-         aData.template Set<4>(std::forward<value_ty>(aValue));
-         }
+      requires adecc::HasConvertTo<value_ty, element_ty<4>>
    void ReleasedAt(value_ty&& aValue) {
       Set<4>(std::forward<value_ty>(aValue));
       }
