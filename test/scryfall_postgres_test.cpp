@@ -35,6 +35,8 @@ the backend-neutral text grid in one small program.
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
+#include <chrono>
+#include <ctime>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -530,6 +532,61 @@ void ReadBulkData(
    }
 
 
+bool IsFileFromToday(std::filesystem::path const& aPath) {
+   if (!std::filesystem::exists(aPath)) {
+      return false;
+      }
+
+   auto const aFileTime = std::filesystem::last_write_time(aPath);
+   auto const aSystemTime = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+      aFileTime - std::filesystem::file_time_type::clock::now() +
+      std::chrono::system_clock::now()
+      );
+
+   std::time_t const iFileTime = std::chrono::system_clock::to_time_t(aSystemTime);
+   std::time_t const iNow = std::time(nullptr);
+
+   std::tm aFileLocal{};
+   std::tm aNowLocal{};
+
+#if defined _WIN32
+   localtime_s(&aFileLocal, &iFileTime);
+   localtime_s(&aNowLocal, &iNow);
+#else
+   localtime_r(&iFileTime, &aFileLocal);
+   localtime_r(&iNow, &aNowLocal);
+#endif
+
+   return aFileLocal.tm_year == aNowLocal.tm_year &&
+          aFileLocal.tm_yday == aNowLocal.tm_yday;
+   }
+
+
+bool AskForBulkDownload(std::filesystem::path const& aPath) {
+   if (!IsFileFromToday(aPath)) {
+      return true;
+      }
+
+   std::print(
+      "Bulk data file '{}' is from today. Download it again? [y/N]: ",
+      aPath.string()
+      );
+
+   std::string strAnswer;
+   std::getline(std::cin, strAnswer);
+
+   std::ranges::transform(
+      strAnswer,
+      strAnswer.begin(),
+      [](unsigned char const chValue) {
+         return static_cast<char>(std::tolower(chValue));
+         }
+      );
+
+   return strAnswer == "y" || strAnswer == "yes";
+   }
+
+
 void EnsureSchema(postgres_database_ty const& aDatabase) {
    aDatabase.ExecuteCommand("CREATE SCHEMA IF NOT EXISTS deckkernel_test");
 
@@ -739,8 +796,13 @@ int main() {
             ? "deckkernel-scryfall-default-cards.jsonl.gz"
             : "deckkernel-scryfall-default-cards.json");
 
-      std::println("Downloading bulk data to: {}", aBulkPath.string());
-      DownloadFile(aBulk.strDownloadUri, aBulkPath);
+      if (AskForBulkDownload(aBulkPath)) {
+         std::println("Downloading bulk data to: {}", aBulkPath.string());
+         DownloadFile(aBulk.strDownloadUri, aBulkPath);
+         }
+      else {
+         std::println("Using today's existing bulk data: {}", aBulkPath.string());
+         }
 
       std::map<std::string, TScryfallSet::data_ty> mpSets;
       std::vector<TScryfallCard::data_ty> vecCards;
