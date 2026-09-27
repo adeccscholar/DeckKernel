@@ -67,6 +67,8 @@ endif()
 add_executable(
    deckkernel_scryfall_postgres_test
    scryfall_postgres_test.cpp
+   scryfall_model.h
+   "${DECKKERNEL_ROOT}/adecc/postgre/pqxx_database.h"
 )
 
 target_include_directories(
@@ -74,6 +76,7 @@ target_include_directories(
    PRIVATE
       "${CMAKE_CURRENT_LIST_DIR}"
       "${DECKKERNEL_ROOT}/adecc/cpp_core"
+      "${DECKKERNEL_ROOT}/adecc/postgre"
 )
 
 target_compile_definitions(
