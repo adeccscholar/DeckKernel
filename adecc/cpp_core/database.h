@@ -1131,8 +1131,17 @@ namespace adecc {
                requires tuple_input_range_for<range_ty, Args...>
             void operator()(range_ty&& rngInput) {
                for (auto&& tupValues : rngInput) {
-                  std::tuple<Args...> tupCurrent{ std::forward<decltype(tupValues)>(tupValues) };
-                  Write_(tupCurrent);
+                  using current_ty = std::remove_cvref_t<decltype(tupValues)>;
+
+                  if constexpr (std::same_as<current_ty, std::tuple<Args...>>) {
+                     Write_(tupValues);
+                     }
+                  else {
+                     std::tuple<Args...> tupCurrent{
+                        std::forward<decltype(tupValues)>(tupValues)
+                        };
+                     Write_(tupCurrent);
+                     }
                }
             }
 
