@@ -195,3 +195,23 @@ owning raw pointer is intentionally exposed by the example.
 
 The source documents the relevant third-party calls at the call site, including callback
 parameters, borrowed pointers and lifetime assumptions.
+
+
+## Lesson source structure
+
+The example is split so each technical step can be discussed independently:
+
+    scryfall_load.cpp       HTTPS, curl/OpenSSL, local cache
+            |
+            v
+    scryfall_parse.cpp      zlib, JSONL, normalization
+            |
+            v
+    scryfall_database.cpp   PostgreSQL, transaction, output sinks
+            |
+            v
+    scryfall_postgres_test.cpp
+                            composition, timing, evaluation/grid output
+
+The data model remains in scryfall_model.h. The Scryfall field and domain reference is
+documented in SCRYFALL_DATA_MODEL.md.
