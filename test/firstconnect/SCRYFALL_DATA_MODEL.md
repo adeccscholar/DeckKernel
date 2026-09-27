@@ -103,6 +103,77 @@ and querying without pretending that the complete Scryfall model is already fini
 
 ---
 
+## 3.1 Bulk data, manifest and REST API: three access paths
+
+Scryfall exposes the same subject area through different technical access patterns.
+Understanding the difference is important before discussing a later DeckKernel data model.
+
+### Bulk data
+
+Bulk data is a **snapshot export**. It is intended for applications that need many or all
+cards. Instead of issuing thousands of REST requests, the client first asks Scryfall which
+bulk files currently exist and then downloads one large static file.
+
+The first-connect lesson follows exactly this pattern:
+
+```text
+GET /bulk-data
+      |
+      v
+bulk-data manifest / metadata
+      |
+      +--> type = default_cards
+      +--> updated_at
+      +--> download_uri
+                 |
+                 v
+        large JSON/JSONL bulk file
+                 |
+                 v
+              Parse
+```
+
+The bulk file contains the actual Card objects. It is not a separate data model: the card
+objects follow the same Scryfall object semantics that are also returned by the REST API.
+
+### Manifest / metadata document
+
+The response from the bulk-data endpoint acts as a **manifest** for available exports.
+It describes files; it does not itself contain the complete card database.
+
+For every export it tells the client, among other things:
+
+- which export type it is;
+- when that export was refreshed;
+- where the current downloadable file is located;
+- its content type/encoding and size information where provided.
+
+This means the manifest is control and synchronization metadata. A client can compare
+`updated_at` with the locally known state and decide whether the large payload needs to
+be downloaded again.
+
+The manifest URI and download URI are technical delivery information and must not be used
+as business keys for cards.
+
+### REST API
+
+The REST API returns individual objects or paginated lists and is appropriate for targeted
+queries, interactive searches and metadata that does not require a complete bulk reload.
+
+Conceptually:
+
+```text
+Bulk data     -> efficient complete/current snapshot
+REST API      -> targeted lookup, search and navigation
+Catalogs      -> available value lists / vocabularies
+Migrations    -> corrections to Scryfall object identities
+```
+
+Scryfall explicitly recommends bulk data instead of performing huge numbers of repetitive
+API requests. Interactive or selective access can still use the REST interface.
+
+---
+
 # 4. BulkData
 
 ## Meaning in Scryfall
@@ -454,13 +525,92 @@ game rule.
 
 ---
 
-# 16. Domain tables
+# 16. REST-accessible Scryfall structures
+
+The bulk download is not the only way to access Scryfall data. The following structures
+are available through REST-style endpoints and are useful for later lessons.
+
+| Structure | What it provides | Typical use |
+| --- | --- | --- |
+| Cards | Individual card printings and paginated card searches | Interactive search, direct lookup, completing one missing card |
+| Sets | Set/product metadata | Browse releases, resolve one set |
+| Rulings | Published rules-manager notes connected to an Oracle card | Explain special interactions and historical/current rulings |
+| Catalogs | Lists of currently known values such as card names or types | Autocomplete, vocabulary discovery, domain inspection |
+| Migrations | Scryfall identity corrections such as merge/delete | Keep a local mirror consistent when Scryfall IDs are retired |
+| Symbology | Magic symbol metadata | Render mana and game symbols |
+| BulkData | Manifest-like metadata and current bulk download locations | Full synchronization |
+
+## Cards via REST
+
+Cards can be retrieved individually through Scryfall identifiers and several external
+identifiers. Scryfall also exposes search, named-card lookup, autocomplete, random-card
+selection and collection-style requests.
+
+REST retrieval returns the same conceptual Card object described in this document. It is
+therefore useful for targeted access, while the bulk file remains better for a complete
+local mirror.
+
+## Sets via REST
+
+Sets are available as a list and as individual objects. This is useful when an application
+needs current set metadata without downloading the card bulk export.
+
+## Rulings
+
+A ruling is a dated explanatory note about how a card works under the rules.
+
+| Attribute | Meaning | Stability |
+| --- | --- | --- |
+| `oracle_id` | Oracle card to which the ruling belongs | Stable relationship |
+| `source` | Publisher of the ruling, currently `wotc` or `scryfall` | Stable for that ruling |
+| `published_at` | Date on which the ruling/note was published | Stable event date |
+| `comment` | Human-readable explanation | Normally stable; corrections remain possible |
+
+Rulings are not the card's Oracle text. They are additional explanations and should be
+treated as their own entity/event-like data.
+
+## Catalogs
+
+Catalogs are Scryfall-provided lists of strings. They answer questions such as
+"which values currently exist?" and are useful for UI selection, validation hints and
+domain discovery.
+
+A catalog contains:
+
+| Attribute | Meaning |
+| --- | --- |
+| `uri` | API location of the catalog |
+| `total_values` | Number of values currently listed |
+| `data[]` | The actual strings |
+
+Catalogs are especially relevant for DeckKernel because they can help discover external
+domains without hard-coding them permanently into the program.
+
+## Migrations
+
+Scryfall can retire a card object ID because an object was merged or deleted. Migrations
+describe those corrections.
+
+| Attribute | Meaning |
+| --- | --- |
+| `id` | Migration event UUID |
+| `performed_at` | Date of the correction |
+| `migration_strategy` | `merge` or `delete` |
+| `old_scryfall_id` | Retired card-object ID |
+| `new_scryfall_id` | Replacement ID for a merge |
+| `note` | Human-readable explanation |
+| `metadata` | Additional human-oriented context |
+
+This is important for a local mirror: even though Scryfall IDs are intended as stable
+identifiers, Scryfall provides an explicit mechanism for exceptional identity corrections.
+
+# 17. Domain tables
 
 The following domains are externally owned by Scryfall/Magic. DeckKernel should not
 assume that today's list is permanent. Lookup tables or tolerant string-backed domains
 are often safer than rigid PostgreSQL enums.
 
-## 16.1 SetType
+## 17.1 SetType
 
 | Value | Meaning for a non-player |
 | --- | --- |
@@ -488,7 +638,7 @@ are often safer than rigid PostgreSQL enums.
 | `memorabilia` | Gold-border, oversize, trophy or similar nonstandard objects |
 | `minigame` | Minigame insert cards |
 
-## 16.2 Color
+## 17.2 Color
 
 | Value | Meaning |
 | --- | --- |
@@ -499,7 +649,7 @@ are often safer than rigid PostgreSQL enums.
 | `G` | Green |
 | `C` | Colorless token used by some API fields; colorless is not one of Magic's five colors |
 
-## 16.3 Mana produced
+## 17.3 Mana produced
 
 The maintained API type currently uses the same symbolic values:
 
@@ -512,7 +662,7 @@ The maintained API type currently uses the same symbolic values:
 | `G` | Green mana |
 | `C` | Colorless mana |
 
-## 16.4 Rarity
+## 17.4 Rarity
 
 | Value | Meaning |
 | --- | --- |
@@ -525,7 +675,7 @@ The maintained API type currently uses the same symbolic values:
 
 Rarity is a property of a **printing**, not necessarily of the abstract Oracle card.
 
-## 16.5 Finish
+## 17.5 Finish
 
 | Value | Meaning |
 | --- | --- |
@@ -533,7 +683,7 @@ Rarity is a property of a **printing**, not necessarily of the abstract Oracle c
 | `foil` | Traditional foil treatment |
 | `etched` | Etched-foil treatment |
 
-## 16.6 Legality status
+## 17.6 Legality status
 
 | Value | Meaning |
 | --- | --- |
@@ -542,7 +692,7 @@ Rarity is a property of a **printing**, not necessarily of the abstract Oracle c
 | `restricted` | Card is legal only in a restricted quantity where the format supports this |
 | `banned` | Card belongs to the format's card pool but is currently banned |
 
-## 16.7 Format
+## 17.7 Format
 
 | Value | Meaning / family |
 | --- | --- |
@@ -572,7 +722,7 @@ Rarity is a property of a **printing**, not necessarily of the abstract Oracle c
 Formats are especially likely to change as a **domain**: new formats can be added and
 existing formats can disappear or be renamed.
 
-## 16.8 Language
+## 17.8 Language
 
 | Code | Language |
 | --- | --- |
@@ -594,7 +744,7 @@ existing formats can disappear or be renamed.
 | `sa` | Sanskrit |
 | `ph` | Phyrexian fictional language |
 
-## 16.9 Layout
+## 17.9 Layout
 
 | Value | What it means physically/functionally |
 | --- | --- |
@@ -623,7 +773,7 @@ existing formats can disappear or be renamed.
 | `reversible_card` | Two unrelated usable sides |
 | `case` | Case enchantment layout |
 
-## 16.10 Game / platform
+## 17.10 Game / platform
 
 | Value | Meaning |
 | --- | --- |
@@ -633,7 +783,7 @@ existing formats can disappear or be renamed.
 | `astral` | Historic MicroProse/Astral digital game content |
 | `sega` | Historic Sega Dreamcast game content |
 
-## 16.11 ImageStatus
+## 17.11 ImageStatus
 
 | Value | Meaning | Typical stability |
 | --- | --- | --- |
@@ -642,7 +792,7 @@ existing formats can disappear or be renamed.
 | `lowres` | Low-resolution preview image | Temporary |
 | `highres_scan` | High-resolution image/scan available | Usually final state |
 
-## 16.12 BorderColor
+## 17.12 BorderColor
 
 | Value | Meaning |
 | --- | --- |
@@ -654,7 +804,7 @@ existing formats can disappear or be renamed.
 
 This is a description of the physical printing, not a legality rule.
 
-## 16.13 SecurityStamp
+## 17.13 SecurityStamp
 
 | Value | Meaning |
 | --- | --- |
@@ -665,7 +815,7 @@ This is a description of the physical printing, not a legality rule.
 | `arena` | Arena-themed stamp |
 | `heart` | Heart-shaped stamp |
 
-## 16.14 FrameEffect
+## 17.14 FrameEffect
 
 | Value | Meaning |
 | --- | --- |
@@ -698,7 +848,7 @@ maintained Scryfall API types currently model it as an open string.
 
 ---
 
-# 17. Recommended storage and history strategy
+# 18. Recommended storage and history strategy
 
 | Data group | Example fields | Recommended handling |
 | --- | --- | --- |
@@ -714,27 +864,37 @@ maintained Scryfall API types currently model it as an open string.
 
 ---
 
-# 18. Length and constraint policy
+# 19. PostgreSQL and SQLite representation
 
-| Scryfall semantic kind | Recommended PostgreSQL storage |
-| --- | --- |
-| UUID | `uuid` |
-| ISO date | `date` |
-| ISO date-time | `timestamptz` |
-| open/free string | `text` |
-| URI | `text` |
-| collector number | `text` |
-| power/toughness/loyalty/defense | `text` |
-| currency string | explicit conversion to `numeric` if arithmetic is required |
-| boolean | `boolean` |
-| externally owned vocabulary | lookup/domain with extension strategy |
-| repeated arrays | child relation when queried relationally |
+The table below is a **representation comparison**, not the final DeckKernel schema.
+The actual data modelling, key strategy and normalization will be decided later.
+
+| Scryfall semantic kind | PostgreSQL representation | SQLite representation | Notes |
+| --- | --- | --- | --- |
+| UUID | `uuid` or `text` | `TEXT` | SQLite has no native UUID storage class |
+| ISO date | `date` | `TEXT` in ISO-8601 form | SQLite date functions work with ISO text |
+| ISO date-time | `timestamptz` | `TEXT` in ISO-8601 form | Preserve timezone/UTC information |
+| open/free string | `text` | `TEXT` | No arbitrary length limit from Scryfall |
+| URI | `text` | `TEXT` | Technical string |
+| collector number | `text` | `TEXT` | Must remain text because non-digits occur |
+| power/toughness/loyalty/defense | `text` | `TEXT` | Values can contain `*`, `X`, etc. |
+| integer identifier from external systems | `bigint` where required | `INTEGER` | External ID, not a DeckKernel PK decision |
+| currency/price text | `numeric` after explicit conversion | `NUMERIC` affinity or canonical decimal text | Exact-money strategy comes later |
+| boolean | `boolean` | `INTEGER` 0/1 | SQLite has no separate Boolean storage class |
+| externally owned vocabulary | lookup/domain/text | lookup table or `TEXT` + checks | Must tolerate future Scryfall values |
+| repeated arrays | child relation or array | child relation or JSON text | Choice depends on later query needs |
+| JSON metadata | `jsonb` if retained | `TEXT` containing JSON | Only when the raw structure should be preserved |
+
+For the current evaluation, the important point is semantic compatibility, not the final
+primary-key design. The later DeckKernel schema can use internal integer primary keys and
+treat Scryfall UUIDs as unique external keys; that modelling decision is intentionally
+deferred.
 
 Do not introduce arbitrary length limits only because current sample data fits.
 
 ---
 
-# 19. Candidate DeckKernel normalization
+# 20. Candidate DeckKernel normalization
 
 A fuller model can evolve toward:
 
@@ -755,7 +915,7 @@ scryfall_related_cards
 scryfall_artists
 ```
 
-A useful architectural split would be:
+Without deciding the later physical key strategy yet, a useful semantic split would be:
 
 ```text
 MASTER DATA
@@ -777,7 +937,7 @@ goal is to prove and teach the infrastructure path.
 
 ---
 
-# 20. Upstream references and maintenance rule
+# 21. Upstream references and maintenance rule
 
 This document was checked against the maintained `scryfall/api-types` definitions in
 September 2026, including card fields, card faces, sets and the value-domain files for
