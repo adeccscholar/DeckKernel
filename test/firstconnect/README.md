@@ -45,8 +45,13 @@ cmake --build test\firstconnect\build\Debug
 ### 5. Install Debug
 
 Do not start the executable directly from the build directory. The install step
-creates the runnable directory and copies the required configuration-specific
-runtime DLLs.
+creates one flat runnable directory containing the executable and its runtime DLLs.
+
+For Ninja this project is single-configuration. The CMake build type is now bound
+directly to the BuildEngine ThirdParty configuration, so a Debug build can only
+resolve and install DLLs from ThirdParty/.../bin/win64/Debug, while Release uses
+the corresponding Release directories. If an older build tree was configured with
+the wrong build type, delete that build directory and configure it again.
 
 ```bat
 cmake --install test\firstconnect\build\Debug --prefix test\firstconnect\install\Debug
@@ -55,7 +60,7 @@ cmake --install test\firstconnect\build\Debug --prefix test\firstconnect\install
 ### 6. Start Debug
 
 ```bat
-test\firstconnect\install\Debug\bin\deckkernel_scryfall_postgres_test.exe
+test\firstconnect\install\Debug\deckkernel_scryfall_postgres_test.exe
 ```
 
 ## Release build
@@ -71,7 +76,7 @@ cmake --install test\firstconnect\build\Release --prefix test\firstconnect\insta
 Start it with:
 
 ```bat
-test\firstconnect\install\Release\bin\deckkernel_scryfall_postgres_test.exe
+test\firstconnect\install\Release\deckkernel_scryfall_postgres_test.exe
 ```
 
 ## What the test does
