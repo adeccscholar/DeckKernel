@@ -148,39 +148,49 @@ std::size_t WriteFile(
 
 
 void ConfigureCurl(
-   CURL& aCurl,
+   CURL* const pCurl,
    std::string const& strUrl,
    CurlHeaders const& aHeaders,
    std::array<char, CURL_ERROR_SIZE>& arrError
 ) {
-   curl_easy_setopt(&aCurl, CURLOPT_ERRORBUFFER, arrError.data());
-   curl_easy_setopt(&aCurl, CURLOPT_URL, strUrl.c_str());
-   curl_easy_setopt(&aCurl, CURLOPT_FOLLOWLOCATION, 1L);
-   curl_easy_setopt(&aCurl, CURLOPT_MAXREDIRS, 5L);
-   curl_easy_setopt(&aCurl, CURLOPT_FAILONERROR, 1L);
+   if (pCurl == nullptr) {
+      throw std::runtime_error{ "curl easy handle is null" };
+      }
+
+   /*
+   libcurl deliberately exposes CURL as an opaque C handle. In this toolchain CURL is
+   typedef'd as void, so a C++ reference such as CURL& cannot exist and unique_ptr<CURL>
+   cannot be dereferenced. Ownership is still RAII-managed by curl_handle_ty; this raw
+   pointer is only a borrowed handle passed across the libcurl C API boundary.
+   */
+   curl_easy_setopt(pCurl, CURLOPT_ERRORBUFFER, arrError.data());
+   curl_easy_setopt(pCurl, CURLOPT_URL, strUrl.c_str());
+   curl_easy_setopt(pCurl, CURLOPT_FOLLOWLOCATION, 1L);
+   curl_easy_setopt(pCurl, CURLOPT_MAXREDIRS, 5L);
+   curl_easy_setopt(pCurl, CURLOPT_FAILONERROR, 1L);
 
    curl_easy_setopt(
-      &aCurl,
+      pCurl,
       CURLOPT_USERAGENT,
       "adecc-DeckKernel/0.1 (+https://github.com/adeccscholar/DeckKernel)"
       );
 
-   curl_easy_setopt(&aCurl, CURLOPT_HTTPHEADER, aHeaders.Get());
-   curl_easy_setopt(&aCurl, CURLOPT_ACCEPT_ENCODING, "");
-   curl_easy_setopt(&aCurl, CURLOPT_SSL_VERIFYPEER, 1L);
-   curl_easy_setopt(&aCurl, CURLOPT_SSL_VERIFYHOST, 2L);
-   curl_easy_setopt(&aCurl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+   curl_easy_setopt(pCurl, CURLOPT_HTTPHEADER, aHeaders.Get());
+   curl_easy_setopt(pCurl, CURLOPT_ACCEPT_ENCODING, "");
+   curl_easy_setopt(pCurl, CURLOPT_SSL_VERIFYPEER, 1L);
+   curl_easy_setopt(pCurl, CURLOPT_SSL_VERIFYHOST, 2L);
+   curl_easy_setopt(pCurl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
 
 #if defined CURLSSLOPT_NATIVE_CA
    curl_easy_setopt(
-      &aCurl,
+      pCurl,
       CURLOPT_SSL_OPTIONS,
       static_cast<long>(CURLSSLOPT_NATIVE_CA)
       );
 #endif
 
-   curl_easy_setopt(&aCurl, CURLOPT_PROTOCOLS_STR, "https");
-   curl_easy_setopt(&aCurl, CURLOPT_REDIR_PROTOCOLS_STR, "https");
+   curl_easy_setopt(pCurl, CURLOPT_PROTOCOLS_STR, "https");
+   curl_easy_setopt(pCurl, CURLOPT_REDIR_PROTOCOLS_STR, "https");
    }
 
 
@@ -196,7 +206,7 @@ std::string HttpGet(std::string const& strUrl) {
    aHeaders.Add("Accept: application/json;q=0.9,*/*;q=0.8");
 
    std::array<char, CURL_ERROR_SIZE> arrError{};
-   ConfigureCurl(*upCurl, strUrl, aHeaders, arrError);
+   ConfigureCurl(upCurl.get(), strUrl, aHeaders, arrError);
 
    std::string strResult;
 
@@ -241,7 +251,7 @@ void DownloadFile(
    aHeaders.Add("Accept: application/json;q=0.9,*/*;q=0.8");
 
    std::array<char, CURL_ERROR_SIZE> arrError{};
-   ConfigureCurl(*upCurl, strUrl, aHeaders, arrError);
+   ConfigureCurl(upCurl.get(), strUrl, aHeaders, arrError);
 
    curl_easy_setopt(upCurl.get(), CURLOPT_WRITEFUNCTION, &WriteFile);
    curl_easy_setopt(upCurl.get(), CURLOPT_WRITEDATA, std::addressof(osFile));
