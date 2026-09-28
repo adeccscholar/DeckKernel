@@ -92,3 +92,6 @@ out
 /Cache/archives/
 /Cache/tools/
 /Cache/bootstrap-state/
+
+# Local application deployments (Debug/Release)
+/apps/
