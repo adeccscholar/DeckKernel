@@ -7,7 +7,7 @@ abstraction into PostgreSQL and back into the text-grid abstraction.
 The PostgreSQL server must be prepared first. See:
 
 ```text
-test\POSTGRESQL_SETUP.md
+Docs\POSTGRESQL_SETUP.md
 ```
 
 ## From git pull to program start
@@ -56,13 +56,13 @@ the corresponding Release directories. If an older build tree was configured wit
 the wrong build type, delete that build directory and configure it again.
 
 ```bat
-cmake --install test\firstconnect\build\Debug --prefix test\firstconnect\install\Debug
+cmake --install test\firstconnect\build\Debug
 ```
 
 ### 6. Start Debug
 
 ```bat
-test\firstconnect\install\Debug\deckkernel_scryfall_postgres_test.exe
+apps\Debug\deckkernel_scryfall_postgres_test.exe
 ```
 
 ## Release build
@@ -72,13 +72,13 @@ Configure, build and install Release separately:
 ```bat
 cmake -S test\firstconnect -B test\firstconnect\build\Release -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build test\firstconnect\build\Release
-cmake --install test\firstconnect\build\Release --prefix test\firstconnect\install\Release
+cmake --install test\firstconnect\build\Release
 ```
 
 Start it with:
 
 ```bat
-test\firstconnect\install\Release\deckkernel_scryfall_postgres_test.exe
+apps\Release\deckkernel_scryfall_postgres_test.exe
 ```
 
 ## What the test does
