@@ -104,6 +104,10 @@ The generated inventory should preferably contain at least:
 | Brotli | Brotli compression | MIT License | `MIT` |
 | libzip | ZIP archive access | BSD 3-Clause | `BSD-3-Clause` |
 | libarchive | multi-format archive and compression support | predominantly BSD-style, file-specific notices apply | typically BSD-style; inspect packaged files |
+| cmark-gfm | Markdown and GitHub-Flavored Markdown rendering | BSD 2-Clause with bundled third-party notices | `BSD-2-Clause` plus bundled notices |
+| highlight.js | browser-side source syntax highlighting | BSD 3-Clause | `BSD-3-Clause` |
+| Mermaid | browser-side diagram rendering | MIT License | `MIT` |
+| MathJax | browser-side TeX/LaTeX rendering | Apache License 2.0 | `Apache-2.0` |
 
 This table is an overview only.  
 The actual license files in the resolved source packages remain authoritative.
@@ -783,6 +787,18 @@ If this document conflicts with an upstream license file, the upstream license t
 
 - libarchive  
   https://www.libarchive.org/
+
+- cmark-gfm  
+  https://github.com/github/cmark-gfm
+
+- highlight.js  
+  https://github.com/highlightjs/highlight.js
+
+- Mermaid  
+  https://github.com/mermaid-js/mermaid
+
+- MathJax  
+  https://github.com/mathjax/MathJax
 
 - Zstandard  
   https://github.com/facebook/zstd
