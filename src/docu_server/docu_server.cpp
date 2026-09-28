@@ -22,6 +22,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -647,7 +648,10 @@ void DocuServer::Run() {
                );
             }
          else {
-            std::string const strTarget{ aRequest.target() };
+            std::string const strTarget{
+               aRequest.target().data(),
+               aRequest.target().size()
+               };
             std::string_view const svPath =
                WithoutQuery(strTarget);
 
