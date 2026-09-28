@@ -104,9 +104,9 @@ The generated inventory should preferably contain at least:
 | Brotli | Brotli compression | MIT License | `MIT` |
 | libzip | ZIP archive access | BSD 3-Clause | `BSD-3-Clause` |
 | libarchive | multi-format archive and compression support | predominantly BSD-style, file-specific notices apply | typically BSD-style; inspect packaged files |
-| cmark-gfm | Markdown and GitHub-Flavored Markdown rendering | BSD 2-Clause with bundled third-party notices | `BSD-2-Clause` plus bundled notices |
+| cmark-gfm | Markdown and GitHub-Flavored Markdown rendering | BSD-style main license; preserve complete upstream COPYING with bundled notices | `BSD-2-Clause` plus bundled notices |
 | highlight.js | browser-side source syntax highlighting | BSD 3-Clause | `BSD-3-Clause` |
-| Mermaid | browser-side diagram rendering | MIT License | `MIT` |
+| Mermaid | browser-side diagram rendering | MIT project license; bundled runtime requires transitive notices | `MIT` plus bundled dependency notices |
 | MathJax | browser-side TeX/LaTeX rendering | Apache License 2.0 | `Apache-2.0` |
 
 This table is an overview only.  
@@ -563,6 +563,26 @@ The existence of a component in this draft does not prove that it is present in 
 Likewise, absence from this draft does not prove that a library is absent from a future build.
 
 The generated build dependency closure is authoritative.
+
+---
+
+## 10.1 Documentation rendering dependencies
+
+DeckKernel's documentation view adds cmark-gfm, highlight.js, Mermaid and MathJax.
+
+For cmark-gfm, keep the complete upstream `COPYING` file. It contains the main
+BSD-style terms as well as notices for derived Houdini, GitHub and utf8proc code. The
+CommonMark specification and test data carry separate terms when those source-tree files
+are redistributed.
+
+highlight.js 11.12.0 is redistributed under BSD-3-Clause and MathJax 3.2.2 under
+Apache-2.0. Their complete upstream license texts are stored below `licenses/`.
+
+Mermaid 11.17.2 itself is MIT licensed, but the distributed `mermaid.min.js` is a
+single-file bundle containing code from Mermaid's production dependency closure. The
+public ThirdParty package must therefore include a generated transitive
+`THIRD_PARTY_NOTICES.txt`; the Mermaid top-level MIT license alone is not treated as a
+complete binary-distribution notice.
 
 ---
 
