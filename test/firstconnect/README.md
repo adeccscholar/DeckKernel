@@ -46,6 +46,8 @@ cmake --build test\firstconnect\build\Debug
 
 Do not start the executable directly from the build directory. The install step
 creates one flat runnable directory containing the executable and its runtime DLLs.
+The default install prefix is the repository-local apps/<Configuration> directory.
+The complete apps directory is intentionally excluded from Git.
 
 For Ninja this project is single-configuration. The CMake build type is now bound
 directly to the BuildEngine ThirdParty configuration, so a Debug build can only
