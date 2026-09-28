@@ -5,7 +5,7 @@
 Server and Windows SSPI setup:
 
 ```text
-test\POSTGRESQL_SETUP.md
+Docs\POSTGRESQL_SETUP.md
 ```
 
 Administrative SQL used by that setup:
