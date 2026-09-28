@@ -95,3 +95,5 @@ out
 
 # Local application deployments (Debug/Release)
 /apps/
+
+/Cache/documentation-thirdparty/
