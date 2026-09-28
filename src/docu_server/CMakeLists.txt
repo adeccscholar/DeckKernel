@@ -78,17 +78,35 @@ if(NOT DEFINED ADECC_TP_CMARK_GFM_ROOT)
    message(FATAL_ERROR "cmark-gfm is missing from the bootstrapped ThirdParty stack.")
 endif()
 
-foreach(theVariable
-   ADECC_WEB_MERMAID_ROOT
-   ADECC_WEB_HIGHLIGHT_ROOT
-   ADECC_WEB_MATHJAX_ROOT
-)
-   if(NOT DEFINED ${theVariable})
-      message(FATAL_ERROR
-         "${theVariable} is missing. Re-run: cmake -P bootstrap/Bootstrap.cmake"
-      )
-   endif()
-endforeach()
+if(DEFINED ADECC_TP_MERMAID_ROOT)
+   set(DECKKERNEL_MERMAID_ROOT "${ADECC_TP_MERMAID_ROOT}")
+elseif(DEFINED ADECC_WEB_MERMAID_ROOT)
+   set(DECKKERNEL_MERMAID_ROOT "${ADECC_WEB_MERMAID_ROOT}")
+else()
+   message(FATAL_ERROR
+      "Mermaid is missing. Re-run bootstrap or extend the ThirdParty lock."
+   )
+endif()
+
+if(DEFINED ADECC_TP_HIGHLIGHTJS_ROOT)
+   set(DECKKERNEL_HIGHLIGHT_ROOT "${ADECC_TP_HIGHLIGHTJS_ROOT}")
+elseif(DEFINED ADECC_WEB_HIGHLIGHT_ROOT)
+   set(DECKKERNEL_HIGHLIGHT_ROOT "${ADECC_WEB_HIGHLIGHT_ROOT}")
+else()
+   message(FATAL_ERROR
+      "highlight.js is missing. Re-run bootstrap or extend the ThirdParty lock."
+   )
+endif()
+
+if(DEFINED ADECC_TP_MATHJAX_ROOT)
+   set(DECKKERNEL_MATHJAX_ROOT "${ADECC_TP_MATHJAX_ROOT}")
+elseif(DEFINED ADECC_WEB_MATHJAX_ROOT)
+   set(DECKKERNEL_MATHJAX_ROOT "${ADECC_WEB_MATHJAX_ROOT}")
+else()
+   message(FATAL_ERROR
+      "MathJax is missing. Re-run bootstrap or extend the ThirdParty lock."
+   )
+endif()
 
 add_executable(
    deckkernel_docu_server
@@ -136,26 +154,32 @@ install(
 
 install(
    FILES
-      "${ADECC_WEB_MERMAID_ROOT}/mermaid.min.js"
+      "${DECKKERNEL_MERMAID_ROOT}/web/mermaid.min.js"
    DESTINATION web/mermaid
 )
 
 install(
    FILES
-      "${ADECC_WEB_HIGHLIGHT_ROOT}/highlight.min.js"
+      "${DECKKERNEL_HIGHLIGHT_ROOT}/web/highlight.min.js"
    DESTINATION web/highlighting
 )
 
 install(
    FILES
-      "${CMAKE_CURRENT_LIST_DIR}/assets/github.min.css"
+      "${DECKKERNEL_HIGHLIGHT_ROOT}/web/styles/github.min.css"
    DESTINATION web/highlighting/styles
 )
 
 install(
    FILES
-      "${ADECC_WEB_MATHJAX_ROOT}/es5/tex-svg.js"
+      "${DECKKERNEL_MATHJAX_ROOT}/web/es5/tex-svg.js"
    DESTINATION web/mathjax/es5
+)
+
+install(
+   FILES
+      "${CMAKE_CURRENT_LIST_DIR}/assets/docu_client.js"
+   DESTINATION web/client
 )
 
 message(STATUS "docu-server build type       : ${CMAKE_BUILD_TYPE}")
