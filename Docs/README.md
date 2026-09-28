@@ -1,5 +1,9 @@
 # DeckKernel
 
+> **Documentation navigation:** [PostgreSQL setup](POSTGRESQL_SETUP.md) ·
+> [Documentation server](DOCU_SERVER.md)
+
+
 > **Where cards meet code — and generations meet around both.**
 
 DeckKernel is a non-commercial learning and community project built around a simple idea: use a real card game, real data, and real software-engineering problems to explore modern C++ together.
