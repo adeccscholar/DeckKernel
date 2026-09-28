@@ -324,8 +324,8 @@ using tcp = asio::ip::tcp;
 
    if(boDocument) {
       osHtml
-         << "<button class=\"print-button\" type=\"button\" "
-            "onclick=\"window.print()\">Print</button>";
+         << "<button id=\"print-document\" class=\"print-button\" "
+            "type=\"button\">Print</button>";
       }
 
    osHtml
@@ -367,7 +367,9 @@ using tcp = asio::ip::tcp;
             "</script>";
       }
 
-   osHtml << "</body></html>";
+   osHtml
+      << "<script defer src=\"/js/client/docu_client.js\"></script>"
+      << "</body></html>";
    return osHtml.str();
    }
 
