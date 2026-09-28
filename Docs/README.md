@@ -1,7 +1,8 @@
 # DeckKernel
 
 > **Documentation navigation:** [PostgreSQL setup](POSTGRESQL_SETUP.md) ·
-> [Documentation server](DOCU_SERVER.md)
+> [Documentation server](DOCU_SERVER.md) ·
+> [Documentation ThirdParty](DOCUMENTATION_THIRDPARTY.md)
 
 
 > **Where cards meet code — and generations meet around both.**
