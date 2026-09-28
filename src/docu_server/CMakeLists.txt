@@ -78,6 +78,18 @@ if(NOT DEFINED ADECC_TP_CMARK_GFM_ROOT)
    message(FATAL_ERROR "cmark-gfm is missing from the bootstrapped ThirdParty stack.")
 endif()
 
+foreach(theVariable
+   ADECC_WEB_MERMAID_ROOT
+   ADECC_WEB_HIGHLIGHT_ROOT
+   ADECC_WEB_MATHJAX_ROOT
+)
+   if(NOT DEFINED ${theVariable})
+      message(FATAL_ERROR
+         "${theVariable} is missing. Re-run: cmake -P bootstrap/Bootstrap.cmake"
+      )
+   endif()
+endforeach()
+
 add_executable(
    deckkernel_docu_server
    main.cpp
@@ -120,6 +132,30 @@ install(
    OPTIONAL
    FILES_MATCHING
       PATTERN "*.dll"
+)
+
+install(
+   FILES
+      "${ADECC_WEB_MERMAID_ROOT}/mermaid.min.js"
+   DESTINATION web/mermaid
+)
+
+install(
+   FILES
+      "${ADECC_WEB_HIGHLIGHT_ROOT}/highlight.min.js"
+   DESTINATION web/highlighting
+)
+
+install(
+   FILES
+      "${CMAKE_CURRENT_LIST_DIR}/assets/github.min.css"
+   DESTINATION web/highlighting/styles
+)
+
+install(
+   FILES
+      "${ADECC_WEB_MATHJAX_ROOT}/es5/tex-svg.js"
+   DESTINATION web/mathjax/es5
 )
 
 message(STATUS "docu-server build type       : ${CMAKE_BUILD_TYPE}")
