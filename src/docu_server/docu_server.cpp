@@ -264,8 +264,7 @@ using tcp = asio::ip::tcp;
    if(boHighlight) {
       osHtml
          << "<link rel=\"stylesheet\" "
-            "href=\"https://cdn.jsdelivr.net/npm/"
-            "@highlightjs/cdn-assets@11.12.0/styles/github.min.css\">";
+            "href=\"/js/highlighting/styles/github.min.css\">";
       }
 
    osHtml
@@ -341,14 +340,12 @@ using tcp = asio::ip::tcp;
             "[\'\\\\(\',\'\\\\)\']],displayMath:[[\'$$\',\'$$\'],"
             "[\'\\\\[\',\'\\\\]\']]},svg:{fontCache:\'global\'}};"
             "</script>"
-         << "<script defer src=\"https://cdn.jsdelivr.net/npm/"
-            "mathjax@3.2.2/es5/tex-svg.js\"></script>";
+         << "<script defer src=\"/js/mathjax/es5/tex-svg.js\"></script>";
       }
 
    if(boHighlight) {
       osHtml
-         << "<script defer src=\"https://cdn.jsdelivr.net/npm/"
-            "@highlightjs/cdn-assets@11.12.0/highlight.min.js\"></script>"
+         << "<script defer src=\"/js/highlighting/highlight.min.js\"></script>"
          << "<script>"
             "window.addEventListener(\'DOMContentLoaded\',()=>{"
             "if(window.hljs)window.hljs.highlightAll();});"
@@ -357,8 +354,7 @@ using tcp = asio::ip::tcp;
 
    if(boMermaid) {
       osHtml
-         << "<script defer src=\"https://cdn.jsdelivr.net/npm/"
-            "mermaid@11.17.2/dist/mermaid.min.js\"></script>"
+         << "<script defer src=\"/js/mermaid/mermaid.min.js\"></script>"
          << "<script>"
             "window.addEventListener(\'DOMContentLoaded\',async()=>{"
             "document.querySelectorAll(\'pre code.language-mermaid\')"
@@ -696,6 +692,29 @@ void DocuServer::Run() {
                      aSocket,
                      aRequest,
                      aFile
+                     );
+                  }
+               }
+            else if(svPath.starts_with("/js/")) {
+               std::filesystem::path const aFile =
+                  SafeRelativeFile(
+                     aConfiguration.aRuntimeDirectory / L"web",
+                     svPath.substr(4U)
+                     );
+
+               if(std::filesystem::is_regular_file(aFile)) {
+                  WriteFile(
+                     aSocket,
+                     aRequest,
+                     aFile
+                     );
+                  }
+               else {
+                  WriteTextError(
+                     aSocket,
+                     aRequest,
+                     http::status::not_found,
+                     "web asset not found"
                      );
                   }
                }
