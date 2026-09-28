@@ -79,9 +79,15 @@ if(NOT DEFINED ADECC_TP_CMARK_GFM_ROOT)
 endif()
 
 if(DEFINED ADECC_TP_MERMAID_ROOT)
-   set(DECKKERNEL_MERMAID_ROOT "${ADECC_TP_MERMAID_ROOT}")
+   set(
+      DECKKERNEL_MERMAID_FILE
+      "${ADECC_TP_MERMAID_ROOT}/web/mermaid.min.js"
+   )
 elseif(DEFINED ADECC_WEB_MERMAID_ROOT)
-   set(DECKKERNEL_MERMAID_ROOT "${ADECC_WEB_MERMAID_ROOT}")
+   set(
+      DECKKERNEL_MERMAID_FILE
+      "${ADECC_WEB_MERMAID_ROOT}/mermaid.min.js"
+   )
 else()
    message(FATAL_ERROR
       "Mermaid is missing. Re-run bootstrap or extend the ThirdParty lock."
@@ -89,9 +95,23 @@ else()
 endif()
 
 if(DEFINED ADECC_TP_HIGHLIGHTJS_ROOT)
-   set(DECKKERNEL_HIGHLIGHT_ROOT "${ADECC_TP_HIGHLIGHTJS_ROOT}")
+   set(
+      DECKKERNEL_HIGHLIGHT_FILE
+      "${ADECC_TP_HIGHLIGHTJS_ROOT}/web/highlight.min.js"
+   )
+   set(
+      DECKKERNEL_HIGHLIGHT_STYLE
+      "${ADECC_TP_HIGHLIGHTJS_ROOT}/web/styles/github.min.css"
+   )
 elseif(DEFINED ADECC_WEB_HIGHLIGHT_ROOT)
-   set(DECKKERNEL_HIGHLIGHT_ROOT "${ADECC_WEB_HIGHLIGHT_ROOT}")
+   set(
+      DECKKERNEL_HIGHLIGHT_FILE
+      "${ADECC_WEB_HIGHLIGHT_ROOT}/highlight.min.js"
+   )
+   set(
+      DECKKERNEL_HIGHLIGHT_STYLE
+      "${CMAKE_CURRENT_LIST_DIR}/assets/github.min.css"
+   )
 else()
    message(FATAL_ERROR
       "highlight.js is missing. Re-run bootstrap or extend the ThirdParty lock."
@@ -99,9 +119,15 @@ else()
 endif()
 
 if(DEFINED ADECC_TP_MATHJAX_ROOT)
-   set(DECKKERNEL_MATHJAX_ROOT "${ADECC_TP_MATHJAX_ROOT}")
+   set(
+      DECKKERNEL_MATHJAX_FILE
+      "${ADECC_TP_MATHJAX_ROOT}/web/es5/tex-svg.js"
+   )
 elseif(DEFINED ADECC_WEB_MATHJAX_ROOT)
-   set(DECKKERNEL_MATHJAX_ROOT "${ADECC_WEB_MATHJAX_ROOT}")
+   set(
+      DECKKERNEL_MATHJAX_FILE
+      "${ADECC_WEB_MATHJAX_ROOT}/es5/tex-svg.js"
+   )
 else()
    message(FATAL_ERROR
       "MathJax is missing. Re-run bootstrap or extend the ThirdParty lock."
@@ -154,25 +180,25 @@ install(
 
 install(
    FILES
-      "${DECKKERNEL_MERMAID_ROOT}/web/mermaid.min.js"
+      "${DECKKERNEL_MERMAID_FILE}"
    DESTINATION web/mermaid
 )
 
 install(
    FILES
-      "${DECKKERNEL_HIGHLIGHT_ROOT}/web/highlight.min.js"
+      "${DECKKERNEL_HIGHLIGHT_FILE}"
    DESTINATION web/highlighting
 )
 
 install(
    FILES
-      "${DECKKERNEL_HIGHLIGHT_ROOT}/web/styles/github.min.css"
+      "${DECKKERNEL_HIGHLIGHT_STYLE}"
    DESTINATION web/highlighting/styles
 )
 
 install(
    FILES
-      "${DECKKERNEL_MATHJAX_ROOT}/web/es5/tex-svg.js"
+      "${DECKKERNEL_MATHJAX_FILE}"
    DESTINATION web/mathjax/es5
 )
 
