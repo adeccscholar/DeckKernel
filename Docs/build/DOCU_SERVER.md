@@ -59,21 +59,49 @@ its runtime DLLs are installed beside the server executable.
 
 Run from the repository root in a C++Builder Developer Command Prompt.
 
-Debug:
+### Debug
 
-    cmake -S src\docu_server -B src\docu_server\build\Debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
-    cmake --build src\docu_server\build\Debug
-    cmake --install src\docu_server\build\Debug
+Configure:
+
+```cmd
+cmake -S src\docu_server -B src\docu_server\build\Debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
+```
+
+Build:
+
+```cmd
+cmake --build src\docu_server\build\Debug
+```
+
+Install:
+
+```cmd
+cmake --install src\docu_server\build\Debug
+```
 
 The default installation is:
 
     apps\Debug\
 
-Release:
+### Release
 
-    cmake -S src\docu_server -B src\docu_server\build\Release -G Ninja -DCMAKE_BUILD_TYPE=Release
-    cmake --build src\docu_server\build\Release
-    cmake --install src\docu_server\build\Release
+Configure:
+
+```cmd
+cmake -S src\docu_server -B src\docu_server\build\Release -G Ninja -DCMAKE_BUILD_TYPE=Release
+```
+
+Build:
+
+```cmd
+cmake --build src\docu_server\build\Release
+```
+
+Install:
+
+```cmd
+cmake --install src\docu_server\build\Release
+```
 
 The default installation is:
 
@@ -87,7 +115,9 @@ ThirdParty packages and build tools.
 
 From the repository root or directly from the app directory:
 
-    apps\Debug\deckkernel_docu_server.exe
+```cmd
+apps\Debug\deckkernel_docu_server.exe
+```
 
 Because the executable resides in `apps/<Configuration>`, the default repository root is
 derived from the executable location. `--root` can override it.
