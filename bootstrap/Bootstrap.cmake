@@ -171,85 +171,6 @@ if(NOT _adecc_ninja_result EQUAL 0 OR
    )
 endif()
 
-# Browser-side documentation assets use the same pinned versions and hashes as
-# BuildEngine-Server. Keep them below Cache/tools so applications can be used
-# offline after bootstrap and no generated web assets enter source control.
-function(_adecc_provision_web_asset
-   theVariable
-   theName
-   theVersion
-   theUrl
-   theSha256
-   theRelativePath
-)
-   set(_root "${ADECC_CACHE_ROOT}/tools/web/${theName}/${theVersion}")
-   set(_file "${_root}/${theRelativePath}")
-   get_filename_component(_directory "${_file}" DIRECTORY)
-   file(MAKE_DIRECTORY "${_directory}")
-
-   set(_valid FALSE)
-   if(EXISTS "${_file}")
-      file(SHA256 "${_file}" _actual_sha256)
-      string(TOLOWER "${_actual_sha256}" _actual_sha256)
-      string(TOLOWER "${theSha256}" _expected_sha256)
-      if(_actual_sha256 STREQUAL _expected_sha256)
-         set(_valid TRUE)
-      endif()
-   endif()
-
-   if(NOT _valid)
-      file(REMOVE "${_file}")
-      message(STATUS "[DOWNLOAD] web asset ${theName} ${theVersion}")
-      file(
-         DOWNLOAD
-         "${theUrl}"
-         "${_file}"
-         EXPECTED_HASH "SHA256=${theSha256}"
-         TLS_VERIFY ON
-         SHOW_PROGRESS
-         STATUS _download_status
-      )
-
-      list(GET _download_status 0 _download_code)
-      list(GET _download_status 1 _download_text)
-      if(NOT _download_code EQUAL 0)
-         file(REMOVE "${_file}")
-         message(FATAL_ERROR
-            "Web asset download failed: ${_download_text}\n${theUrl}"
-         )
-      endif()
-   endif()
-
-   set(${theVariable} "${_root}" PARENT_SCOPE)
-endfunction()
-
-_adecc_provision_web_asset(
-   ADECC_WEB_MERMAID_ROOT
-   mermaid
-   11.17.2
-   "https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.min.js"
-   "581ed7d74bd9048d0e3a91363927d72ef22942d7722546b27f7cc29e35390eb8"
-   "mermaid.min.js"
-)
-
-_adecc_provision_web_asset(
-   ADECC_WEB_HIGHLIGHT_ROOT
-   highlight
-   11.12.0
-   "https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.12.0/highlight.min.js"
-   "8ab71eb09c51f501e5e25157d9cff100e46cc29bcbfc744d0b746d451fca7f53"
-   "highlight.min.js"
-)
-
-_adecc_provision_web_asset(
-   ADECC_WEB_MATHJAX_ROOT
-   mathjax
-   3.2.2
-   "https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-svg.js"
-   "d4295dc33744836935c1399feece5159577b34c5c8ffb9f1c6324cd82e03a882"
-   "es5/tex-svg.js"
-)
-
 execute_process(
    COMMAND "${ADECC_BCC64X_EXECUTABLE}" --version
    RESULT_VARIABLE _adecc_bcc64x_result
@@ -281,9 +202,6 @@ _adecc_append_set("${ADECC_TOOLS_FILE}" ADECC_CMAKE_EXECUTABLE "${ADECC_CMAKE_EX
 _adecc_append_set("${ADECC_TOOLS_FILE}" ADECC_CMAKE_VERSION "${CMAKE_VERSION}")
 _adecc_append_set("${ADECC_TOOLS_FILE}" ADECC_NINJA_EXECUTABLE "${ADECC_NINJA_EXECUTABLE}")
 _adecc_append_set("${ADECC_TOOLS_FILE}" ADECC_NINJA_VERSION "${ADECC_NINJA_ACTUAL_VERSION}")
-_adecc_append_set("${ADECC_TOOLS_FILE}" ADECC_WEB_MERMAID_ROOT "${ADECC_WEB_MERMAID_ROOT}")
-_adecc_append_set("${ADECC_TOOLS_FILE}" ADECC_WEB_HIGHLIGHT_ROOT "${ADECC_WEB_HIGHLIGHT_ROOT}")
-_adecc_append_set("${ADECC_TOOLS_FILE}" ADECC_WEB_MATHJAX_ROOT "${ADECC_WEB_MATHJAX_ROOT}")
 
 message(STATUS "Repository root : ${ADECC_REPOSITORY_ROOT}")
 message(STATUS "BDS root        : ${ADECC_BDS_ROOT}")
