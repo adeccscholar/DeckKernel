@@ -1,5 +1,7 @@
 # DeckKernel: ideas and project vision
 
+[TOC|Project vision]
+
 
 > **Where cards meet code — and generations meet around both.**
 
