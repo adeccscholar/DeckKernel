@@ -216,4 +216,4 @@ The example is split so each technical step can be discussed independently:
                             composition, timing, evaluation/grid output
 
 The data model remains in scryfall_model.h. The Scryfall field and domain reference is
-documented in SCRYFALL_DATA_MODEL.md.
+documented centrally in `Docs\SCRYFALL_DATA_MODEL.md`.
