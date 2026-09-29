@@ -59,31 +59,41 @@
       textArea.remove();
    }
 
-   function installCommandCopyButtons() {
-      document.querySelectorAll("pre > code.language-cmd").forEach((code) => {
-         let command = code.textContent.replace(/\r\n/g, "\n");
-         command = command.replace(/\n$/, "");
+   function installCodeCopyButtons() {
+      document.querySelectorAll("pre > code").forEach((code) => {
+         if(code.classList.contains("language-mermaid")) {
+            return;
+         }
 
-         if(command.length === 0 || command.includes("\n")) {
+         let text = code.textContent.replace(/\r\n/g, "\n");
+         text = text.replace(/\n$/, "");
+
+         if(text.length === 0) {
             return;
          }
 
          const pre = code.parentElement;
-         if(!pre || pre.querySelector(".copy-command-button")) {
+         if(!pre || pre.querySelector(".copy-code-button")) {
             return;
          }
 
-         pre.classList.add("copy-command");
+         const boCommand =
+            code.classList.contains("language-cmd") &&
+            !text.includes("\n");
+
+         pre.classList.add("copyable-code");
 
          const button = document.createElement("button");
          button.type = "button";
-         button.className = "copy-command-button";
+         button.className = "copy-code-button";
          button.textContent = "Copy";
-         button.title = "Copy command to clipboard";
+         button.title = boCommand
+            ? "Copy command to clipboard"
+            : "Copy complete block to clipboard";
 
          button.addEventListener("click", async () => {
             try {
-               await copyText(command);
+               await copyText(text);
                button.textContent = "Copied";
                window.setTimeout(() => {
                   button.textContent = "Copy";
@@ -131,7 +141,7 @@
    }
 
    window.addEventListener("DOMContentLoaded", () => {
-      installCommandCopyButtons();
+      installCodeCopyButtons();
 
       const button = document.getElementById("print-document");
       if(button) {
