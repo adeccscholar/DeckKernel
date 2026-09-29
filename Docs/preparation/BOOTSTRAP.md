@@ -12,6 +12,7 @@ contained `bootstrap` and `Cache` directories directly into the project.
    bootstrap/
       Bootstrap.cmake
       BootstrapConfig.cmake
+      PrepareDocumentationAssets.cmake
 
    Cache/
       thirdparty.lock
@@ -118,6 +119,24 @@ The bootstrap derives the repository root from the location of
     Cache/ThirdPartyPackages.cmake
     ```
 
+12. Prepares the browser-side documentation assets in the generated directory:
+
+    ```text
+    Docs/js/
+    ```
+
+    The bootstrap copies the DeckKernel-owned client from
+    `src/docu_server/web/docu_client.js` and downloads the pinned browser
+    libraries used by the documentation server:
+
+    - highlight.js 11.12.0;
+    - the GitHub highlight.js stylesheet;
+    - Mermaid 11.17.2;
+    - MathJax 3.2.2.
+
+    `Docs/js` is shared by Debug and Release and is never a configuration-specific
+    build output.
+
 ## 5. Generated tool-path file
 
 A typical `Cache/BootstrapTools.cmake` contains:
@@ -217,6 +236,8 @@ Commit:
 ```text
 bootstrap/Bootstrap.cmake
 bootstrap/BootstrapConfig.cmake
+bootstrap/PrepareDocumentationAssets.cmake
+src/docu_server/web/docu_client.js
 Cache/thirdparty.lock
 Cache/thirdparty.lock.xml
 Cache/cmake/**
@@ -231,6 +252,7 @@ Cache/archives/
 Cache/bootstrap-state/
 Cache/tools/
 ThirdParty/
+Docs/js/
 ```
 
 ## 9. Re-running
@@ -241,6 +263,9 @@ The bootstrap is idempotent:
 - SHA-256 and size are checked,
 - an already extracted package is reused while its stored package hash matches,
 - a changed package hash causes that package tree to be recreated.
+- documentation browser assets are reused while their generated asset signature and
+  expected files are present; changing one of the pinned browser versions recreates
+  `Docs/js`.
 
 To force one package to be extracted again, remove its corresponding file from:
 
