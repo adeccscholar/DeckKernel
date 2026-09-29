@@ -3,6 +3,7 @@
 The complete project documentation is rendered from the `Docs` directory by the
 DeckKernel documentation server.
 
+- [Getting started](Docs/GETTING_STARTED.md)
 - [Project documentation](Docs/README.md)
 - [PostgreSQL setup](Docs/POSTGRESQL_SETUP.md)
 - [Documentation server](Docs/DOCU_SERVER.md)
