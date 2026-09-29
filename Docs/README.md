@@ -67,3 +67,22 @@ Images used by Markdown documents belong below `Docs/images`.
 The documentation server recursively discovers Markdown files below `Docs`. New
 documents placed in the category directories therefore become selectable without adding
 a new server route.
+
+## Documentation writing convention
+
+Build guides are learning material, not only command collections. Each executable example
+should explain its motivation, prerequisites, source structure, build steps, expected
+result, internal data flow and useful next steps.
+
+A fenced `cmd` block contains exactly one command that can be pasted directly into the
+C++Builder Developer Command Prompt:
+
+```cmd
+cmake --build src\docu_server\build\Debug
+```
+
+CMake configure, build and install calls are always written as separate one-line `cmd`
+blocks. Other fenced blocks can contain multiple lines; the documentation client copies
+the complete block so source files, SQL, XML, configuration files and scripts can be
+reused without selecting their text manually. Mermaid blocks are rendered as diagrams
+and therefore do not receive a copy button.
