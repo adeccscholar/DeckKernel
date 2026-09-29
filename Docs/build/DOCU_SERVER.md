@@ -47,10 +47,15 @@ The browser-side versions follow the current BuildEngine server configuration:
 | highlight.js | 11.12.0 | syntax highlighting |
 | MathJax | 3.2.2 | TeX/LaTeX formulas |
 
-The browser-side assets are versioned directly in the DeckKernel repository below
-`Docs/js`. The server serves them directly from `Docs/js`. They exist exactly once and are
-independent of Debug and Release. No CDN or additional web-asset download step is
-required after cloning the repository.
+The server serves browser-side assets from the single central `Docs/js` directory.
+Debug and Release never receive separate copies.
+
+At the current repository state, the third-party browser assets are still present in Git.
+This is transitional. The intended model is to download and verify the pinned third-party
+web assets during documentation preparation and keep only DeckKernel-owned browser code,
+such as `docu_client.js`, under source control. The repository must not remove those
+third-party files until the corresponding reproducible preparation step is committed and
+available to a fresh checkout.
 
 The native cmark-gfm parser remains part of the locked BuildEngine ThirdParty stack and
 its runtime DLLs are installed beside the server executable.
@@ -122,15 +127,43 @@ apps\Debug\deckkernel_docu_server.exe
 Because the executable resides in `apps/<Configuration>`, the default repository root is
 derived from the executable location. `--root` can override it.
 
-Default endpoint:
+The default server configuration is read from:
 
-    http://127.0.0.1:8770/docs/
+```text
+Docs\Documentation.xml
+```
 
-Options:
+Current configuration:
 
-    --root <repository-root>
-    --address <concrete IP address>
-    --port <1..65535>
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<documentation>
+   <server address="127.0.0.1" port="8770"/>
+</documentation>
+```
+
+The default endpoint is therefore:
+
+```text
+http://127.0.0.1:8770/docs/
+```
+
+BuildEngine Server uses port `8765` by default. DeckKernel deliberately uses `8770` so
+both documentation servers can run at the same time.
+
+Command-line values remain invocation overrides:
+
+```text
+--config <file>
+--root <repository-root>
+--address <concrete IP address>
+--port <1..65535>
+```
+
+The XML structure is intentionally minimal today. Future versions can add presentation
+configuration such as selectable stylesheets or renderer-specific settings for Markdown,
+syntax highlighting, MathJax, Mermaid and other browser components without changing the
+command-line contract.
 
 ## Printing
 
