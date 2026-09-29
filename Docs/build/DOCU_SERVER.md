@@ -121,3 +121,20 @@ The print style:
 The server is read-only and supports GET only. It binds to `127.0.0.1` by default.
 Document paths reject parent traversal, backslashes and drive prefixes before filesystem
 access. Binding to an unspecified or multicast address is rejected.
+
+## Copyable command blocks
+
+For beginner-oriented build instructions, a one-line fenced Markdown block with language
+`cmd` is treated as a command that can be copied directly:
+
+```text
+```cmd
+cmake --build src\docu_server\build\Debug
+```
+```
+
+The browser client adds a **Copy** button only when the `cmd` block contains exactly one
+command line. Multi-line command blocks remain normal syntax-highlighted code blocks.
+
+This behaviour is implemented in `Docs/js/docu_client.js`; no special Markdown syntax is
+introduced beyond the normal fenced-code language name.
