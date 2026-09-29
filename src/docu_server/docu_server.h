@@ -13,6 +13,7 @@ struct ServerConfiguration {
    std::filesystem::path aRepositoryRoot;
    std::filesystem::path aRuntimeDirectory;
    std::string strBindAddress{ "127.0.0.1" };
+   std::string strServerName{ "localhost" };
    std::uint16_t uPort{ 8770U };
    };
 
