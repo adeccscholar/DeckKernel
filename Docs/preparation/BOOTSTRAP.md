@@ -29,19 +29,25 @@ contained `bootstrap` and `Cache` directories directly into the project.
 
 The two lock files come from StackBuilder and are not included in this ZIP.
 
-Before distributing the project, the project maintainer edits exactly one
-project-specific value in:
-
-[BootstrapConfig.cmake](../../bootstrap/BootstrapConfig.cmake)
-
-Replace:
+The project-owned bootstrap configuration is kept in
+`bootstrap/BootstrapConfig.cmake`. Its relevant current content is:
 
 ```cmake
-https://github.com/adeccscholar/REPLACE-ME-ThirdParty
+if(NOT DEFINED ADECC_PACKAGE_REPOSITORY)
+   set(ADECC_PACKAGE_REPOSITORY "https://github.com/adeccscholar/DeckKernel")
+endif()
+
+if(NOT DEFINED ADECC_REQUIRED_TOOLCHAIN)
+   set(ADECC_REQUIRED_TOOLCHAIN "bcc64x")
+endif()
+
+if(NOT DEFINED ADECC_NINJA_VERSION)
+   set(ADECC_NINJA_VERSION "1.13.2")
+endif()
 ```
 
-with the GitHub repository that contains the StackBuilder ZIP files as Release
-Assets.  End users do not have to enter that URL.
+The package repository is a project-owned setting. End users do not have to enter a URL
+or select a package source manually.
 
 ## 2. End-user prerequisites
 
