@@ -185,6 +185,22 @@ The server is read-only and supports GET only. It binds to `127.0.0.1` by defaul
 Document paths reject parent traversal, backslashes and drive prefixes before filesystem
 access. Binding to an unspecified or multicast address is rejected.
 
+## Table of contents
+
+DeckKernel supports the same Markdown table-of-contents directive as the BuildEngine
+server:
+
+```text
+[TOC|Caption]
+```
+
+The directive is handled before cmark-gfm rendering. Headings below the directive are
+collected, receive stable document-local anchors and are rendered as a nested table of
+contents. Headings on the main level also receive a **Back to Caption** link.
+
+The syntax is intentionally compatible with BuildEngine. The current implementation
+recognizes the directive in uppercase as `[TOC|...]`.
+
 ## Copyable code blocks
 
 The browser client adds a **Copy** button to fenced code blocks. Mermaid source is the
