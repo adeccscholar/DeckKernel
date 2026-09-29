@@ -1,5 +1,7 @@
 # DeckKernel bootstrap
 
+[TOC|Bootstrap]
+
 This ZIP is laid out relative to the project repository root.  Copy/extract the
 contained `bootstrap` and `Cache` directories directly into the project.
 
