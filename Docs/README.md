@@ -62,6 +62,17 @@ Docs/
 The JavaScript runtimes, syntax-highlighting stylesheet and documentation client script
 exist only once below `Docs/js`; there is no Debug/Release duplication.
 
+The DeckKernel-owned client code remains source-controlled. Third-party browser assets are
+intended to become reproducibly downloaded and verified preparation artifacts rather than
+permanent repository payload. They must only be removed from Git once that preparation
+step is present in the repository and works for a fresh checkout.
+
+Server settings are stored centrally in `Docs/Documentation.xml`. The current DeckKernel
+documentation server uses port `8770`; the BuildEngine server uses `8765`, so both can
+run concurrently. The XML file deliberately contains only current server settings. It is
+the future extension point for presentation settings such as stylesheet or renderer
+selection.
+
 Images used by Markdown documents belong below `Docs/images`.
 
 The documentation server recursively discovers Markdown files below `Docs`. New
