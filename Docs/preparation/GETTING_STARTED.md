@@ -50,7 +50,7 @@ required for the documentation server.
 
 From the DeckKernel repository root:
 
-```bat
+```cmd
 git pull
 ```
 
@@ -74,14 +74,21 @@ The documentation server uses these native packages:
 - Boost 1.92.0 for Asio/Beast;
 - cmark-gfm 0.29.0.gfm.13 for Markdown parsing.
 
-The browser-side assets are already versioned in the repository:
+The browser-side assets are already versioned once in the central documentation tree:
 
 ```text
-src/docu_server/assets/vendor/
-   highlightjs/11.12.0/
-   mermaid/11.17.2/
-   mathjax/3.2.2/
+Docs/
+   js/
+      docu_client.js
+      highlight.min.js
+      github.min.css
+      mermaid.min.js
+      mathjax-tex-svg.js
+   images/
 ```
+
+There is no Debug/Release copy of these web assets. Both server configurations serve the
+same files directly from `Docs/js`.
 
 Their upstream licence texts are stored below `licenses/`.
 
