@@ -244,10 +244,15 @@ using tcp = asio::ip::tcp;
    http::request<http::string_body> const& aRequest,
    ServerConfiguration const& aConfiguration
 ) {
+   auto const svHost =
+      aRequest[http::field::host];
+
    std::string const strHost =
       HostNameOnly(
-         aRequest[http::field::host]
-            .to_string()
+         std::string_view{
+            svHost.data(),
+            svHost.size()
+            }
          );
 
    if(strHost.empty()) {
