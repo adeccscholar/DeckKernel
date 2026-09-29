@@ -1,6 +1,7 @@
 # DeckKernel
 
-> **Documentation navigation:** [PostgreSQL setup](POSTGRESQL_SETUP.md) ·
+> **Documentation navigation:** [Getting started](GETTING_STARTED.md) ·
+> [PostgreSQL setup](POSTGRESQL_SETUP.md) ·
 > [Scryfall data model](SCRYFALL_DATA_MODEL.md) ·
 > [adecc license rules](ADECC_LICENSE_RULES.md) ·
 > [adecc Book License](ADECC_BOOK_LICENSE.md) ·
