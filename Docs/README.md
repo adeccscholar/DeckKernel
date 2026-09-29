@@ -3,6 +3,7 @@
 > **Documentation navigation:** [Getting started](GETTING_STARTED.md) ·
 > [PostgreSQL setup](POSTGRESQL_SETUP.md) ·
 > [Scryfall data model](SCRYFALL_DATA_MODEL.md) ·
+> [First connection test](FIRST_CONNECTION_TEST.md) ·
 > [adecc license rules](ADECC_LICENSE_RULES.md) ·
 > [adecc Book License](ADECC_BOOK_LICENSE.md) ·
 > [Documentation server](DOCU_SERVER.md) ·
