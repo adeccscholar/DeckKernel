@@ -184,6 +184,99 @@ using tcp = asio::ip::tcp;
    }
 
 
+[[nodiscard]] std::string HostNameOnly(
+   std::string_view const svHost
+) {
+   std::string strHost{ svHost };
+
+   while(!strHost.empty() &&
+         std::isspace(
+            static_cast<unsigned char>(strHost.front())
+            ) != 0) {
+      strHost.erase(strHost.begin());
+      }
+
+   while(!strHost.empty() &&
+         std::isspace(
+            static_cast<unsigned char>(strHost.back())
+            ) != 0) {
+      strHost.pop_back();
+      }
+
+   if(strHost.empty()) {
+      return strHost;
+      }
+
+   if(strHost.front() == '[') {
+      std::size_t const uClose = strHost.find(']');
+      if(uClose != std::string::npos) {
+         return Lower(
+            strHost.substr(
+               1U,
+               uClose - 1U
+               )
+            );
+         }
+      }
+
+   std::size_t const uFirstColon = strHost.find(':');
+   std::size_t const uLastColon = strHost.rfind(':');
+
+   if(uFirstColon != std::string::npos &&
+      uFirstColon == uLastColon) {
+      strHost.resize(uFirstColon);
+      }
+
+   return Lower(std::move(strHost));
+   }
+
+
+[[nodiscard]] bool IsLoopbackName(
+   std::string_view const svHost
+) noexcept {
+   return svHost == "localhost" ||
+          svHost == "127.0.0.1" ||
+          svHost == "::1";
+   }
+
+
+[[nodiscard]] bool HostAllowed(
+   http::request<http::string_body> const& aRequest,
+   ServerConfiguration const& aConfiguration
+) {
+   std::string const strHost =
+      HostNameOnly(
+         aRequest[http::field::host]
+            .to_string()
+         );
+
+   if(strHost.empty()) {
+      return false;
+      }
+
+   std::string const strServerName =
+      Lower(aConfiguration.strServerName);
+   std::string const strBindAddress =
+      Lower(aConfiguration.strBindAddress);
+
+   if(strHost == strServerName ||
+      strHost == strBindAddress) {
+      return true;
+      }
+
+   boost::system::error_code aAddressError;
+   asio::ip::address const aAddress =
+      asio::ip::make_address(
+         aConfiguration.strBindAddress,
+         aAddressError
+         );
+
+   return !aAddressError &&
+          aAddress.is_loopback() &&
+          IsLoopbackName(strHost);
+   }
+
+
 [[nodiscard]] std::filesystem::path SafeRelativeFile(
    std::filesystem::path const& aRoot,
    std::string_view const svRequestPath
@@ -675,6 +768,17 @@ void DocuServer::Run() {
                aRequest,
                http::status::method_not_allowed,
                "only GET is supported"
+               );
+            }
+         else if(!HostAllowed(
+            aRequest,
+            aConfiguration
+            )) {
+            WriteTextError(
+               aSocket,
+               aRequest,
+               http::status::bad_request,
+               "invalid Host header"
                );
             }
          else {
