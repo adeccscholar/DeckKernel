@@ -43,6 +43,12 @@ Executable learning projects and how to build, install, run and verify them:
 Future applications should receive their own build guide here. Each guide should begin
 with the motivation for the application and the concepts it is intended to teach.
 
+## Security
+
+Current documentation-server transport and deployment boundary:
+
+- [Documentation server security boundary](security/SECURITY.md)
+
 ## Licenses
 
 Project and documentation dependency rules:
