@@ -39,13 +39,13 @@ The browser-side versions follow the current BuildEngine server configuration:
 | highlight.js | 11.12.0 | syntax highlighting |
 | MathJax | 3.2.2 | TeX/LaTeX formulas |
 
-The DeckKernel bootstrap now provisions the same pinned browser assets below
-`Cache/tools/web` using the versions, download locations and SHA-256 values already used
-by BuildEngine. The server install step copies them into `apps/<Configuration>/web` and
-serves them locally. After bootstrap, rendering therefore does not depend on a CDN.
+The browser-side assets are versioned directly in the DeckKernel repository below
+`src/docu_server/assets/vendor`. The server install step copies them into
+`apps/<Configuration>/web` and serves them locally. No CDN or additional web-asset
+download step is required after cloning the repository.
 
-The cmark-gfm parser is taken from the locked BuildEngine ThirdParty stack and its runtime
-DLLs are installed beside the server executable.
+The native cmark-gfm parser remains part of the locked BuildEngine ThirdParty stack and
+its runtime DLLs are installed beside the server executable.
 
 ## Build and install
 
@@ -71,9 +71,9 @@ The default installation is:
 
     apps\Release\
 
-The whole `apps/` directory is intentionally excluded from Git. Re-run the repository
-bootstrap after pulling the documentation-server changes so the pinned Mermaid,
-highlight.js and MathJax assets are available.
+The whole `apps/` directory is intentionally excluded from Git. The browser-side
+assets already come with the repository; the bootstrap is required only for native
+ThirdParty packages and build tools.
 
 ## Start
 
