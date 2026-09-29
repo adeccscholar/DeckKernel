@@ -31,7 +31,7 @@ git pull
 
 ### 2. Bootstrap the locked ThirdParty stack
 
-```bat
+```cmd
 cmake -P bootstrap\Bootstrap.cmake
 ```
 
@@ -40,13 +40,13 @@ Ninja installation used by this test.
 
 ### 3. Configure Debug
 
-```bat
+```cmd
 cmake -S test\firstconnect -B test\firstconnect\build\Debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 ```
 
 ### 4. Build Debug
 
-```bat
+```cmd
 cmake --build test\firstconnect\build\Debug
 ```
 
@@ -63,29 +63,39 @@ resolve and install DLLs from ThirdParty/.../bin/win64/Debug, while Release uses
 the corresponding Release directories. If an older build tree was configured with
 the wrong build type, delete that build directory and configure it again.
 
-```bat
+```cmd
 cmake --install test\firstconnect\build\Debug
 ```
 
 ### 6. Start Debug
 
-```bat
+```cmd
 apps\Debug\deckkernel_scryfall_postgres_test.exe
 ```
 
 ## Release build
 
-Configure, build and install Release separately:
+Configure Release:
 
-```bat
+```cmd
 cmake -S test\firstconnect -B test\firstconnect\build\Release -G Ninja -DCMAKE_BUILD_TYPE=Release
+```
+
+Build Release:
+
+```cmd
 cmake --build test\firstconnect\build\Release
+```
+
+Install Release:
+
+```cmd
 cmake --install test\firstconnect\build\Release
 ```
 
 Start it with:
 
-```bat
+```cmd
 apps\Release\deckkernel_scryfall_postgres_test.exe
 ```
 
