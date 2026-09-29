@@ -31,14 +31,18 @@ Command Prompt.
 git pull
 ```
 
-### 2. Bootstrap the locked ThirdParty stack
+### 2. Prepare the project with the bootstrap
+
+Run the project bootstrap before configuring this example:
 
 ```cmd
 cmake -P bootstrap\Bootstrap.cmake
 ```
 
-The bootstrap provides the pinned bcc64x ThirdParty packages and project-local
-Ninja installation used by this test.
+The bootstrap itself is documented separately. This guide does not duplicate its
+package, tool or documentation-asset preparation rules:
+
+[DeckKernel bootstrap](../preparation/BOOTSTRAP.md)
 
 ### 3. Configure Debug
 
