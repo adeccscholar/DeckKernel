@@ -1,5 +1,7 @@
 # DeckKernel documentation server
 
+[TOC|Documentation server]
+
 ## Motivation
 
 DeckKernel is a learning project. The documentation server is therefore itself a small
@@ -180,6 +182,11 @@ The print style:
 - prints external link targets as text.
 
 ## Security scope
+
+The complete server security boundary is documented in:
+
+[Security boundary](../security/SECURITY.md)
+
 
 The server is read-only and supports GET only. It binds to `127.0.0.1` by default.
 Document paths reject parent traversal, backslashes and drive prefixes before filesystem
