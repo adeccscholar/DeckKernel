@@ -78,26 +78,6 @@ if(NOT DEFINED ADECC_TP_CMARK_GFM_ROOT)
    message(FATAL_ERROR "cmark-gfm is missing from the bootstrapped ThirdParty stack.")
 endif()
 
-set(
-   DECKKERNEL_MERMAID_FILE
-   "${CMAKE_CURRENT_LIST_DIR}/assets/vendor/mermaid/11.17.2/mermaid.min.js"
-)
-
-set(
-   DECKKERNEL_HIGHLIGHT_FILE
-   "${CMAKE_CURRENT_LIST_DIR}/assets/vendor/highlightjs/11.12.0/highlight.min.js"
-)
-
-set(
-   DECKKERNEL_HIGHLIGHT_STYLE
-   "${CMAKE_CURRENT_LIST_DIR}/assets/vendor/highlightjs/11.12.0/styles/github.min.css"
-)
-
-set(
-   DECKKERNEL_MATHJAX_FILE
-   "${CMAKE_CURRENT_LIST_DIR}/assets/vendor/mathjax/3.2.2/es5/tex-svg.js"
-)
-
 add_executable(
    deckkernel_docu_server
    main.cpp
@@ -140,36 +120,6 @@ install(
    OPTIONAL
    FILES_MATCHING
       PATTERN "*.dll"
-)
-
-install(
-   FILES
-      "${DECKKERNEL_MERMAID_FILE}"
-   DESTINATION web/mermaid
-)
-
-install(
-   FILES
-      "${DECKKERNEL_HIGHLIGHT_FILE}"
-   DESTINATION web/highlighting
-)
-
-install(
-   FILES
-      "${DECKKERNEL_HIGHLIGHT_STYLE}"
-   DESTINATION web/highlighting/styles
-)
-
-install(
-   FILES
-      "${DECKKERNEL_MATHJAX_FILE}"
-   DESTINATION web/mathjax/es5
-)
-
-install(
-   FILES
-      "${CMAKE_CURRENT_LIST_DIR}/assets/docu_client.js"
-   DESTINATION web/client
 )
 
 message(STATUS "docu-server build type       : ${CMAKE_BUILD_TYPE}")

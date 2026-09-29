@@ -1,14 +1,14 @@
 # DeckKernel
 
-The complete project documentation is rendered from the `Docs` directory by the
-DeckKernel documentation server.
+The complete project documentation lives below `Docs` and is rendered by the DeckKernel
+documentation server.
 
-- [Getting started](Docs/GETTING_STARTED.md)
-- [Project documentation](Docs/README.md)
-- [PostgreSQL setup](Docs/POSTGRESQL_SETUP.md)
-- [Documentation server](Docs/DOCU_SERVER.md)
-- [First connection build and test](Docs/FIRST_CONNECTION_TEST.md)
-- [Scryfall data model and design analysis](Docs/SCRYFALL_DATA_MODEL.md)
+- [Documentation start page](Docs/README.md)
+- [Getting started](Docs/preparation/GETTING_STARTED.md)
+- [Project vision](Docs/ideas/PROJECT_VISION.md)
+- [Scryfall data model](Docs/model/SCRYFALL_DATA_MODEL.md)
+- [Documentation server build](Docs/build/DOCU_SERVER.md)
+- [First connection build and test](Docs/build/FIRST_CONNECTION_TEST.md)
 
-Local application deployments are written below `apps/Debug` or `apps/Release`.
+Local executable deployments are written below `apps/Debug` or `apps/Release`.
 The `apps/` directory is intentionally not tracked by Git.

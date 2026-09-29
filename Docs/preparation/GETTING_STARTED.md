@@ -166,11 +166,11 @@ documentation therefore does not depend on a CDN after the repository has been c
 
 For implementation details see:
 
-[Documentation server](DOCU_SERVER.md)
+[Documentation server](../build/DOCU_SERVER.md)
 
 For licensing details of cmark-gfm and the browser-side assets see:
 
-[Documentation ThirdParty](DOCUMENTATION_THIRDPARTY.md)
+[Documentation ThirdParty](../licenses/DOCUMENTATION_THIRDPARTY.md)
 
 ---
 
@@ -199,7 +199,7 @@ Complete this preparation before running the first-connect application.
 
 The complete lesson and test description is here:
 
-[First connection test](FIRST_CONNECTION_TEST.md)
+[First connection test](../build/FIRST_CONNECTION_TEST.md)
 
 The short Debug sequence is:
 
@@ -244,7 +244,7 @@ query and text-grid evaluation
 
 The conceptual Scryfall/card-game model is documented centrally in:
 
-[Scryfall data model and design analysis](SCRYFALL_DATA_MODEL.md)
+[Scryfall data model and design analysis](../model/SCRYFALL_DATA_MODEL.md)
 
 ---
 

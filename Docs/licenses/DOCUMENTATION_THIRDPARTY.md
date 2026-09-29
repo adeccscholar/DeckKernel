@@ -17,21 +17,12 @@ documentation server self-contained once the repository has been cloned.
 ## Repository layout
 
 ```text
-src/docu_server/assets/vendor/
-   highlightjs/
-      11.12.0/
-         highlight.min.js
-         styles/
-            github.min.css
-
-   mermaid/
-      11.17.2/
-         mermaid.min.js
-
-   mathjax/
-      3.2.2/
-         es5/
-            tex-svg.js
+Docs/js/
+   docu_client.js
+   highlight.min.js
+   github.min.css
+   mermaid.min.js
+   mathjax-tex-svg.js
 ```
 
 The corresponding upstream licence texts are retained below:
@@ -98,7 +89,7 @@ on a CDN.
 ## Client-side printing
 
 Printing belongs to the browser client. The server supplies rendered HTML, local browser
-assets and print CSS. `src/docu_server/assets/docu_client.js` waits for fonts, MathJax
+assets and print CSS. `Docs/js/docu_client.js` waits for fonts, MathJax
 and Mermaid rendering before invoking the browser print dialog.
 
 This keeps screen and print rendering on the same client-side pipeline and avoids a

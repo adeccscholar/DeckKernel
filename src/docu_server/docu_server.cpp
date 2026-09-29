@@ -264,7 +264,7 @@ using tcp = asio::ip::tcp;
    if(boHighlight) {
       osHtml
          << "<link rel=\"stylesheet\" "
-            "href=\"/js/highlighting/styles/github.min.css\">";
+            "href=\"/docs/js/github.min.css\">";
       }
 
    osHtml
@@ -291,8 +291,12 @@ using tcp = asio::ip::tcp;
       << ".markdown blockquote{margin-left:0;border-left:4px solid #94a3b8;"
          "padding-left:16px;color:#475569}"
       << ".markdown code{font-family:Consolas,monospace}"
-      << ".markdown pre{overflow:auto;background:#f8fafc;border:1px solid #e2e8f0;"
-         "border-radius:10px;padding:14px}"
+      << ".markdown pre{position:relative;overflow:auto;background:#f8fafc;"
+         "border:1px solid #e2e8f0;border-radius:10px;padding:14px}"
+      << ".markdown pre.copy-command{padding-top:42px}"
+      << ".copy-command-button{position:absolute;right:8px;top:8px;"
+         "border:1px solid #94a3b8;border-radius:6px;background:white;"
+         "padding:4px 9px;font:600 12px Segoe UI,Arial,sans-serif;cursor:pointer}"
       << ".markdown table{border-collapse:collapse;width:100%;margin:16px 0}"
       << ".markdown th,.markdown td{border:1px solid #d9e2ef;padding:8px 10px;"
          "text-align:left;vertical-align:top}"
@@ -306,7 +310,7 @@ using tcp = asio::ip::tcp;
       << ".doc-list li{margin:.45rem 0}"
       << "@media print{"
          "@page{margin:15mm}"
-         "header,.hero,.print-button{display:none!important}"
+         "header,.hero,.print-button,.copy-command-button{display:none!important}"
          "body{background:white;color:black}"
          "main{max-width:none;padding:0;margin:0}"
          ".markdown{border:0;border-radius:0;box-shadow:none;padding:0}"
@@ -340,12 +344,12 @@ using tcp = asio::ip::tcp;
             "[\'\\\\(\',\'\\\\)\']],displayMath:[[\'$$\',\'$$\'],"
             "[\'\\\\[\',\'\\\\]\']]},svg:{fontCache:\'global\'}};"
             "</script>"
-         << "<script defer src=\"/js/mathjax/es5/tex-svg.js\"></script>";
+         << "<script defer src=\"/docs/js/mathjax-tex-svg.js\"></script>";
       }
 
    if(boHighlight) {
       osHtml
-         << "<script defer src=\"/js/highlighting/highlight.min.js\"></script>"
+         << "<script defer src=\"/docs/js/highlight.min.js\"></script>"
          << "<script>"
             "window.addEventListener(\'DOMContentLoaded\',()=>{"
             "if(window.hljs)window.hljs.highlightAll();});"
@@ -354,7 +358,7 @@ using tcp = asio::ip::tcp;
 
    if(boMermaid) {
       osHtml
-         << "<script defer src=\"/js/mermaid/mermaid.min.js\"></script>"
+         << "<script defer src=\"/docs/js/mermaid.min.js\"></script>"
          << "<script>"
             "window.addEventListener(\'DOMContentLoaded\',async()=>{"
             "document.querySelectorAll(\'pre code.language-mermaid\')"
@@ -368,7 +372,7 @@ using tcp = asio::ip::tcp;
       }
 
    osHtml
-      << "<script defer src=\"/js/client/docu_client.js\"></script>"
+      << "<script defer src=\"/docs/js/docu_client.js\"></script>"
       << "</body></html>";
    return osHtml.str();
    }
@@ -694,29 +698,6 @@ void DocuServer::Run() {
                      aSocket,
                      aRequest,
                      aFile
-                     );
-                  }
-               }
-            else if(svPath.starts_with("/js/")) {
-               std::filesystem::path const aFile =
-                  SafeRelativeFile(
-                     aConfiguration.aRuntimeDirectory / L"web",
-                     svPath.substr(4U)
-                     );
-
-               if(std::filesystem::is_regular_file(aFile)) {
-                  WriteFile(
-                     aSocket,
-                     aRequest,
-                     aFile
-                     );
-                  }
-               else {
-                  WriteTextError(
-                     aSocket,
-                     aRequest,
-                     http::status::not_found,
-                     "web asset not found"
                      );
                   }
                }

@@ -1,5 +1,13 @@
 # DeckKernel documentation server
 
+## Motivation
+
+DeckKernel is a learning project. The documentation server is therefore itself a small
+project to build and understand: it turns the repository-owned Markdown documentation
+into a local website and gives beginners a visible result before they start with the
+database and Scryfall examples.
+
+
 The documentation server renders the Markdown files below `Docs/` directly from the repository.
 
 It reuses the architecture already proven by the BuildEngine server:
@@ -40,9 +48,9 @@ The browser-side versions follow the current BuildEngine server configuration:
 | MathJax | 3.2.2 | TeX/LaTeX formulas |
 
 The browser-side assets are versioned directly in the DeckKernel repository below
-`src/docu_server/assets/vendor`. The server install step copies them into
-`apps/<Configuration>/web` and serves them locally. No CDN or additional web-asset
-download step is required after cloning the repository.
+`Docs/js`. The server serves them directly from `Docs/js`. They exist exactly once and are
+independent of Debug and Release. No CDN or additional web-asset download step is
+required after cloning the repository.
 
 The native cmark-gfm parser remains part of the locked BuildEngine ThirdParty stack and
 its runtime DLLs are installed beside the server executable.

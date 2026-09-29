@@ -1,5 +1,13 @@
 # First connection test
 
+## Motivation
+
+This is the first end-to-end DeckKernel learning project. It connects a real external
+data source, parsing, typed C++ structures, the adecc database abstraction and PostgreSQL.
+The point is not only to get a successful program run, but to make the path from network
+data to persistent relational data visible and understandable.
+
+
 This directory contains the first end-to-end DeckKernel infrastructure test.
 It validates the complete path from Scryfall bulk data through the adecc database
 abstraction into PostgreSQL and back into the text-grid abstraction.
@@ -216,4 +224,4 @@ The example is split so each technical step can be discussed independently:
                             composition, timing, evaluation/grid output
 
 The data model remains in scryfall_model.h. The Scryfall field and domain reference is
-documented centrally in `Docs\SCRYFALL_DATA_MODEL.md`.
+documented centrally in `Docs\model\SCRYFALL_DATA_MODEL.md`.

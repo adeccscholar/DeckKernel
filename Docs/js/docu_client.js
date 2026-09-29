@@ -43,6 +43,64 @@
       }
    }
 
+   async function copyText(theText) {
+      if(navigator.clipboard?.writeText) {
+         await navigator.clipboard.writeText(theText);
+         return;
+      }
+
+      const textArea = document.createElement("textarea");
+      textArea.value = theText;
+      textArea.style.position = "fixed";
+      textArea.style.opacity = "0";
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand("copy");
+      textArea.remove();
+   }
+
+   function installCommandCopyButtons() {
+      document.querySelectorAll("pre > code.language-cmd").forEach((code) => {
+         let command = code.textContent.replace(/\r\n/g, "\n");
+         command = command.replace(/\n$/, "");
+
+         if(command.length === 0 || command.includes("\n")) {
+            return;
+         }
+
+         const pre = code.parentElement;
+         if(!pre || pre.querySelector(".copy-command-button")) {
+            return;
+         }
+
+         pre.classList.add("copy-command");
+
+         const button = document.createElement("button");
+         button.type = "button";
+         button.className = "copy-command-button";
+         button.textContent = "Copy";
+         button.title = "Copy command to clipboard";
+
+         button.addEventListener("click", async () => {
+            try {
+               await copyText(command);
+               button.textContent = "Copied";
+               window.setTimeout(() => {
+                  button.textContent = "Copy";
+               }, 1200);
+            }
+            catch {
+               button.textContent = "Copy failed";
+               window.setTimeout(() => {
+                  button.textContent = "Copy";
+               }, 1800);
+            }
+         });
+
+         pre.appendChild(button);
+      });
+   }
+
    async function printDocument() {
       const button = document.getElementById("print-document");
 
@@ -73,8 +131,9 @@
    }
 
    window.addEventListener("DOMContentLoaded", () => {
-      const button = document.getElementById("print-document");
+      installCommandCopyButtons();
 
+      const button = document.getElementById("print-document");
       if(button) {
          button.addEventListener("click", () => {
             void printDocument();

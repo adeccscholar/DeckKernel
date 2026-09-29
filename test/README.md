@@ -1,11 +1,12 @@
 # DeckKernel tests
 
-## PostgreSQL
+The test sources remain below `test/`, while preparation and build instructions are kept
+in the central documentation tree.
 
-Server and Windows SSPI setup:
+## PostgreSQL preparation
 
 ```text
-Docs\POSTGRESQL_SETUP.md
+Docs\preparation\POSTGRESQL_SETUP.md
 ```
 
 Administrative SQL used by that setup:
@@ -16,14 +17,14 @@ test\postgresql_sspi_setup.sql
 
 ## First connection
 
-The end-to-end Scryfall/PostgreSQL test now lives in:
+Sources:
 
 ```text
 test\firstconnect
 ```
 
-Build, install and start instructions:
+Motivation, build, install, run and verification guide:
 
 ```text
-test\firstconnect\README.md
+Docs\build\FIRST_CONNECTION_TEST.md
 ```
