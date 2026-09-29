@@ -146,7 +146,7 @@ add_executable(
 target_include_directories(
    deckkernel_docu_server
    PRIVATE
-      "${ADECC_TP_BOOST_ROOT}/include"
+      ${ADECC_TP_BOOST_INCLUDE_DIRS}
 )
 
 target_compile_definitions(
