@@ -12,11 +12,11 @@ libraries.
 | Mermaid | 11.17.2 | diagrams | pinned browser asset |
 | MathJax | 3.2.2 | TeX/LaTeX rendering | pinned browser asset |
 
-The browser assets are currently present inside the DeckKernel repository, but this is a
-transitional state. The intended model is to download and verify the exact pinned browser
-files during documentation preparation. Only DeckKernel-owned browser code should remain
-permanently versioned once that reproducible preparation step is available in the
-repository.
+The browser runtime assets are not stored in the repository. The project bootstrap
+downloads the pinned browser libraries into the generated `Docs/js` directory. The
+DeckKernel-owned browser client is versioned separately below
+`src/docu_server/web/docu_client.js` and copied into `Docs/js` by the same preparation
+step.
 
 ## Repository layout
 
@@ -93,9 +93,9 @@ bootstrap
       +--> build tools
 ```
 
-The downloaded files must be version-pinned and verified. Until that preparation step is
-committed and usable from a fresh checkout, the currently vendored copies remain required
-for a working repository.
+The generated `Docs/js` directory is ignored by Git and recreated by the normal project
+bootstrap when its asset signature is missing or no longer matches the configured
+versions.
 
 ## Client-side printing
 
