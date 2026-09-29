@@ -7,13 +7,16 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace deckkernel::docu {
 namespace {
@@ -27,6 +30,24 @@ struct CmarkMemory {
    void* (*fnCalloc)(std::size_t, std::size_t);
    void* (*fnRealloc)(void*, std::size_t);
    void (*fnFree)(void*);
+   };
+
+
+struct MarkdownHeading {
+   std::size_t uLevel{};
+   std::string strTitle;
+   std::string strAnchor;
+   };
+
+
+struct TocPreparation {
+   bool boEnabled{};
+   std::string strMarkdown;
+   std::string strTitle;
+   std::string strToken;
+   std::string strTocAnchor;
+   std::size_t uMainLevel{};
+   std::vector<MarkdownHeading> vecHeadings;
    };
 
 
@@ -113,6 +134,507 @@ template <typename function_ty>
    }
 
 
+[[nodiscard]] std::string HtmlEscape(
+   std::string_view const svValue
+) {
+   std::string strResult;
+   strResult.reserve(svValue.size());
+
+   for(char const chValue : svValue) {
+      switch(chValue) {
+         case '&': strResult += "&amp;"; break;
+         case '<': strResult += "&lt;"; break;
+         case '>': strResult += "&gt;"; break;
+         case '"': strResult += "&quot;"; break;
+         case '\'': strResult += "&#39;"; break;
+         default: strResult += chValue; break;
+         }
+      }
+
+   return strResult;
+   }
+
+
+[[nodiscard]] std::uint64_t MarkdownHash(
+   std::string_view const svMarkdown
+) noexcept {
+   std::uint64_t uHash{ 14695981039346656037ULL };
+
+   for(unsigned char const chValue : svMarkdown) {
+      uHash ^= static_cast<std::uint64_t>(chValue);
+      uHash *= 1099511628211ULL;
+      }
+
+   return uHash;
+   }
+
+
+[[nodiscard]] std::string PlainHeadingTitle(
+   std::string_view const svTitle
+) {
+   std::string strResult;
+   strResult.reserve(svTitle.size());
+
+   for(char const chValue : svTitle) {
+      if(chValue == '`' ||
+         chValue == '*' ||
+         chValue == '_') {
+         continue;
+         }
+
+      strResult += chValue;
+      }
+
+   return strResult;
+   }
+
+
+[[nodiscard]] bool ParseTocDirective(
+   std::string_view const svLine,
+   std::string& strTitle
+) {
+   std::string_view const svTrimmed =
+      TrimHorizontalWhitespace(svLine);
+
+   if(!svTrimmed.starts_with("[TOC|") ||
+      !svTrimmed.ends_with(']')) {
+      return false;
+      }
+
+   std::string_view const svTitle =
+      TrimHorizontalWhitespace(
+         svTrimmed.substr(
+            5U,
+            svTrimmed.size() - 6U
+            )
+         );
+
+   strTitle =
+      svTitle.empty()
+         ? "Content"
+         : std::string{ svTitle };
+
+   return true;
+   }
+
+
+[[nodiscard]] bool ParseHeading(
+   std::string_view const svLine,
+   std::size_t& uLevel,
+   std::string& strTitle
+) {
+   std::string_view svValue =
+      TrimHorizontalWhitespace(svLine);
+
+   uLevel = 0U;
+
+   while(uLevel < svValue.size() &&
+         uLevel < 6U &&
+         svValue[uLevel] == '#') {
+      ++uLevel;
+      }
+
+   if(uLevel == 0U ||
+      (
+         uLevel < svValue.size() &&
+         svValue[uLevel] != ' ' &&
+         svValue[uLevel] != '\t'
+      )) {
+      return false;
+      }
+
+   svValue.remove_prefix(uLevel);
+   svValue = TrimHorizontalWhitespace(svValue);
+
+   std::size_t uHashBegin = svValue.size();
+
+   while(uHashBegin > 0U &&
+         svValue[uHashBegin - 1U] == '#') {
+      --uHashBegin;
+      }
+
+   if(uHashBegin < svValue.size() &&
+      uHashBegin > 0U &&
+      (
+         svValue[uHashBegin - 1U] == ' ' ||
+         svValue[uHashBegin - 1U] == '\t'
+      )) {
+      svValue =
+         TrimHorizontalWhitespace(
+            svValue.substr(0U, uHashBegin - 1U)
+            );
+      }
+
+   strTitle = PlainHeadingTitle(svValue);
+   return true;
+   }
+
+
+[[nodiscard]] std::size_t FenceLength(
+   std::string_view const svLine,
+   char const chFence
+) noexcept {
+   std::size_t uLength{};
+
+   while(uLength < svLine.size() &&
+         svLine[uLength] == chFence) {
+      ++uLength;
+      }
+
+   return uLength;
+   }
+
+
+[[nodiscard]] TocPreparation PrepareToc(
+   std::string_view const svMarkdown
+) {
+   TocPreparation aResult;
+   aResult.strMarkdown.reserve(
+      svMarkdown.size() + 64U
+      );
+
+   std::uint64_t const uDocumentHash =
+      MarkdownHash(svMarkdown);
+   std::string const strHash =
+      std::format("{:016x}", uDocumentHash);
+
+   aResult.strToken =
+      "DECKKERNEL_TOC_" + strHash;
+   aResult.strTocAnchor =
+      "dk-toc-" + strHash;
+
+   bool boAfterToc{};
+   bool boInFence{};
+   char chFence{};
+   std::size_t uFenceLength{};
+   std::size_t uPosition{};
+
+   while(uPosition < svMarkdown.size()) {
+      std::size_t const uLineEnd =
+         svMarkdown.find('\n', uPosition);
+      std::size_t const uNext =
+         uLineEnd == std::string_view::npos
+            ? svMarkdown.size()
+            : uLineEnd + 1U;
+      std::size_t uContentEnd =
+         uLineEnd == std::string_view::npos
+            ? svMarkdown.size()
+            : uLineEnd;
+
+      if(uContentEnd > uPosition &&
+         svMarkdown[uContentEnd - 1U] == '\r') {
+         --uContentEnd;
+         }
+
+      std::string_view const svLine =
+         svMarkdown.substr(
+            uPosition,
+            uContentEnd - uPosition
+            );
+      std::string_view const svTrimmed =
+         TrimHorizontalWhitespace(svLine);
+
+      bool boFenceLine{};
+
+      if(!svTrimmed.empty() &&
+         (
+            svTrimmed.front() == '`' ||
+            svTrimmed.front() == '~'
+         )) {
+         char const chCandidate =
+            svTrimmed.front();
+         std::size_t const uCandidateLength =
+            FenceLength(
+               svTrimmed,
+               chCandidate
+               );
+
+         if(uCandidateLength >= 3U) {
+            if(!boInFence) {
+               boInFence = true;
+               chFence = chCandidate;
+               uFenceLength = uCandidateLength;
+               boFenceLine = true;
+               }
+            else if(
+               chCandidate == chFence &&
+               uCandidateLength >= uFenceLength &&
+               TrimHorizontalWhitespace(
+                  svTrimmed.substr(uCandidateLength)
+                  ).empty()
+            ) {
+               boInFence = false;
+               chFence = 0;
+               uFenceLength = 0U;
+               boFenceLine = true;
+               }
+            }
+         }
+
+      if(!boFenceLine &&
+         !boInFence) {
+         std::string strDirectiveTitle;
+
+         if(!aResult.boEnabled &&
+            ParseTocDirective(
+               svLine,
+               strDirectiveTitle
+               )) {
+            aResult.boEnabled = true;
+            boAfterToc = true;
+            aResult.strTitle =
+               std::move(strDirectiveTitle);
+            aResult.strMarkdown +=
+               aResult.strToken;
+
+            if(uLineEnd != std::string_view::npos) {
+               aResult.strMarkdown += '\n';
+               }
+
+            uPosition = uNext;
+            continue;
+            }
+
+         if(boAfterToc) {
+            std::size_t uLevel{};
+            std::string strTitle;
+
+            if(ParseHeading(
+               svLine,
+               uLevel,
+               strTitle
+               )) {
+               if(aResult.uMainLevel == 0U ||
+                  uLevel < aResult.uMainLevel) {
+                  aResult.uMainLevel = uLevel;
+                  }
+
+               aResult.vecHeadings.emplace_back(
+                  MarkdownHeading{
+                     .uLevel = uLevel,
+                     .strTitle = std::move(strTitle),
+                     .strAnchor =
+                        "dk-heading-" +
+                        strHash +
+                        "-" +
+                        std::to_string(
+                           aResult.vecHeadings.size() + 1U
+                           )
+                     }
+                  );
+               }
+            }
+         }
+
+      aResult.strMarkdown.append(
+         svMarkdown.substr(
+            uPosition,
+            uNext - uPosition
+            )
+         );
+      uPosition = uNext;
+      }
+
+   if(!aResult.boEnabled) {
+      aResult.strMarkdown.assign(svMarkdown);
+      }
+
+   return aResult;
+   }
+
+
+void AppendTocLevel(
+   std::string& strHtml,
+   std::vector<MarkdownHeading> const& vecHeadings,
+   std::vector<std::size_t> const& vecParents,
+   std::size_t const uParent
+) {
+   bool boOpened{};
+
+   for(std::size_t uHeading{};
+       uHeading < vecHeadings.size();
+       ++uHeading) {
+      if(vecParents[uHeading] != uParent) {
+         continue;
+         }
+
+      if(!boOpened) {
+         strHtml += "<ul>";
+         boOpened = true;
+         }
+
+      MarkdownHeading const& aHeading =
+         vecHeadings[uHeading];
+
+      strHtml +=
+         "<li><a href=\"#" +
+         aHeading.strAnchor +
+         "\">" +
+         HtmlEscape(aHeading.strTitle) +
+         "</a>";
+
+      AppendTocLevel(
+         strHtml,
+         vecHeadings,
+         vecParents,
+         uHeading
+         );
+
+      strHtml += "</li>";
+      }
+
+   if(boOpened) {
+      strHtml += "</ul>";
+      }
+   }
+
+
+[[nodiscard]] std::string BuildTocHtml(
+   TocPreparation const& aPreparation
+) {
+   constexpr std::size_t uNoParent =
+      static_cast<std::size_t>(-1);
+
+   std::vector<std::size_t> vecParents(
+      aPreparation.vecHeadings.size(),
+      uNoParent
+      );
+
+   for(std::size_t uHeading{};
+       uHeading < aPreparation.vecHeadings.size();
+       ++uHeading) {
+      for(std::size_t uCandidate = uHeading;
+          uCandidate > 0U;
+          --uCandidate) {
+         std::size_t const uPrevious =
+            uCandidate - 1U;
+
+         if(
+            aPreparation.vecHeadings[uPrevious].uLevel <
+            aPreparation.vecHeadings[uHeading].uLevel
+         ) {
+            vecParents[uHeading] = uPrevious;
+            break;
+            }
+         }
+      }
+
+   std::string strHtml =
+      "<a id=\"" +
+      aPreparation.strTocAnchor +
+      "\"></a>\n"
+      "<nav class=\"markdown-toc\" aria-label=\"" +
+      HtmlEscape(aPreparation.strTitle) +
+      "\"><h2>" +
+      HtmlEscape(aPreparation.strTitle) +
+      "</h2>";
+
+   AppendTocLevel(
+      strHtml,
+      aPreparation.vecHeadings,
+      vecParents,
+      uNoParent
+      );
+
+   strHtml += "</nav>\n";
+   return strHtml;
+   }
+
+
+void ApplyTocHtml(
+   std::string& strHtml,
+   TocPreparation const& aPreparation
+) {
+   if(!aPreparation.boEnabled) {
+      return;
+      }
+
+   std::string const strPlaceholder =
+      "<p>" +
+      aPreparation.strToken +
+      "</p>";
+
+   std::size_t const uPlaceholder =
+      strHtml.find(strPlaceholder);
+
+   if(uPlaceholder == std::string::npos) {
+      throw std::runtime_error{
+         "Markdown TOC placeholder was not rendered as expected"
+         };
+      }
+
+   std::string const strToc =
+      BuildTocHtml(aPreparation);
+
+   strHtml.replace(
+      uPlaceholder,
+      strPlaceholder.size(),
+      strToc
+      );
+
+   std::size_t uSearch =
+      uPlaceholder + strToc.size();
+
+   for(MarkdownHeading const& aHeading :
+       aPreparation.vecHeadings) {
+      std::string const strHeadingTag =
+         "<h" +
+         std::to_string(aHeading.uLevel) +
+         ">";
+
+      std::size_t uHeading =
+         strHtml.find(
+            strHeadingTag,
+            uSearch
+            );
+
+      if(uHeading == std::string::npos) {
+         throw std::runtime_error{
+            "Markdown TOC heading sequence does not match rendered HTML"
+            };
+         }
+
+      std::string strPrefix;
+
+      if(aHeading.uLevel ==
+         aPreparation.uMainLevel) {
+         strPrefix +=
+            "<p class=\"markdown-back-to-toc\">"
+            "<a href=\"#" +
+            aPreparation.strTocAnchor +
+            "\">Back to " +
+            HtmlEscape(aPreparation.strTitle) +
+            "</a></p>\n";
+         }
+
+      if(!strPrefix.empty()) {
+         strHtml.insert(
+            uHeading,
+            strPrefix
+            );
+         uHeading += strPrefix.size();
+         }
+
+      std::string const strAnchoredHeadingTag =
+         "<h" +
+         std::to_string(aHeading.uLevel) +
+         " id=\"" +
+         aHeading.strAnchor +
+         "\">";
+
+      strHtml.replace(
+         uHeading,
+         strHeadingTag.size(),
+         strAnchoredHeadingTag
+         );
+
+      uSearch =
+         uHeading +
+         strAnchoredHeadingTag.size();
+      }
+   }
+
+
 [[nodiscard]] bool ContainsMath(
    std::string_view const svMarkdown
 ) noexcept {
@@ -126,6 +648,12 @@ template <typename function_ty>
    std::filesystem::path const& aRuntimeDirectory,
    std::string_view const svMarkdown
 ) {
+   TocPreparation const aToc =
+      PrepareToc(svMarkdown);
+   std::string_view const svPreparedMarkdown{
+      aToc.strMarkdown
+      };
+
    Module const aCore{ aRuntimeDirectory / L"libcmark-gfm.dll" };
    Module const aExtensions{
       aRuntimeDirectory / L"libcmark-gfm-extensions.dll"
@@ -276,8 +804,8 @@ template <typename function_ty>
 
    fnParserFeed(
       upParser.get(),
-      svMarkdown.data(),
-      svMarkdown.size()
+      svPreparedMarkdown.data(),
+      svPreparedMarkdown.size()
       );
 
    node_ptr_ty upDocument{
@@ -310,8 +838,14 @@ template <typename function_ty>
          };
       }
 
+   std::string strHtml{ upHtml.get() };
+   ApplyTocHtml(
+      strHtml,
+      aToc
+      );
+
    return MarkdownRenderResult{
-      .strHtml = std::string{ upHtml.get() },
+      .strHtml = std::move(strHtml),
       .aFeatures = MarkdownRenderer::Analyze(svMarkdown)
       };
    }
