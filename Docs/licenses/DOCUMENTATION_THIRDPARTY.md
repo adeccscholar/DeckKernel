@@ -47,14 +47,14 @@ terms and additional notices for derived code.
 
 ## highlight.js
 
-highlight.js 11.12.0 is distributed under BSD-3-Clause. The exact JavaScript runtime and
-GitHub stylesheet used by DeckKernel are stored in the repository together with the
-upstream licence text.
+highlight.js 11.12.0 is distributed under BSD-3-Clause. The project bootstrap downloads
+the exact JavaScript runtime and GitHub stylesheet into the generated `Docs/js` tree.
+The upstream licence text remains versioned with the project.
 
 ## Mermaid
 
-Mermaid 11.17.2 is MIT licensed at project level. The repository stores the exact browser
-bundle used by the documentation server.
+Mermaid 11.17.2 is MIT licensed at project level. The project bootstrap downloads the
+browser bundle used by the documentation server into the generated `Docs/js` tree.
 
 Because the browser bundle contains Mermaid's production dependency closure, binary/web
 redistribution should preserve the relevant transitive notices when required. The
@@ -63,8 +63,9 @@ dependency has identical terms.
 
 ## MathJax
 
-MathJax 3.2.2 is distributed under Apache-2.0. DeckKernel stores the exact `tex-svg.js`
-runtime used by the browser together with the upstream licence text.
+MathJax 3.2.2 is distributed under Apache-2.0. The project bootstrap downloads the
+`tex-svg.js` runtime used by the browser. The upstream licence text remains versioned
+with the project.
 
 ## Browser asset preparation model
 
