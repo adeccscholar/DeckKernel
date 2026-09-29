@@ -1,5 +1,7 @@
 # First connection test
 
+[TOC|First connection test]
+
 ## Motivation
 
 This is the first end-to-end DeckKernel learning project. It connects a real external
