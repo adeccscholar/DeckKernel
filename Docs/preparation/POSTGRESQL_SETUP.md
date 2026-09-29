@@ -204,12 +204,8 @@ ORDER BY tablename;
 
 For the first-connect tables, the owner should be `deckkernel_user`.
 
-If not, rerun:
-
-```text
-test\postgresql_sspi_setup.sql
-```
-
+If not, rerun the
+[PostgreSQL SSPI setup script](../../test/postgresql_sspi_setup.sql)
 as the PostgreSQL administrator.
 
 ## 11. Application connection defaults
