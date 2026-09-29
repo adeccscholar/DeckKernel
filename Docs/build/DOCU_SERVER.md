@@ -128,24 +128,20 @@ derived from the executable location. `--root` can override it.
 
 The default server configuration is read from:
 
-```text
-Docs\Documentation.xml
-```
+[Documentation.xml](../Documentation.xml)
 
 Current configuration:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <documentation>
-   <server address="127.0.0.1" port="8770"/>
+   <server address="127.0.0.1" name="localhost" port="8770"/>
 </documentation>
 ```
 
 The default endpoint is therefore:
 
-```text
-http://127.0.0.1:8770/docs/
-```
+[Open the DeckKernel documentation](http://127.0.0.1:8770/docs/)
 
 BuildEngine Server uses port `8765` by default. DeckKernel deliberately uses `8770` so
 both documentation servers can run at the same time.
