@@ -32,9 +32,7 @@ The two lock files come from StackBuilder and are not included in this ZIP.
 Before distributing the project, the project maintainer edits exactly one
 project-specific value in:
 
-```text
-bootstrap/BootstrapConfig.cmake
-```
+[BootstrapConfig.cmake](../../bootstrap/BootstrapConfig.cmake)
 
 Replace:
 
