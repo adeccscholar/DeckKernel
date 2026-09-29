@@ -58,6 +58,28 @@ set(OPENSSL_INCLUDE_DIR "${ADECC_TP_OPENSSL_ROOT}/include")
 
 set(ZLIB_ROOT          "${ADECC_TP_ZLIB_ROOT}")
 
+# Boost contains an additional bcc64x/Clang compatibility include tree in the
+# StackBuilder package. It must precede the normal Boost include directory so
+# Boost.Config sees the bcc64x-specific overrides before the upstream headers.
+set(ADECC_TP_BOOST_INCLUDE_DIRS)
+
+set(
+   _adecc_boost_native_clang_candidates
+   "${ADECC_REPOSITORY_ROOT}/ThirdParty/boost/bcc64x-native-clang/include"
+   "${ADECC_REPOSITORY_ROOT}/ThirdParty/boost/bcc64x-native-clang"
+   "${ADECC_TP_BOOST_ROOT}/bcc64x-native-clang/include"
+   "${ADECC_TP_BOOST_ROOT}/bcc64x-native-clang"
+)
+
+foreach(_adecc_boost_include IN LISTS _adecc_boost_native_clang_candidates)
+   if(EXISTS "${_adecc_boost_include}/boost")
+      list(APPEND ADECC_TP_BOOST_INCLUDE_DIRS "${_adecc_boost_include}")
+      break()
+   endif()
+endforeach()
+
+list(APPEND ADECC_TP_BOOST_INCLUDE_DIRS "${ADECC_TP_BOOST_ROOT}/include")
+
 if(NOT TARGET nlohmann_json::nlohmann_json)
    add_library(nlohmann_json::nlohmann_json INTERFACE IMPORTED)
    set_target_properties(
@@ -68,6 +90,7 @@ if(NOT TARGET nlohmann_json::nlohmann_json)
 endif()
 
 message(STATUS "adecc repository root       : ${ADECC_REPOSITORY_ROOT}")
+message(STATUS "adecc Boost include dirs    : ${ADECC_TP_BOOST_INCLUDE_DIRS}")
 message(STATUS "adecc ThirdParty config     : ${ADECC_THIRDPARTY_CONFIGURATION}")
 message(STATUS "adecc curl root             : ${ADECC_TP_CURL_ROOT}")
 message(STATUS "adecc OpenSSL root          : ${ADECC_TP_OPENSSL_ROOT}")
