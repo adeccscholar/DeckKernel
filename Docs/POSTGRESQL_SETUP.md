@@ -7,9 +7,7 @@ database password.
 
 The first connection test itself is documented in:
 
-```text
-test\firstconnect\README.md
-```
+[FIRST_CONNECTION_TEST.md](FIRST_CONNECTION_TEST.md)
 
 ## 1. Administrative PostgreSQL connection
 
