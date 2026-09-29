@@ -1,5 +1,7 @@
 # DeckKernel documentation
 
+[TOC|Documentation]
+
 This directory is the single root of the DeckKernel documentation.
 
 DeckKernel is also intended for beginners. Build guides therefore do not only list
