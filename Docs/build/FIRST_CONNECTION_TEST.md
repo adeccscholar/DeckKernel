@@ -16,9 +16,7 @@ abstraction into PostgreSQL and back into the text-grid abstraction.
 
 The PostgreSQL server must be prepared first. See:
 
-```text
-POSTGRESQL_SETUP.md
-```
+[PostgreSQL setup](../preparation/POSTGRESQL_SETUP.md)
 
 ## From git pull to program start
 
@@ -240,4 +238,5 @@ The example is split so each technical step can be discussed independently:
                             composition, timing, evaluation/grid output
 
 The data model remains in scryfall_model.h. The Scryfall field and domain reference is
-documented centrally in `Docs\model\SCRYFALL_DATA_MODEL.md`.
+documented centrally in the
+[Scryfall data model](../model/SCRYFALL_DATA_MODEL.md).
