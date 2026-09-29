@@ -165,8 +165,8 @@ The server renders the Markdown files below `Docs/` and provides:
 - local document assets;
 - browser-side printing after Mermaid and MathJax rendering has completed.
 
-All browser assets are served locally from the installed application. The rendered
-documentation therefore does not depend on a CDN after the repository has been cloned.
+All browser assets are served locally from the generated `Docs/js` tree. After the
+project bootstrap has prepared that directory, rendering does not depend on a CDN.
 
 For implementation details see:
 
