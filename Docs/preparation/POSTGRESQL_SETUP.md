@@ -46,7 +46,38 @@ Reconnect the Query Tool to database `DeckKernel`.
 
 While connected to `DeckKernel` as an administrator, execute:
 
-[postgresql_sspi_setup.sql](../../test/postgresql_sspi_setup.sql)
+```sql
+DO $
+BEGIN
+   IF NOT EXISTS (
+      SELECT 1
+      FROM pg_catalog.pg_roles
+      WHERE rolname = 'deckkernel_user'
+   ) THEN
+      CREATE ROLE deckkernel_user LOGIN;
+   END IF;
+END
+$;
+
+GRANT CONNECT ON DATABASE "DeckKernel" TO deckkernel_user;
+
+CREATE SCHEMA IF NOT EXISTS deckkernel_test AUTHORIZATION deckkernel_user;
+ALTER SCHEMA deckkernel_test OWNER TO deckkernel_user;
+
+GRANT USAGE, CREATE ON SCHEMA deckkernel_test TO deckkernel_user;
+
+DO $
+BEGIN
+   IF to_regclass('deckkernel_test.scryfall_cards') IS NOT NULL THEN
+      ALTER TABLE deckkernel_test.scryfall_cards OWNER TO deckkernel_user;
+   END IF;
+
+   IF to_regclass('deckkernel_test.scryfall_sets') IS NOT NULL THEN
+      ALTER TABLE deckkernel_test.scryfall_sets OWNER TO deckkernel_user;
+   END IF;
+END
+$;
+```
 
 The script:
 
@@ -204,9 +235,7 @@ ORDER BY tablename;
 
 For the first-connect tables, the owner should be `deckkernel_user`.
 
-If not, rerun the
-[PostgreSQL SSPI setup script](../../test/postgresql_sspi_setup.sql)
-as the PostgreSQL administrator.
+If not, rerun the SQL block from section 3 as the PostgreSQL administrator.
 
 ## 11. Application connection defaults
 
