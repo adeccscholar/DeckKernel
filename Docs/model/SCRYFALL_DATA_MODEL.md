@@ -517,7 +517,7 @@ assuming the URI is permanent.
 Preview metadata describes the public reveal of a card before or around release.
 
 | Attribute | Meaning | Domain | Stability |
-| --- | --- | --- | --- | --- |
+| --- | --- | --- | --- |
 | `previewed_at` | Date on which the card was previewed | ISO date | Stable once known; corrections possible |
 | `source_uri` | Link to article/video/source that revealed it | URI | Technical; link may age/change |
 | `source` | Human-readable source name | string | Usually stable |
