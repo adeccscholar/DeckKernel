@@ -10,6 +10,9 @@
 
 #include <Windows.h>
 
+#include <boost/property_tree/ptree.hpp>
+#include <boost/property_tree/xml_parser.hpp>
+
 #include <array>
 #include <cstdint>
 #include <filesystem>
@@ -48,9 +51,10 @@ namespace {
 
 
 [[nodiscard]] std::uint16_t ParsePort(
-   char const* const szValue
+   std::string_view const svValue
 ) {
-   unsigned long const uPort = std::stoul(szValue);
+   unsigned long const uPort =
+      std::stoul(std::string{ svValue });
 
    if(uPort == 0UL ||
       uPort > 65535UL) {
@@ -60,6 +64,44 @@ namespace {
       }
 
    return static_cast<std::uint16_t>(uPort);
+   }
+
+
+
+void LoadConfiguration(
+   std::filesystem::path const& aFile,
+   deckkernel::docu::ServerConfiguration& aConfiguration
+) {
+   if(!std::filesystem::is_regular_file(aFile)) {
+      throw std::runtime_error{
+         "documentation server configuration is missing: " +
+         aFile.string()
+         };
+      }
+
+   boost::property_tree::ptree aTree;
+   boost::property_tree::read_xml(
+      aFile.string(),
+      aTree,
+      boost::property_tree::xml_parser::trim_whitespace
+      );
+
+   auto const& aServer =
+      aTree.get_child("documentation.server");
+
+   aConfiguration.strBindAddress =
+      aServer.get<std::string>(
+         "<xmlattr>.address",
+         aConfiguration.strBindAddress
+         );
+
+   aConfiguration.uPort =
+      ParsePort(
+         aServer.get<std::string>(
+            "<xmlattr>.port",
+            std::to_string(aConfiguration.uPort)
+            )
+         );
    }
 
 } // namespace
@@ -79,10 +121,38 @@ int main(
          .aRuntimeDirectory = aExecutableDirectory
          };
 
+      std::filesystem::path aConfigurationFile =
+         aConfiguration.aRepositoryRoot /
+         L"Docs" /
+         L"Documentation.xml";
+
       for(int iIndex = 1; iIndex < iArgc; ++iIndex) {
          std::string_view const svArgument{ argv[iIndex] };
 
-         if(svArgument == "--root") {
+         if(svArgument == "--config") {
+            if(++iIndex >= iArgc) {
+               throw std::runtime_error{
+                  "--config requires a path"
+                  };
+               }
+
+            aConfigurationFile =
+               std::filesystem::path{ argv[iIndex] };
+            }
+         }
+
+      LoadConfiguration(
+         aConfigurationFile,
+         aConfiguration
+         );
+
+      for(int iIndex = 1; iIndex < iArgc; ++iIndex) {
+         std::string_view const svArgument{ argv[iIndex] };
+
+         if(svArgument == "--config") {
+            ++iIndex;
+            }
+         else if(svArgument == "--root") {
             if(++iIndex >= iArgc) {
                throw std::runtime_error{
                   "--root requires a path"
@@ -117,6 +187,7 @@ int main(
          ) {
             std::println(
                "usage: deckkernel_docu_server "
+               "[--config <file>] "
                "[--root <repository>] "
                "[--address <IP>] "
                "[--port <1..65535>]"
