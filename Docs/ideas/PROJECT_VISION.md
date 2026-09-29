@@ -276,7 +276,7 @@ The prerequisites and the complete one-command setup are documented in:
 
 The intended first setup is:
 
-```bat
+```cmd
 cmake -P bootstrap\Bootstrap.cmake
 ```
 
