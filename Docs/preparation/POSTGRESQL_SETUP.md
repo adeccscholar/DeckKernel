@@ -46,9 +46,7 @@ Reconnect the Query Tool to database `DeckKernel`.
 
 While connected to `DeckKernel` as an administrator, execute:
 
-```text
-test\postgresql_sspi_setup.sql
-```
+[postgresql_sspi_setup.sql](../../test/postgresql_sspi_setup.sql)
 
 The script:
 
