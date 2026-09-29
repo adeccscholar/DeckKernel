@@ -1,5 +1,7 @@
 # Documentation ThirdParty dependencies
 
+[TOC|Documentation ThirdParty]
+
 The documentation server uses one native ThirdParty library and three browser-side
 libraries.
 
