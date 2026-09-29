@@ -187,7 +187,7 @@ instead of issuing one HTTP request per card.
 For the lesson we use the `default_cards` export.
 
 | Attribute | What it means | Domain / type | Change expectation | Suggested PostgreSQL type |
-| --- | --- | --- | --- | --- |
+| --- | --- | --- | --- |
 | `object` | Identifies the JSON object class | discriminator string | Technical; stable per object kind | `text` |
 | `id` | Scryfall identifier of the bulk-data definition | UUID | Identity | `uuid` |
 | `type` | Which export this is | domain-like string | Stable, but new types may be added | lookup/domain |
