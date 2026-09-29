@@ -435,20 +435,42 @@ using tcp = asio::ip::tcp;
    std::ostringstream osBody;
    osBody
       << "<section class=\"hero\"><h1>DeckKernel Documentation</h1>"
-      << "<p>Markdown sources from the repository Docs directory.</p></section>"
-      << "<section class=\"doc-list\"><ul>";
+      << "<p>Markdown sources from the repository Docs directory.</p></section>";
+
+   std::string strCurrentCategory;
 
    for(std::filesystem::path const& aDocument : vecDocuments) {
       std::string const strPath = aDocument.generic_string();
+      std::string strCategory =
+         aDocument.parent_path().generic_string();
+
+      if(strCategory.empty()) {
+         strCategory = "overview";
+         }
+
+      if(strCategory != strCurrentCategory) {
+         if(!strCurrentCategory.empty()) {
+            osBody << "</ul></section>";
+            }
+
+         strCurrentCategory = strCategory;
+         osBody
+            << "<section class=\"doc-list\"><h2>"
+            << HtmlEscape(strCurrentCategory)
+            << "</h2><ul>";
+         }
+
       osBody
          << "<li><a href=\"/docs/"
          << PercentEncode(strPath)
          << "\">"
-         << HtmlEscape(strPath)
+         << HtmlEscape(aDocument.filename().string())
          << "</a></li>";
       }
 
-   osBody << "</ul></section>";
+   if(!strCurrentCategory.empty()) {
+      osBody << "</ul></section>";
+      }
 
    return Page(
       "DeckKernel Documentation",
