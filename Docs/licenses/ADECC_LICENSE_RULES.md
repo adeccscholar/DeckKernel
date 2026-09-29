@@ -1,5 +1,7 @@
 # adecc libraries in DeckKernel
 
+[TOC|License rules]
+
 The `adecc/` directory is the licensing boundary for reusable first-party adecc C++ libraries used by DeckKernel.
 
 ## Public use
