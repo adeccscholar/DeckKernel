@@ -95,6 +95,12 @@ void LoadConfiguration(
          aConfiguration.strBindAddress
          );
 
+   aConfiguration.strServerName =
+      aServer.get<std::string>(
+         "<xmlattr>.name",
+         aConfiguration.strServerName
+         );
+
    aConfiguration.uPort =
       ParsePort(
          aServer.get<std::string>(
@@ -171,6 +177,15 @@ int main(
 
             aConfiguration.strBindAddress = argv[iIndex];
             }
+         else if(svArgument == "--name") {
+            if(++iIndex >= iArgc) {
+               throw std::runtime_error{
+                  "--name requires a server name"
+                  };
+               }
+
+            aConfiguration.strServerName = argv[iIndex];
+            }
          else if(svArgument == "--port") {
             if(++iIndex >= iArgc) {
                throw std::runtime_error{
@@ -190,6 +205,7 @@ int main(
                "[--config <file>] "
                "[--root <repository>] "
                "[--address <IP>] "
+               "[--name <server-name>] "
                "[--port <1..65535>]"
                );
             return 0;
