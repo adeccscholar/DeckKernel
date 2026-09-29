@@ -1,5 +1,7 @@
 # PostgreSQL setup for DeckKernel tests
 
+[TOC|PostgreSQL setup]
+
 This guide prepares a local PostgreSQL installation on Windows for the DeckKernel
 functional tests. The application uses the dedicated PostgreSQL role
 `deckkernel_user` and authenticates it through Windows SSPI without sending a
