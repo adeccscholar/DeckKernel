@@ -124,9 +124,7 @@ apps\Debug\deckkernel_docu_server.exe
 
 Open:
 
-```text
-http://127.0.0.1:8770/docs/
-```
+[DeckKernel documentation](http://127.0.0.1:8770/docs/)
 
 ### Release
 
