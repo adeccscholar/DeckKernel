@@ -122,19 +122,35 @@ The server is read-only and supports GET only. It binds to `127.0.0.1` by defaul
 Document paths reject parent traversal, backslashes and drive prefixes before filesystem
 access. Binding to an unspecified or multicast address is rejected.
 
-## Copyable command blocks
+## Copyable code blocks
 
-For beginner-oriented build instructions, a one-line fenced Markdown block with language
-`cmd` is treated as a command that can be copied directly:
+The browser client adds a **Copy** button to fenced code blocks. Mermaid source is the
+only exception because it is transformed into a rendered diagram.
 
-```text
+For beginner-oriented build instructions, language `cmd` has a specific convention:
+it contains exactly one command that can be pasted directly into the C++Builder
+Developer Command Prompt.
+
+For example:
+
 ```cmd
 cmake --build src\docu_server\build\Debug
 ```
+
+CMake commands in the build guides must use this one-command form. Configure, build,
+install and start are therefore shown as separate blocks rather than as a multi-line
+script.
+
+Multi-line fenced blocks are also copyable. They are copied as one complete block, which
+is useful for source files, configuration fragments, SQL, XML and longer scripts:
+
+```xml
+<example>
+   <value>DeckKernel</value>
+</example>
 ```
 
-The browser client adds a **Copy** button only when the `cmd` block contains exactly one
-command line. Multi-line command blocks remain normal syntax-highlighted code blocks.
+The copy behaviour is implemented in `Docs/js/docu_client.js`; no non-standard Markdown
+syntax is required.
 
-This behaviour is implemented in `Docs/js/docu_client.js`; no special Markdown syntax is
-introduced beyond the normal fenced-code language name.
+---
