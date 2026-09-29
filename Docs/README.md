@@ -1,6 +1,9 @@
 # DeckKernel
 
 > **Documentation navigation:** [PostgreSQL setup](POSTGRESQL_SETUP.md) ·
+> [Scryfall data model](SCRYFALL_DATA_MODEL.md) ·
+> [adecc license rules](ADECC_LICENSE_RULES.md) ·
+> [adecc Book License](ADECC_BOOK_LICENSE.md) ·
 > [Documentation server](DOCU_SERVER.md) ·
 > [Documentation ThirdParty](DOCUMENTATION_THIRDPARTY.md)
 
@@ -555,7 +558,7 @@ flowchart TB
 
 For public use, the adecc sources remain available under the DeckKernel non-commercial license.
 
-A legitimate purchaser of **Rethinking C++ (C++ neu denken)** may additionally receive the rights defined in `ADECC_BOOK_LICENSE.md`, including use of the eligible `adecc/` sources in proprietary software.
+A legitimate purchaser of **Rethinking C++ (C++ neu denken)** may additionally receive the rights defined in [ADECC_BOOK_LICENSE.md](ADECC_BOOK_LICENSE.md), including use of the eligible `adecc/` sources in proprietary software.
 
 Use under the supplemental licence requires attribution to the **adecc C++ libraries** and is provided on an explicit **"AS IS"** basis without warranty, to the maximum extent permitted by applicable law. This reflects the educational, professional-development, and experimental origin of these reusable components; production users remain responsible for their own review, testing, validation, and security.
 
@@ -1039,7 +1042,7 @@ Price information, if added later, is informational only.
   https://polyformproject.org/licenses/noncommercial/1.0.0/
 
 - adecc Book License  
-  See `ADECC_BOOK_LICENSE.md`
+  See [ADECC_BOOK_LICENSE.md](ADECC_BOOK_LICENSE.md)
 
 ### Related books
 
