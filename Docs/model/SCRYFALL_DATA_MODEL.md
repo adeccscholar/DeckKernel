@@ -1,5 +1,7 @@
 # Scryfall data model for DeckKernel
 
+[TOC|Scryfall data model]
+
 This document explains the Scryfall data model from two perspectives:
 
 1. the **card game**: what the objects mean to a player, collector or deck builder;
