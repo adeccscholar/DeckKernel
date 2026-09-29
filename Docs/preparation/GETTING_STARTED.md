@@ -1,5 +1,7 @@
 # Preparing DeckKernel documentation and the first PostgreSQL test
 
+[TOC|Getting started]
+
 This document is the entry point for preparing a fresh DeckKernel checkout so that the
 project-owned Markdown documentation can be viewed through the DeckKernel documentation
 server and the first PostgreSQL/Scryfall test can be built and run.
