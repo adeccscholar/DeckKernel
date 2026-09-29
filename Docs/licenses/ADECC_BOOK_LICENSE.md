@@ -1,5 +1,7 @@
 # adecc Book License
 
+[TOC|adecc Book License]
+
 ## Supplemental license for purchasers of *Rethinking C++ (C++ neu denken)*
 
 **Status: Draft**
