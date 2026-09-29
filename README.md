@@ -7,7 +7,7 @@ DeckKernel documentation server.
 - [Project documentation](Docs/README.md)
 - [PostgreSQL setup](Docs/POSTGRESQL_SETUP.md)
 - [Documentation server](Docs/DOCU_SERVER.md)
-- [First connection lesson](test/firstconnect/README.md)
+- [First connection build and test](Docs/FIRST_CONNECTION_TEST.md)
 - [Scryfall data model and design analysis](Docs/SCRYFALL_DATA_MODEL.md)
 
 Local application deployments are written below `apps/Debug` or `apps/Release`.
