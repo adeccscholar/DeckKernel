@@ -427,3 +427,6 @@ message(STATUS "Bootstrap complete: ${_adecc_package_count} packages")
 message(STATUS "Tool paths       : ${ADECC_TOOLS_FILE}")
 message(STATUS "Package map      : ${ADECC_PACKAGES_FILE}")
 message(STATUS "ThirdParty root  : ${ADECC_THIRDPARTY_ROOT}")
+
+# Prepare the browser-side documentation assets in the generated Docs/js tree.
+include("${CMAKE_CURRENT_LIST_DIR}/PrepareDocumentationAssets.cmake")
