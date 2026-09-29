@@ -155,9 +155,7 @@ This supplemental license applies only to DeckKernel-owned source code located b
 
 The supplemental terms are documented separately in:
 
-```text
-ADECC_BOOK_LICENSE.md
-```
+[adecc Book License](../licenses/ADECC_BOOK_LICENSE.md)
 
 Because of the commercial-use restriction on the public project, DeckKernel should be described as **source-available**, not as OSI-approved open-source software.
 
