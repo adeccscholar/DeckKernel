@@ -199,7 +199,7 @@ Complete this preparation before running the first-connect application.
 
 The complete lesson and test description is here:
 
-[First connection test](../test/firstconnect/README.md)
+[First connection test](FIRST_CONNECTION_TEST.md)
 
 The short Debug sequence is:
 
