@@ -62,7 +62,7 @@ For a new checkout, clone the repository first and then change into its root dir
 
 Run:
 
-```bat
+```cmd
 cmake -P bootstrap\Bootstrap.cmake
 ```
 
@@ -100,22 +100,19 @@ Their upstream licence texts are stored below `licenses/`.
 
 Configure:
 
-```bat
-cmake -S src\docu_server ^
-   -B src\docu_server\build\Debug ^
-   -G Ninja ^
-   -DCMAKE_BUILD_TYPE=Debug
+```cmd
+cmake -S src\docu_server -B src\docu_server\build\Debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 ```
 
 Build:
 
-```bat
+```cmd
 cmake --build src\docu_server\build\Debug
 ```
 
 Install:
 
-```bat
+```cmd
 cmake --install src\docu_server\build\Debug
 ```
 
@@ -127,7 +124,7 @@ apps\Debug\
 
 Start it with:
 
-```bat
+```cmd
 apps\Debug\deckkernel_docu_server.exe
 ```
 
@@ -139,19 +136,25 @@ http://127.0.0.1:8770/docs/
 
 ### Release
 
-```bat
-cmake -S src\docu_server ^
-   -B src\docu_server\build\Release ^
-   -G Ninja ^
-   -DCMAKE_BUILD_TYPE=Release
+```cmd
+cmake -S src\docu_server -B src\docu_server\build\Release -G Ninja -DCMAKE_BUILD_TYPE=Release
+```
 
+Build:
+
+```cmd
 cmake --build src\docu_server\build\Release
+```
+
+Install:
+
+```cmd
 cmake --install src\docu_server\build\Release
 ```
 
 Start:
 
-```bat
+```cmd
 apps\Release\deckkernel_docu_server.exe
 ```
 
@@ -210,15 +213,19 @@ The complete lesson and test description is here:
 
 The short Debug sequence is:
 
-```bat
-cmake -S test\firstconnect ^
-   -B test\firstconnect\build\Debug ^
-   -G Ninja ^
-   -DCMAKE_BUILD_TYPE=Debug
+```cmd
+cmake -S test\firstconnect -B test\firstconnect\build\Debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
+```
 
+```cmd
 cmake --build test\firstconnect\build\Debug
-cmake --install test\firstconnect\build\Debug
+```
 
+```cmd
+cmake --install test\firstconnect\build\Debug
+```
+
+```cmd
 apps\Debug\deckkernel_scryfall_postgres_test.exe
 ```
 
@@ -259,14 +266,39 @@ The conceptual Scryfall/card-game model is documented centrally in:
 
 Use this sequence:
 
-```bat
+Update:
+
+```cmd
 git pull
+```
+
+Bootstrap:
+
+```cmd
 cmake -P bootstrap\Bootstrap.cmake
+```
 
+Configure:
+
+```cmd
 cmake -S src\docu_server -B src\docu_server\build\Debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
-cmake --build src\docu_server\build\Debug
-cmake --install src\docu_server\build\Debug
+```
 
+Build:
+
+```cmd
+cmake --build src\docu_server\build\Debug
+```
+
+Install:
+
+```cmd
+cmake --install src\docu_server\build\Debug
+```
+
+Start:
+
+```cmd
 apps\Debug\deckkernel_docu_server.exe
 ```
 
