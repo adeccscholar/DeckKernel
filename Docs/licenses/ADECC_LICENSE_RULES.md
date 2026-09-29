@@ -22,9 +22,7 @@ receive an additional licence for the DeckKernel-owned source code below this di
 
 The complete supplemental terms are defined in:
 
-```text
-ADECC_BOOK_LICENSE.md
-```
+[adecc Book License](ADECC_BOOK_LICENSE.md)
 
 The additional licence permits eligible developers to use the covered adecc sources in proprietary software, subject to its conditions.
 
