@@ -6,13 +6,15 @@ libraries.
 | Component | Version | Role | Distribution model |
 | --- | ---: | --- | --- |
 | cmark-gfm | 0.29.0.gfm.13 | native Markdown parser | locked ThirdParty release package |
-| highlight.js | 11.12.0 | syntax highlighting | repository-vendored web asset |
-| Mermaid | 11.17.2 | diagrams | repository-vendored web asset |
-| MathJax | 3.2.2 | TeX/LaTeX rendering | repository-vendored web asset |
+| highlight.js | 11.12.0 | syntax highlighting | pinned browser asset |
+| Mermaid | 11.17.2 | diagrams | pinned browser asset |
+| MathJax | 3.2.2 | TeX/LaTeX rendering | pinned browser asset |
 
-The browser assets are intentionally kept inside the DeckKernel repository. Git is already
-a project prerequisite, and keeping the exact browser files in the source tree makes the
-documentation server self-contained once the repository has been cloned.
+The browser assets are currently present inside the DeckKernel repository, but this is a
+transitional state. The intended model is to download and verify the exact pinned browser
+files during documentation preparation. Only DeckKernel-owned browser code should remain
+permanently versioned once that reproducible preparation step is available in the
+repository.
 
 ## Repository layout
 
@@ -62,20 +64,26 @@ dependency has identical terms.
 MathJax 3.2.2 is distributed under Apache-2.0. DeckKernel stores the exact `tex-svg.js`
 runtime used by the browser together with the upstream licence text.
 
-## Why the web assets are not ThirdParty release archives
+## Browser asset preparation model
 
-The browser files are not compiler- or platform-dependent libraries. They are already
-needed as exact static files by the client and Git is a prerequisite for obtaining
-DeckKernel.
+The browser files are not compiler- or platform-dependent libraries and do not need
+Debug/Release variants. They belong to one central runtime location below `Docs/js`.
 
-Keeping them in the repository therefore avoids an unnecessary second bootstrap path:
+The target preparation flow is:
 
 ```text
 git clone / git pull
       |
       +--> source code
       +--> Markdown documentation
-      +--> browser assets
+      +--> DeckKernel-owned browser code
+
+documentation preparation
+      |
+      +--> pinned highlight.js asset
+      +--> pinned Mermaid asset
+      +--> pinned MathJax asset
+      +--> pinned stylesheet assets
 
 bootstrap
       |
@@ -83,8 +91,9 @@ bootstrap
       +--> build tools
 ```
 
-This also makes it possible to prepare and build the documentation server without relying
-on a CDN.
+The downloaded files must be version-pinned and verified. Until that preparation step is
+committed and usable from a fresh checkout, the currently vendored copies remain required
+for a working repository.
 
 ## Client-side printing
 
