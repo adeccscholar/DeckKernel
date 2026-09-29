@@ -64,7 +64,7 @@ beginner for installation paths.
 
 From the repository root:
 
-```bat
+```cmd
 cmake -P bootstrap\Bootstrap.cmake
 ```
 
