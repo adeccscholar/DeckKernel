@@ -25,12 +25,15 @@ open project documentation in browser
       +--> first-connect build and test instructions
 ```
 
-The browser-side documentation assets are part of the DeckKernel repository itself.
-They are not downloaded by the bootstrap. This keeps the documentation server usable from
-a complete repository checkout without depending on a CDN or on an additional packaging
-step.
+The browser-side documentation assets are prepared by the project bootstrap and written
+to the generated `Docs/js` directory. That directory is intentionally not tracked by Git.
 
-The native Markdown parser `cmark-gfm` remains part of the normal locked ThirdParty
+The detailed bootstrap contract, including the native ThirdParty packages, tools and
+browser assets, is documented centrally in:
+
+[DeckKernel bootstrap](BOOTSTRAP.md)
+
+The native Markdown parser `cmark-gfm` remains part of the locked native ThirdParty
 stack because it is a compiled C library used by the documentation server.
 
 ---
@@ -60,7 +63,7 @@ For a new checkout, clone the repository first and then change into its root dir
 
 ---
 
-## 3. Bootstrap the native ThirdParty stack
+## 3. Run the project bootstrap
 
 Run:
 
@@ -68,31 +71,20 @@ Run:
 cmake -P bootstrap\Bootstrap.cmake
 ```
 
-This prepares the locked native dependencies below `ThirdParty/` and the project-local
-build tools below `Cache/`.
+This is the single preparation entry point. The implementation and all generated
+directories are described in:
 
-The documentation server uses these native packages:
+[DeckKernel bootstrap](BOOTSTRAP.md)
 
-- Boost 1.92.0 for Asio/Beast;
-- cmark-gfm 0.29.0.gfm.13 for Markdown parsing.
-
-The browser-side assets are already versioned once in the central documentation tree:
+After the bootstrap, the documentation server has one shared browser-asset directory:
 
 ```text
 Docs/
    js/
-      docu_client.js
-      highlight.min.js
-      github.min.css
-      mermaid.min.js
-      mathjax-tex-svg.js
    images/
 ```
 
-There is no Debug/Release copy of these web assets. Both server configurations serve the
-same files directly from `Docs/js`.
-
-Their upstream licence texts are stored below `licenses/`.
+There is no Debug/Release copy of the browser assets.
 
 ---
 
