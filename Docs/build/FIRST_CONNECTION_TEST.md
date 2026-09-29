@@ -25,7 +25,7 @@ Command Prompt.
 
 ### 1. Update the repository
 
-```bat
+```cmd
 git pull
 ```
 
