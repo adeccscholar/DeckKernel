@@ -60,15 +60,13 @@ endif()
 # Ninja build. This intentionally overrides a stale/cache-provided value.
 set(ADECC_THIRDPARTY_CONFIGURATION "${CMAKE_BUILD_TYPE}")
 
-if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-   set(
-      CMAKE_INSTALL_PREFIX
-      "${DECKKERNEL_ROOT}/apps/${CMAKE_BUILD_TYPE}"
-      CACHE PATH
-      "DeckKernel application deployment directory"
-      FORCE
-   )
-endif()
+set(
+   CMAKE_INSTALL_PREFIX
+   "${DECKKERNEL_ROOT}/apps/${CMAKE_BUILD_TYPE}"
+   CACHE PATH
+   "DeckKernel application deployment directory"
+   FORCE
+)
 
 set(
    CMAKE_RUNTIME_OUTPUT_DIRECTORY
