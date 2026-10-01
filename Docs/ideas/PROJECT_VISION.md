@@ -216,6 +216,160 @@ flowchart LR
 
 Bulk Data should be used whenever large-scale local processing is appropriate.
 
+The long-term synchronization model should not treat the bulk files as one undifferentiated
+card dump. DeckKernel can use the smaller and semantically cleaner sources first and then
+process the large printing snapshot with much less work.
+
+## Scryfall synchronization as a state machine
+
+The Scryfall synchronization should eventually run as a persistent finite-state machine
+rather than as a one-shot import command.
+
+The main source groups have different responsibilities:
+
+```text
+Catalogs / value ranges
+   |
+   +--> known vocabularies and external domains
+   |
+Sets
+   |
+   +--> release and product master data
+   |
+oracle_cards
+   |
+   +--> canonical Oracle-card master data
+   |
+default_cards
+   |
+   +--> concrete printings
+```
+
+This order is intentional.
+
+The smaller Oracle bulk export should be imported before `default_cards`. Oracle-level
+properties therefore have one authoritative import path. When the large
+`default_cards` file is parsed later, DeckKernel does not need to process the duplicated
+Oracle properties again. It only needs the `oracle_id` plus the fields that belong to the
+concrete printing.
+
+The relational model enforces the dependency:
+
+```text
+OracleCard
+   PK oracle_id
+
+Printing
+   PK scryfall_id
+   FK oracle_id -> OracleCard.oracle_id
+```
+
+A printing whose `oracle_id` does not exist is therefore an import inconsistency. The
+database foreign key can make that condition visible instead of silently creating a
+partial card model.
+
+The same principle applies to sets and other value domains: information that can be
+loaded once from its dedicated source should not be reconstructed repeatedly from every
+printing record.
+
+### Metadata as synchronization evidence
+
+The bulk-data endpoint is control data for the FSM. DeckKernel first loads the small
+metadata response and compares the remote `updated_at` values with its locally persisted
+manifest/evidence.
+
+Conceptually:
+
+```text
+Waiting
+   |
+   | timer / explicit refresh
+   v
+CheckMetadata
+   |
+   +--> oracle_cards unchanged ----+
+   |                               |
+   +--> default_cards unchanged ---+--> Waiting
+   |
+   +--> oracle_cards changed
+   |        |
+   |        v
+   |     DownloadOracle
+   |        |
+   |        v
+   |     ImportOracle
+   |
+   +--> default_cards changed
+            |
+            v
+         DownloadPrintings
+            |
+            v
+         ImportPrintings
+            |
+            v
+          Waiting
+```
+
+The FSM can therefore sleep most of the time. A cheap metadata check activates only the
+work whose remote evidence changed.
+
+The local manifest is not merely a download cache. It records which remote version has
+successfully reached which local processing stage. Useful evidence includes:
+
+```text
+remote updated_at
+downloaded artifact
+artifact hash
+parsed version
+stored/imported version
+local schema/import version
+```
+
+That allows the FSM to resume instead of starting from zero after a restart or failure.
+For example, a valid downloaded bulk file can be parsed again without downloading it
+again, and a parser/schema change can invalidate the local processing stage while the
+remote Scryfall snapshot itself remains unchanged.
+
+### Dependency-aware activation
+
+The important dependency is:
+
+```text
+Catalogs / value ranges
+        |
+        v
+       Sets
+        |
+        v
+   Oracle Cards
+        |
+        v
+  Printing Cards
+```
+
+Not every metadata change needs to invalidate every later stage automatically. The FSM
+should activate the smallest required work set while preserving relational correctness.
+
+Examples:
+
+- unchanged metadata -> remain in `Waiting`;
+- changed `oracle_cards` -> refresh Oracle master data;
+- changed `default_cards` -> refresh only printing data if the referenced Oracle data
+  is already valid;
+- changed local parser/schema version -> reuse the existing downloaded artifact and
+  repeat only the affected processing stages;
+- missing Oracle reference during printing import -> fail the printing import and retain
+  the previous valid state.
+
+Images, prices, derived statistics or other secondary data can later become additional
+lower-priority FSM branches. They should depend on the already valid core card/printing
+state rather than delaying the core synchronization.
+
+This turns Scryfall synchronization into the same general architectural idea used
+elsewhere in DeckKernel and BuildEngine: **work is activated by invalid or newer
+evidence, not merely because the program was started.**
+
 Direct API requests should be cached where useful and must follow Scryfall's current access requirements.
 
 The implementation should also identify itself with meaningful HTTP headers and respect Scryfall's published rate limits and service guidance.
