@@ -165,11 +165,52 @@ queries, interactive searches and metadata that does not require a complete bulk
 Conceptually:
 
 ```text
-Bulk data     -> efficient complete/current snapshot
-REST API      -> targeted lookup, search and navigation
 Catalogs      -> available value lists / vocabularies
+Sets          -> release/product master data
+oracle_cards  -> Oracle-card master data
+default_cards -> concrete printings
+REST API      -> targeted lookup, search and navigation
 Migrations    -> corrections to Scryfall object identities
 ```
+
+For DeckKernel these sources should be processed in dependency order rather than treating
+`default_cards` as the source for every property:
+
+```text
+Catalogs / value ranges
+        |
+        v
+       Sets
+        |
+        v
+   oracle_cards
+        |
+        v
+   default_cards
+```
+
+The `oracle_cards` export is imported first. It establishes the valid Oracle identities
+and Oracle-level master data. When `default_cards` is processed afterwards, the parser
+only needs the `oracle_id` and the printing-specific fields. Oracle-level fields repeated
+inside the printing objects do not need to be normalized a second time.
+
+The printing relation should therefore be protected by referential integrity:
+
+```text
+Printing.oracle_id -> OracleCard.oracle_id
+```
+
+An unknown Oracle ID during the printing import is an error condition, not a reason to
+silently synthesize a new Oracle card from the larger printing object.
+
+The bulk metadata response is also the synchronization trigger. A later DeckKernel
+service can periodically compare each export's remote `updated_at` value with local
+manifest/evidence and activate only the corresponding FSM branch. Unchanged exports stay
+untouched; an already downloaded artifact can be reused when only local parser or schema
+evidence has become invalid.
+
+The detailed state-machine rationale is documented in
+[Project vision](../ideas/PROJECT_VISION.md).
 
 Scryfall explicitly recommends bulk data instead of performing huge numbers of repetitive
 API requests. Interactive or selective access can still use the REST interface.
