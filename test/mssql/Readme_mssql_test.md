@@ -37,22 +37,32 @@ Build the test:
 cmake --build test\mssql\build
 ```
 
+Install the test to `apps\Debug`:
+
+```cmd
+cmake --install test\mssql\build
+```
+
+For a Release configuration the destination is `apps\Release`. No DeckKernel
+third-party runtime DLLs are required by this test because the ODBC driver is provided
+by the operating system installation.
+
 Run with Windows integrated authentication:
 
 ```cmd
-test\mssql\build\adecc_mssql_odbc_test.exe --server localhost --database Person_Test --integrated
+apps\Debug\adecc_mssql_odbc_test.exe --server localhost --database Person_Test --integrated
 ```
 
 The `--integrated` option is the default and may be omitted:
 
 ```cmd
-test\mssql\build\adecc_mssql_odbc_test.exe --server localhost --database Person_Test
+apps\Debug\adecc_mssql_odbc_test.exe --server localhost --database Person_Test
 ```
 
 Run with SQL Server authentication:
 
 ```cmd
-test\mssql\build\adecc_mssql_odbc_test.exe --server localhost --database Person_Test --sql-login --user <user> --password <password>
+apps\Debug\adecc_mssql_odbc_test.exe --server localhost --database Person_Test --sql-login --user <user> --password <password>
 ```
 
 The same values can be supplied through `ADECC_MSSQL_SERVER`,
