@@ -7,6 +7,7 @@
 */
 
 #include "database.h"
+#include "diagnostic_text.h"
 #include "pqxx_database.h"
 
 #include <array>
@@ -669,9 +670,9 @@ int main(int const iArgc, char* const* const argv) {
 
          Require(!strWhat.empty(), "constraint error lost PostgreSQL diagnostics");
          std::cout << "[PASS] PostgreSQL constraint diagnostics retained\n";
-         std::cout << "[DIAGNOSTIC SAMPLE]\n"
-                   << strWhat
-                   << "\n[END DIAGNOSTIC SAMPLE]\n";
+         adecc::diagnostic::WriteUtf8(std::cout, "[DIAGNOSTIC SAMPLE]\n");
+         adecc::diagnostic::WriteUtf8(std::cout, strWhat);
+         adecc::diagnostic::WriteUtf8(std::cout, "\n[END DIAGNOSTIC SAMPLE]\n");
          }
 
       Require(
@@ -683,7 +684,9 @@ int main(int const iArgc, char* const* const argv) {
       return 0;
       }
    catch (std::exception const& ex) {
-      std::cerr << "\nTEST FAILED\n" << ex.what() << '\n';
+      adecc::diagnostic::WriteUtf8(std::cerr, "\nTEST FAILED\n");
+      adecc::diagnostic::WriteUtf8(std::cerr, ex.what());
+      adecc::diagnostic::WriteUtf8(std::cerr, "\n");
       return 1;
       }
    catch (...) {
