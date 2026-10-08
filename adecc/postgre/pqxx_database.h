@@ -732,7 +732,8 @@ namespace adecc::db::postgres {
             << "KrbSrvName=" << aCredentials.strKrbSrvName << "\n"
             << "GssLib=" << aCredentials.strGssLib << "\n"
             << "ApplicationName=" << aCredentials.strApplicationName << "\n"
-            << "ConnectTimeout=" << aCredentials.iConnectTimeout << "\n";
+            << "ConnectTimeout=" << aCredentials.iConnectTimeout << "\n"
+            << "ClientEncoding=UTF8\n";
 
          return os.str();
          }
@@ -774,6 +775,11 @@ namespace adecc::db::postgres {
                }
 
             upConnection = std::make_unique<pqxx::connection>(vecConnectionParams);
+
+            if (upConnection && upConnection->is_open()) {
+               upConnection->set_client_encoding("UTF8");
+               }
+
             return upConnection && upConnection->is_open();
             }
          catch (std::exception const& ex) {
