@@ -39,6 +39,25 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(NOT CMAKE_BUILD_TYPE)
+   message(FATAL_ERROR "CMAKE_BUILD_TYPE must be Debug or Release.")
+endif()
+
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug" AND
+   NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+   message(FATAL_ERROR
+      "Unsupported CMAKE_BUILD_TYPE='${CMAKE_BUILD_TYPE}'. Use Debug or Release."
+   )
+endif()
+
+set(
+   CMAKE_INSTALL_PREFIX
+   "${DECKKERNEL_ROOT}/apps/${CMAKE_BUILD_TYPE}"
+   CACHE PATH
+   "DeckKernel test deployment directory"
+   FORCE
+)
+
 add_executable(
    adecc_mssql_odbc_test
    test_mssql_odbc_database.cpp
@@ -65,3 +84,8 @@ else()
    find_package(ODBC REQUIRED)
    target_link_libraries(adecc_mssql_odbc_test PRIVATE ODBC::ODBC)
 endif()
+
+install(
+   TARGETS adecc_mssql_odbc_test
+   RUNTIME DESTINATION .
+)
