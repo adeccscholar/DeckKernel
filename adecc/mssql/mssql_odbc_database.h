@@ -501,19 +501,26 @@ namespace adecc::db::mssql {
          std::vector<diagnostic_record> const& vecDiagnostics
       ) {
          std::ostringstream os;
-         os << "ODBC operation: " << svOperation << '\n'
-            << "SQLRETURN: " << static_cast<long long>(iReturn) << '\n';
+         os << "ODBC " << svOperation
+            << " failed (SQLRETURN="
+            << static_cast<long long>(iReturn)
+            << ")\n";
+
+         if (vecDiagnostics.empty()) {
+            os << "  No diagnostic record was provided by the ODBC driver.\n";
+            return os.str();
+            }
 
          for (std::size_t uIndex{}; uIndex < vecDiagnostics.size(); ++uIndex) {
             auto const& aDiag = vecDiagnostics[uIndex];
-            os << "Diagnostic #" << (uIndex + 1) << '\n'
-               << "  SQLSTATE: " << aDiag.strSqlState << '\n'
-               << "  Native error: " << aDiag.iNativeError << '\n'
-               << "  Message: " << aDiag.strMessage << '\n';
-            }
-
-         if (vecDiagnostics.empty()) {
-            os << "No diagnostic record was provided by the ODBC driver.\n";
+            os << "  [" << (uIndex + 1) << "] SQLSTATE="
+               << aDiag.strSqlState
+               << "  Native="
+               << aDiag.iNativeError
+               << '\n'
+               << "      "
+               << aDiag.strMessage
+               << '\n';
             }
 
          return os.str();
@@ -1814,18 +1821,18 @@ namespace adecc::db::mssql {
       static error_ty WithPlan_(error_ty aError,
                                 detail::parameter_plan const& aPlan) {
          auto& strDetails = std::get<2>(aError);
-         strDetails += "\nPhysical ODBC parameter map:\n";
+         strDetails += "\nODBC parameter map:\n";
 
          for (auto const& aOccurrence : aPlan.vecOccurrences) {
             strDetails += std::format(
-               "  ?{} <- :{}\n",
+               "  ?{:<3} :{}\n",
                aOccurrence.uPhysicalIndex + 1,
                aPlan.vecLogicalNames[aOccurrence.uLogicalIndex]
                );
             }
 
          if (aPlan.vecOccurrences.empty()) {
-            strDetails += "  <no parameters>\n";
+            strDetails += "  <none>\n";
             }
 
          return aError;
