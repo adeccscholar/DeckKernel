@@ -1,3 +1,72 @@
+// SPDX-FileCopyrightText: 2021 - 2026 adecc Systemhaus GmbH
+// SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
+
+/**
+\file pqxx_database.h
+\brief PostgreSQL implementation of the adecc database abstraction using libpqxx.
+
+\details
+This header provides the PostgreSQL backend for the generic adecc database interfaces.
+It connects the database abstractions defined in the adecc C++ core with PostgreSQL by
+using libpqxx as the C++ client library and libpq as the underlying PostgreSQL client.
+
+The implementation is intended to keep PostgreSQL-specific details outside the generic
+database layer. Application code can therefore work with the common adecc database
+interfaces while this adapter is responsible for PostgreSQL-specific connection handling,
+transactions, parameter binding, statement execution, result conversion and error
+translation.
+
+The implementation follows the architectural principles described in
+"Rethinking C++" ("C++ neu denken"):
+
+- resource ownership is expressed through RAII wherever possible;
+- database connections and transactions have explicit lifetimes;
+- generic database behavior is separated from backend-specific implementation details;
+- compile-time type information is used to connect C++ values with database values;
+- conversions and backend-specific adaptations remain at clearly defined boundaries.
+
+PostgreSQL access is implemented through libpqxx. libpqxx itself builds on libpq, the
+native PostgreSQL client library. Raw handles or pointers should therefore only appear
+where required by the underlying C interfaces or third-party APIs. Ownership must remain
+explicit and should otherwise be represented by RAII types.
+
+The adapter supports the adecc logical database and query abstractions and is intended to
+serve both application code and educational examples that demonstrate how a generic
+database interface can be mapped onto a concrete relational database backend.
+
+Third-party dependencies:
+
+- PostgreSQL libpq
+  Native PostgreSQL client library providing the wire-protocol implementation.
+
+- libpqxx
+  C++ interface built on top of libpq. It provides connection, transaction, query and
+  result abstractions used by this backend.
+
+The generic database interfaces used by this implementation are located in the adecc
+C++ core and are intentionally independent from PostgreSQL.
+
+See also:
+
+- adecc/cpp_core/database.h
+- adecc/cpp_core/database_definitions.h
+- adecc/cpp_core/system_data_persistent.h
+- adecc/cpp_core/system_data_persistent_executor.h
+- "Rethinking C++" ("C++ neu denken")
+
+\author Volker Hillmann
+\copyright Copyright © 2021 - 2026 adecc Systemhaus GmbH
+
+\licenseblock{LicenseRef-PolyForm-Noncommercial-1.0.0}
+This file is licensed under the PolyForm Noncommercial License 1.0.0.
+Use, modification, and distribution are permitted only as defined by that license.
+The complete and controlling terms are available at
+https://polyformproject.org/licenses/noncommercial/1.0.0/.
+Any use not permitted by that license requires separate permission or a separate
+license from adecc Systemhaus GmbH.
+\endlicenseblock
+*/
+
 #pragma once
 
 #include "database_definitions.h"
@@ -80,51 +149,36 @@ namespace adecc::db::postgres {
          }
 
 
-      inline bool EqualName(std::string_view const svLeft,
-                            std::string_view const svRight) {
+      inline bool EqualName(std::string_view const svLeft, std::string_view const svRight) {
          if (svLeft.size() != svRight.size()) {
             return false;
             }
 
-         return std::ranges::equal(
-            svLeft,
-            svRight,
-            [](char const chLeft, char const chRight) {
-               return ToLowerAscii(chLeft) == ToLowerAscii(chRight);
-               }
-            );
+         return std::ranges::equal(svLeft, svRight, [](char const chLeft, char const chRight) {
+                                         return ToLowerAscii(chLeft) == ToLowerAscii(chRight);
+                                         });
          }
 
 
-      inline std::optional<std::size_t> FindParameter(
-         std::vector<std::string> const& vecNames,
-         std::string_view const svName
-      ) {
-         auto const it = std::ranges::find_if(
-            vecNames,
-            [svName](std::string const& strName) {
-               return EqualName(strName, svName);
-               }
-            );
+      inline std::optional<std::size_t> FindParameter(std::vector<std::string> const& vecNames, std::string_view const svName) {
+         auto const it = std::ranges::find_if(vecNames, [svName](std::string const& strName) {
+                                         return EqualName(strName, svName);
+                                         });
 
          if (it == vecNames.end()) {
             return std::nullopt;
             }
 
-         return static_cast<std::size_t>(
-            std::distance(vecNames.begin(), it)
-            );
+         return static_cast<std::size_t>(std::distance(vecNames.begin(), it));
          }
 
 
-      inline bool ContainsParameter(parameter_plan const& aPlan,
-                                    std::string_view const svName) {
+      inline bool ContainsParameter(parameter_plan const& aPlan, std::string_view const svName) {
          return FindParameter(aPlan.vecNames, svName).has_value();
          }
 
 
-      inline bool IsDollarQuoteStart(std::string const& strSql,
-                                     std::size_t const uPos);
+      inline bool IsDollarQuoteStart(std::string const& strSql, std::size_t const uPos);
 
 
       /**
@@ -326,8 +380,7 @@ namespace adecc::db::postgres {
          }
 
 
-      inline bool IsDollarQuoteStart(std::string const& strSql,
-                                     std::size_t const uPos) {
+      inline bool IsDollarQuoteStart(std::string const& strSql, std::size_t const uPos) {
          if (uPos >= strSql.size() || strSql[uPos] != '$') {
             return false;
             }
@@ -354,12 +407,10 @@ namespace adecc::db::postgres {
          }
 
 
-      inline std::string AppendReturning(std::string const& strSql,
-                                         std::string const& strIdentityName) {
+      inline std::string AppendReturning(std::string const& strSql, std::string const& strIdentityName) {
          std::size_t uInsertPos = strSql.size();
 
-         while (uInsertPos > 0 &&
-                std::isspace(static_cast<unsigned char>(strSql[uInsertPos - 1])) != 0) {
+         while (uInsertPos > 0 && std::isspace(static_cast<unsigned char>(strSql[uInsertPos - 1])) != 0) {
             --uInsertPos;
             }
 
@@ -451,32 +502,22 @@ namespace adecc::db::postgres {
       postgres_database() = default;
 
 
-      explicit postgres_database(postgres_credentials const& aCred)
-         : aCredentials{ aCred } {
+      explicit postgres_database(postgres_credentials const& aCred) : aCredentials{ aCred } {
          ConnectOrThrow_();
          }
 
 
-      postgres_database(
-         std::string strHost,
-         std::string strDatabase,
-         std::string strUser,
-         std::string strPassword,
-         std::uint16_t const uPort = 5432
-      )
-         : aCredentials{
-              .strHost = std::move(strHost),
-              .uPort = uPort,
-              .strDatabase = std::move(strDatabase),
-              .strUser = std::move(strUser),
-              .strPassword = std::move(strPassword)
-              } {
+      postgres_database(std::string strHost, std::string strDatabase, std::string strUser, std::string strPassword,
+                        std::uint16_t const uPort = 5432) : aCredentials { .strHost = std::move(strHost),
+						                                                   .uPort = uPort,
+                                                                           .strDatabase = std::move(strDatabase),
+                                                                           .strUser = std::move(strUser),
+                                                                           .strPassword = std::move(strPassword) } {
          ConnectOrThrow_();
          }
 
 
-      postgres_database(postgres_database const& rhs)
-         : aCredentials{ rhs.aCredentials } {
+      postgres_database(postgres_database const& rhs) : aCredentials{ rhs.aCredentials } {
          if (rhs.Connected()) {
             ConnectOrThrow_();
             }
@@ -497,18 +538,16 @@ namespace adecc::db::postgres {
          }
 
 
-      postgres_database(postgres_database&& rhs) noexcept
-         : aCredentials{ std::move(rhs.aCredentials) }
-         , upConnection{ std::move(rhs.upConnection) }
-         , upTransaction{ std::move(rhs.upTransaction) } {
+      postgres_database(postgres_database&& rhs) noexcept : aCredentials{ std::move(rhs.aCredentials) },
+                         upConnection{ std::move(rhs.upConnection) }, upTransaction{ std::move(rhs.upTransaction) } {
          }
 
 
       postgres_database& operator=(postgres_database&& rhs) noexcept {
          if (this != &rhs) {
             Close_();
-            aCredentials = std::move(rhs.aCredentials);
-            upConnection = std::move(rhs.upConnection);
+            aCredentials  = std::move(rhs.aCredentials);
+            upConnection  = std::move(rhs.upConnection);
             upTransaction = std::move(rhs.upTransaction);
             }
 
@@ -527,10 +566,7 @@ namespace adecc::db::postgres {
 
 
       std::string GetServer() const {
-         std::string const strHost = aCredentials.strHost.empty()
-            ? std::string{ "<default>" }
-            : aCredentials.strHost;
-
+         std::string const strHost = aCredentials.strHost.empty() ? std::string{ "<default>" } : aCredentials.strHost;
          return std::format("{}:{}", strHost, aCredentials.uPort);
          }
 
@@ -567,8 +603,7 @@ namespace adecc::db::postgres {
             std::vector<std::pair<std::string, std::string>> vecConnectionParams;
             vecConnectionParams.reserve(12);
 
-            auto fnAdd = [&vecConnectionParams](std::string strName,
-                                                 std::string const& strValue) {
+            auto fnAdd = [&vecConnectionParams](std::string strName, std::string const& strValue) {
                if (!strValue.empty()) {
                   vecConnectionParams.emplace_back(std::move(strName), strValue);
                   }
@@ -601,12 +636,7 @@ namespace adecc::db::postgres {
             }
          catch (std::exception const& ex) {
             Close_();
-
-            return std::unexpected(error_ty{
-               {},
-               "database not connected",
-               ex.what()
-               });
+            return std::unexpected(error_ty { {}, "database not connected", ex.what() });
             }
          }
 
@@ -628,11 +658,7 @@ namespace adecc::db::postgres {
             }
 
          if (upTransaction) {
-            return std::unexpected(error_ty{
-               {},
-               "Begin Transaction failed",
-               "a PostgreSQL transaction is already active"
-               });
+            return std::unexpected(error_ty { {}, "Begin Transaction failed", "a PostgreSQL transaction is already active" });
             }
 
          try {
@@ -641,12 +667,7 @@ namespace adecc::db::postgres {
             }
          catch (std::exception const& ex) {
             upTransaction.reset();
-
-            return std::unexpected(error_ty{
-               {},
-               "Begin Transaction failed",
-               ex.what()
-               });
+            return std::unexpected(error_ty { {}, "Begin Transaction failed", ex.what() }); 
             }
          }
 
@@ -668,11 +689,7 @@ namespace adecc::db::postgres {
          catch (std::exception const& ex) {
             upTransaction.reset();
 
-            return std::unexpected(error_ty{
-               {},
-               "Commit Transaction failed",
-               ex.what()
-               });
+            return std::unexpected(error_ty { {}, "Commit Transaction failed", ex.what()});
             }
          }
 
@@ -692,13 +709,8 @@ namespace adecc::db::postgres {
             return true;
             }
          catch (std::exception const& ex) {
-            upTransaction.reset();
-
-            return std::unexpected(error_ty{
-               {},
-               "Rollback Transaction failed",
-               ex.what()
-               });
+            upTransaction.reset(); 
+            return std::unexpected(error_ty { {}, "Rollback Transaction failed", ex.what() });
             }
          }
 
@@ -721,8 +733,7 @@ namespace adecc::db::postgres {
          }
 
 
-      pqxx::result ExecuteNative(std::string_view const svSql,
-                                 pqxx::params const& aParams) {
+      pqxx::result ExecuteNative(std::string_view const svSql, pqxx::params const& aParams) {
          if (!Connected()) {
             throw std::runtime_error("PostgreSQL connection is not open");
             }
@@ -743,21 +754,11 @@ namespace adecc::db::postgres {
             auto const& [info, strMessage, strDetails] = aResult.error();
             (void)info;
 
-            throw database_exception(
-               strMessage,
-               GetServer(),
-               GetInformation(),
-               strDetails
-               );
+            throw database_exception(strMessage, GetServer(), GetInformation(), strDetails);
             }
 
          if (!*aResult) {
-            throw database_exception(
-               "database not connected",
-               GetServer(),
-               GetInformation(),
-               "Connect returned false"
-               );
+            throw database_exception("database not connected", GetServer(), GetInformation(), "Connect returned false");
             }
          }
 
@@ -778,10 +779,7 @@ namespace adecc::db::postgres {
 
 
    static_assert(adecc::db::framework_database_type<postgres_database>);
-   static_assert(adecc::db::framework_database_with_credentials<
-      postgres_database,
-      postgres_credentials
-      >);
+   static_assert(adecc::db::framework_database_with_credentials<postgres_database, postgres_credentials>);
 
 
    template <adecc::db::framework_database_type db_ty>
@@ -792,14 +790,9 @@ namespace adecc::db::postgres {
       explicit query(db_ty const& aDb)
          : pDatabase{ &const_cast<db_ty&>(aDb) } {
          if (!pDatabase->Connected()) {
-            throw StandardError<database_exception>(
-               {},
-               in_place_exception,
-               "can't create framework query",
-               aDb.GetServer(),
-               aDb.GetInformation(),
-               "No valid PostgreSQL database connection"
-               );
+            throw StandardError<database_exception>({}, in_place_exception, "can't create framework query",
+                                                    aDb.GetServer(), aDb.GetInformation(), 
+													"No valid PostgreSQL database connection");
             }
          }
 
@@ -819,18 +812,13 @@ namespace adecc::db::postgres {
          }
 
 
-      framework_result_ty Open(std::string const& strSql,
-                               adecc::db_params const& vecParams) {
+      framework_result_ty Open(std::string const& strSql, adecc::db_params const& vecParams) {
          if (auto aSetResult = SetSql(strSql); !aSetResult) [[unlikely]] {
-            auto const& aError = aSetResult.error();
-            auto const& info = std::get<0>(aError);
+            auto const& aError     = aSetResult.error();
+            auto const& info       = std::get<0>(aError);
             auto const& strDetails = std::get<2>(aError);
 
-            return std::unexpected(error_ty{
-               info.renew("Call Function"),
-               "error for open the PostgreSQL query",
-               strDetails
-               });
+            return std::unexpected(error_ty { info.renew("Call Function"), "error for open the PostgreSQL query", strDetails });
             }
 
          return Open(vecParams);
@@ -845,24 +833,15 @@ namespace adecc::db::postgres {
                return std::unexpected(aParams.error());
                }
 
-            theResult = pDatabase->ExecuteNative(
-               aParameterPlan.strSql,
-               *aParams
-               );
-
-            boExecuted = true;
+            theResult    = pDatabase->ExecuteNative(aParameterPlan.strSql, *aParams );
+            boExecuted   = true;
             boHasCurrent = false;
-            uCurrentRow = 0;
+            uCurrentRow  = 0;
             return true;
             }
          catch (std::exception const& ex) {
             ResetResult_();
-
-            return std::unexpected(error_ty{
-               {},
-               "error for open the PostgreSQL query",
-               ex.what()
-               });
+            return std::unexpected(error_ty { {}, "error for open the PostgreSQL query", ex.what() });
             }
          }
 
@@ -1073,15 +1052,9 @@ namespace adecc::db::postgres {
 
             if (optIdentityIndex) {
                if (theResult.size() != 1 || theResult.columns() != 1) {
-                  return std::unexpected(error_ty{
-                     {},
-                     "error for read PostgreSQL output identity",
-                     std::format(
-                        "RETURNING expected exactly one row and one column, got {} row(s) and {} column(s)",
-                        theResult.size(),
-                        theResult.columns()
-                        )
-                     });
+                  return std::unexpected(error_ty { {}, "error for read PostgreSQL output identity",
+                                  std::format("RETURNING expected exactly one row and one column, got {} row(s) and {} column(s)",
+                                              theResult.size(), theResult.columns() ) });
                   }
 
                auto aIdentity = ReadIdentity_<std::tuple<Args...>>(
@@ -1093,11 +1066,8 @@ namespace adecc::db::postgres {
                   auto const& info = std::get<0>(aError);
                   auto const& strDetails = std::get<2>(aError);
 
-                  return std::unexpected(error_ty{
-                     info.renew("Call Function"),
-                     "error for read PostgreSQL output identity",
-                     strDetails
-                     });
+                  return std::unexpected(error_ty { info.renew("Call Function"), "error for read PostgreSQL output identity",
+                                                    strDetails });
                   }
 
                optIdentity = std::move(*aIdentity);
@@ -1111,11 +1081,7 @@ namespace adecc::db::postgres {
          catch (std::exception const& ex) {
             ResetResult_();
 
-            return std::unexpected(error_ty{
-               {},
-               "error for execute PostgreSQL output query",
-               ex.what()
-               });
+            return std::unexpected(error_ty { {}, "error for execute PostgreSQL output query", ex.what() });
             }
          }
 
@@ -1156,21 +1122,14 @@ namespace adecc::db::postgres {
          requires adecc::is_in_type_list_v<ty, adecc::defined_values_types>
       framework_get_ty<ty> GetField(std::string const& strField) const {
          if (!boExecuted || !boHasCurrent || uCurrentRow >= theResult.size()) {
-            return std::unexpected(error_ty{
-               {},
-               std::format("error for get the field '{}'", strField),
-               "query does not have a current PostgreSQL row"
-               });
+            return std::unexpected(error_ty { {}, std::format("error for get the field '{}'", strField),
+                                              "query does not have a current PostgreSQL row" });
             }
 
          auto const optIndex = FindColumn_(strField);
 
          if (!optIndex) {
-            return std::unexpected(error_ty{
-               {},
-               std::format("error for get the field '{}'", strField),
-               "field not found"
-               });
+            return std::unexpected(error_ty { {}, std::format("error for get the field '{}'", strField), "field not found" });
             }
 
          try {
@@ -1183,11 +1142,7 @@ namespace adecc::db::postgres {
             return std::optional<ty>{ ConvertField_<ty>(aField) };
             }
          catch (std::exception const& ex) {
-            return std::unexpected(error_ty{
-               {},
-               std::format("error for get the field '{}'", strField),
-               ex.what()
-               });
+            return std::unexpected(error_ty { {}, std::format("error for get the field '{}'", strField), ex.what() });
             }
          }
 
@@ -1219,52 +1174,35 @@ namespace adecc::db::postgres {
          }
 
    private:
-      std::expected<pqxx::params, error_ty> MakePgParams_(
-         detail::parameter_plan const& aPlan,
-         adecc::db_params const& vecParams
-      ) const {
-         if (auto aValidation = ValidateParameters_(aPlan, vecParams);
-             !aValidation) [[unlikely]] {
+      std::expected<pqxx::params, error_ty> MakePgParams_(detail::parameter_plan const& aPlan, adecc::db_params const& vecParams) const {
+         if (auto aValidation = ValidateParameters_(aPlan, vecParams); !aValidation) [[unlikely]] {
             return std::unexpected(aValidation.error());
             }
 
          try {
-            pqxx::params aPgParams{ pDatabase->NativeConnection() };
+            pqxx::params aPgParams { pDatabase->NativeConnection() };
             aPgParams.reserve(aPlan.vecNames.size());
 
             for (auto const& strName : aPlan.vecNames) {
                auto const* pParam = FindDbParam_(vecParams, strName);
 
                if (!pParam) {
-                  return std::unexpected(error_ty{
-                     {},
-                     "error while binding PostgreSQL parameters",
-                     std::format("Parameter '{}' not found", strName)
-                     });
+                  return std::unexpected(error_ty { {}, "error while binding PostgreSQL parameters",
+                                                    std::format("Parameter '{}' not found", strName)});
                   }
 
-               std::visit(
-                  DbParamVariantWriter{ &aPgParams },
-                  std::get<1>(*pParam)
-                  );
+               std::visit(DbParamVariantWriter{ &aPgParams }, std::get<1>(*pParam));
                }
 
             return aPgParams;
             }
          catch (std::exception const& ex) {
-            return std::unexpected(error_ty{
-               {},
-               "error while binding PostgreSQL parameters",
-               ex.what()
-               });
+            return std::unexpected(error_ty { {}, "error while binding PostgreSQL parameters", ex.what() });
             }
          }
 
 
-      framework_result_ty ValidateParameters_(
-         detail::parameter_plan const& aPlan,
-         adecc::db_params const& vecParams
-      ) const {
+      framework_result_ty ValidateParameters_(detail::parameter_plan const& aPlan, adecc::db_params const& vecParams) const {
          for (std::size_t uLeft{}; uLeft < vecParams.size(); ++uLeft) {
             auto const& strLeft = std::get<0>(vecParams[uLeft]);
 
@@ -1272,14 +1210,8 @@ namespace adecc::db::postgres {
                auto const& strRight = std::get<0>(vecParams[uRight]);
 
                if (detail::EqualName(strLeft, strRight)) {
-                  return std::unexpected(error_ty{
-                     {},
-                     "error while binding PostgreSQL parameters",
-                     std::format(
-                        "Parameter '{}' is defined more than once",
-                        strLeft
-                        )
-                     });
+                  return std::unexpected(error_ty { {}, "error while binding PostgreSQL parameters",
+                                                    std::format("Parameter '{}' is defined more than once", strLeft) });
                   }
                }
             }
@@ -1289,21 +1221,15 @@ namespace adecc::db::postgres {
             bool const boRequired = std::get<2>(aParam);
 
             if (boRequired && !detail::ContainsParameter(aPlan, strName)) {
-               return std::unexpected(error_ty{
-                  {},
-                  "error while binding PostgreSQL parameters",
-                  std::format("Parameter '{}' not found in SQL", strName)
-                  });
+               return std::unexpected(error_ty { {}, "error while binding PostgreSQL parameters",
+                                                 std::format("Parameter '{}' not found in SQL", strName) });
                }
             }
 
          for (auto const& strName : aPlan.vecNames) {
             if (!FindDbParam_(vecParams, strName)) {
-               return std::unexpected(error_ty{
-                  {},
-                  "error while binding PostgreSQL parameters",
-                  std::format("SQL parameter '{}' has no value", strName)
-                  });
+               return std::unexpected(error_ty { {}, "error while binding PostgreSQL parameters",
+                                                 std::format("SQL parameter '{}' has no value", strName) });
                }
             }
 
@@ -1311,17 +1237,10 @@ namespace adecc::db::postgres {
          }
 
 
-      static adecc::db_param2 const* FindDbParam_(
-         adecc::db_params const& vecParams,
-         std::string_view const svName
-      ) {
-         auto const it = std::ranges::find_if(
-            vecParams,
-            [svName](adecc::db_param2 const& aParam) {
-               return detail::EqualName(std::get<0>(aParam), svName);
-               }
-            );
-
+      static adecc::db_param2 const* FindDbParam_(adecc::db_params const& vecParams, std::string_view const svName) {
+         auto const it = std::ranges::find_if(vecParams, [svName](adecc::db_param2 const& aParam) {
+                                                             return detail::EqualName(std::get<0>(aParam), svName);
+                                                             });
          return it == vecParams.end() ? nullptr : std::addressof(*it);
          }
 
@@ -1412,29 +1331,17 @@ namespace adecc::db::postgres {
 
 
       template <class... Args>
-      framework_result_ty BuildOutputParams_(
-         std::tuple<Args...> const& tupValues,
-         adecc::db_params& vecParams
-      ) const {
-         return BuildOutputParamsImpl_(
-            tupValues,
-            vecParams,
-            std::index_sequence_for<Args...>{}
-            );
+      framework_result_ty BuildOutputParams_(std::tuple<Args...> const& tupValues, adecc::db_params& vecParams) const {
+         return BuildOutputParamsImpl_(tupValues, vecParams, std::index_sequence_for<Args...>{});
          }
 
 
       template <class... Args, std::size_t... Is>
-      framework_result_ty BuildOutputParamsImpl_(
-         std::tuple<Args...> const& tupValues,
-         adecc::db_params& vecParams,
-         std::index_sequence<Is...>
-      ) const {
+      framework_result_ty BuildOutputParamsImpl_(std::tuple<Args...> const& tupValues, adecc::db_params& vecParams,
+                                                 std::index_sequence<Is...>) const {
          framework_result_ty aResult{ true };
 
-         auto fnAppend = [&]<std::size_t I>(
-            std::integral_constant<std::size_t, I>
-         ) {
+         auto fnAppend = [&]<std::size_t I>(std::integral_constant<std::size_t, I> ) {
             if (!aResult) {
                return;
                }
@@ -1444,57 +1351,38 @@ namespace adecc::db::postgres {
             switch (aRole) {
             case db_output_param_role::needed_value:
             case db_output_param_role::key:
-               vecParams.emplace_back(
-                  strName,
-                  adecc::db_param{ std::get<I>(tupValues) },
-                  true
-                  );
+               vecParams.emplace_back(strName, adecc::db_param{ std::get<I>(tupValues) }, true);
                break;
 
             case db_output_param_role::may_be_missing:
-               vecParams.emplace_back(
-                  strName,
-                  adecc::db_param{ std::get<I>(tupValues) },
-                  false
-                  );
+               vecParams.emplace_back(strName, adecc::db_param{ std::get<I>(tupValues) }, false );
                break;
 
             case db_output_param_role::identity:
                if (detail::ContainsParameter(aOutputPlan, strName)) {
-                  aResult = std::unexpected(error_ty{
-                     {},
-                     "error for bind PostgreSQL output parameter",
-                     std::format(
-                        "identity output parameter '{}' must not be used as SQL input parameter",
-                        strName
-                        )
-                     });
+                  aResult = std::unexpected(error_ty { {}, "error for bind PostgreSQL output parameter",
+                                std::format("identity output parameter '{}' must not be used as SQL input parameter", strName) });
                   }
                break;
                }
             };
 
-         (
-            fnAppend(std::integral_constant<std::size_t, Is>{}),
-            ...
-            );
+         ( fnAppend(std::integral_constant<std::size_t, Is>{}),... );
 
          return aResult;
          }
 
 
-      std::optional<pqxx::row_size_type> FindColumn_(
-         std::string_view const svField
-      ) const {
+      std::optional<pqxx::row_size_type> FindColumn_(std::string_view const svField) const {
          for (pqxx::row_size_type uIndex{}; uIndex < theResult.columns(); ++uIndex) {
             if (detail::EqualName(theResult.column_name(uIndex), svField)) {
                return uIndex;
                }
             }
-
          return std::nullopt;
          }
 
+      using pqxx_direct_types = adecc::defined_type_list<double, int, long long, bool, unsigned int, unsigned long long>;
 
       template <class ty>
       static ty ConvertField_(pqxx::field_ref const& aField) {
@@ -1503,14 +1391,7 @@ namespace adecc::db::postgres {
          if constexpr (std::same_as<clean_ty, std::string>) {
             return std::string{ aField.view() };
             }
-         else if constexpr (
-            std::same_as<clean_ty, double> ||
-            std::same_as<clean_ty, int> ||
-            std::same_as<clean_ty, long long> ||
-            std::same_as<clean_ty, bool> ||
-            std::same_as<clean_ty, unsigned int> ||
-            std::same_as<clean_ty, unsigned long long>
-            ) {
+         else if constexpr (adecc::is_in_type_list_v<clean_ty, pqxx_direct_types>) {
             return aField.template as<clean_ty>();
             }
          else if constexpr (std::same_as<clean_ty, money_ty>) {
@@ -1520,63 +1401,39 @@ namespace adecc::db::postgres {
             return adecc::ConvertTo<clean_ty>(std::string{ aField.view() });
             }
          else if constexpr (std::same_as<clean_ty, timestamp_ty>) {
-            return adecc::ConvertTo<clean_ty>(
-               detail::NormalizePostgresTimestamp(aField.view())
-               );
+            return adecc::ConvertTo<clean_ty>(detail::NormalizePostgresTimestamp(aField.view()));
             }
          else if constexpr (std::same_as<clean_ty, time_ty>) {
-            return adecc::ConvertTo<clean_ty>(
-               detail::NormalizePostgresTime(aField.view())
-               );
+            return adecc::ConvertTo<clean_ty>(detail::NormalizePostgresTime(aField.view()));
             }
          else {
-            static_assert(
-               std::same_as<clean_ty, void>,
-               "unsupported PostgreSQL result type"
-               );
+            static_assert(std::same_as<clean_ty, void>, "unsupported PostgreSQL result type" );
             }
          }
 
 
       template <class tup_ty>
-      std::expected<std::optional<db_value>, error_ty> ReadIdentity_(
-         pqxx::field_ref const& aField
-      ) const {
+      std::expected<std::optional<db_value>, error_ty> ReadIdentity_(pqxx::field_ref const& aField) const {
          if (!optIdentityIndex) {
-            return std::unexpected(error_ty{
-               {},
-               "error for read PostgreSQL output identity",
-               "backend returned identity value, but no identity output parameter is defined"
-               });
+            return std::unexpected(error_ty { {}, "error for read PostgreSQL output identity",
+                                              "backend returned identity value, but no identity output parameter is defined" });
             }
 
          if (aField.is_null()) {
-            return std::unexpected(error_ty{
-               {},
-               "error for read PostgreSQL output identity",
-               "PostgreSQL RETURNING produced NULL for the identity column"
-               });
+            return std::unexpected(error_ty { {}, "error for read PostgreSQL output identity",
+                                              "PostgreSQL RETURNING produced NULL for the identity column" });
             }
 
-         return ReadIdentityImpl_<tup_ty>(
-            aField,
-            std::make_index_sequence<std::tuple_size_v<tup_ty>>{}
+         return ReadIdentityImpl_<tup_ty>(aField, std::make_index_sequence<std::tuple_size_v<tup_ty>>{}
             );
          }
 
 
       template <class tup_ty, std::size_t... Is>
-      std::expected<std::optional<db_value>, error_ty> ReadIdentityImpl_(
-         pqxx::field_ref const& aField,
-         std::index_sequence<Is...>
-      ) const {
-         std::expected<std::optional<db_value>, error_ty> aResult{
-            std::optional<db_value>{}
-            };
+      std::expected<std::optional<db_value>, error_ty> ReadIdentityImpl_(pqxx::field_ref const& fld, std::index_sequence<Is...>) const {
+         std::expected<std::optional<db_value>, error_ty> aResult { std::optional<db_value>{} };
 
-         auto fnRead = [&]<std::size_t I>(
-            std::integral_constant<std::size_t, I>
-         ) {
+         auto fnRead = [&]<std::size_t I>(std::integral_constant<std::size_t, I>) {
             if (!aResult || aResult->has_value()) {
                return;
                }
@@ -1585,22 +1442,16 @@ namespace adecc::db::postgres {
                return;
                }
 
-            aResult = ReadIdentityAt_<tup_ty, I>(aField);
+            aResult = ReadIdentityAt_<tup_ty, I>(fld);
             };
 
-         (
-            fnRead(std::integral_constant<std::size_t, Is>{}),
-            ...
-            );
-
+         ( fnRead(std::integral_constant<std::size_t, Is>{}), ...);
          return aResult;
          }
 
 
       template <class tup_ty, std::size_t I>
-      std::expected<std::optional<db_value>, error_ty> ReadIdentityAt_(
-         pqxx::field_ref const& aField
-      ) const {
+      std::expected<std::optional<db_value>, error_ty> ReadIdentityAt_(pqxx::field_ref const& aField) const {
          using elem_ty = std::tuple_element_t<I, tup_ty>;
          using clean_elem_ty = std::remove_cvref_t<elem_ty>;
 
@@ -1616,11 +1467,7 @@ namespace adecc::db::postgres {
                }
             }
          catch (std::exception const& ex) {
-            return std::unexpected(error_ty{
-               {},
-               "error for read PostgreSQL output identity",
-               ex.what()
-               });
+            return std::unexpected(error_ty { {}, "error for read PostgreSQL output identity", ex.what()});
             }
          }
 
@@ -1653,14 +1500,8 @@ namespace adecc::db::postgres {
    template <class db_ty>
    using fw_query = query<db_ty>;
 
-
    static_assert(adecc::db::framework_query_type<fw_query, postgres_database>);
    static_assert(adecc::db::framework_command_query_type<fw_query, postgres_database>);
-   static_assert(adecc::db::framework_output_query_type<
-      fw_query,
-      postgres_database,
-      int,
-      std::string
-      >);
+   static_assert(adecc::db::framework_output_query_type<fw_query, postgres_database, int, std::string>);
 
 } // namespace adecc::db::postgres

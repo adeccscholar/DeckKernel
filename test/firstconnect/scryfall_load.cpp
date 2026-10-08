@@ -113,12 +113,7 @@ private:
 The raw pointers are required by libcurl's C callback ABI. Ownership remains with
 libcurl and HttpGet respectively.
 */
-std::size_t WriteString(
-   char* pData,
-   std::size_t const uSize,
-   std::size_t const uCount,
-   void* pUser
-) {
+std::size_t WriteString(char* pData, std::size_t const uSize, std::size_t const uCount, void* pUser) {
    std::size_t const uBytes = uSize * uCount;
    auto* const pTarget = static_cast<std::string*>(pUser);
    pTarget->append(pData, uBytes);
@@ -134,12 +129,7 @@ std::size_t WriteString(
 \param pUser Borrowed std::ofstream pointer registered with CURLOPT_WRITEDATA.
 \returns Number of bytes consumed, or zero when the stream failed.
 */
-std::size_t WriteFile(
-   char* pData,
-   std::size_t const uSize,
-   std::size_t const uCount,
-   void* pUser
-) {
+std::size_t WriteFile(char* pData, std::size_t const uSize, std::size_t const uCount, void* pUser) {
    std::size_t const uBytes = uSize * uCount;
    auto* const pStream = static_cast<std::ofstream*>(pUser);
    pStream->write(pData, static_cast<std::streamsize>(uBytes));
@@ -147,34 +137,23 @@ std::size_t WriteFile(
    }
 
 
-void ConfigureCurl(
-   CURL* const pCurl,
-   std::string const& strUrl,
-   CurlHeaders const& aHeaders,
-   std::array<char, CURL_ERROR_SIZE>& arrError
-) {
+void ConfigureCurl(CURL* const pCurl, std::string const& strUrl, CurlHeaders const& aHeaders, 
+                   std::array<char, CURL_ERROR_SIZE>& arrError) {
    if (pCurl == nullptr) {
       throw std::runtime_error{ "curl easy handle is null" };
       }
 
    /*
-   libcurl deliberately exposes CURL as an opaque C handle. In this toolchain CURL is
-   typedef'd as void, so a C++ reference such as CURL& cannot exist and unique_ptr<CURL>
-   cannot be dereferenced. Ownership is still RAII-managed by curl_handle_ty; this raw
-   pointer is only a borrowed handle passed across the libcurl C API boundary.
+   libcurl deliberately exposes CURL as an opaque C handle. In this toolchain CURL is typedef'd as void, so a
+   C++ reference such as CURL& cannot exist and unique_ptr<CURL> cannot be dereferenced. Ownership is still
+   RAII-managed by curl_handle_ty; this raw pointer is only a borrowed handle passed across the libcurl C API boundary.
    */
    curl_easy_setopt(pCurl, CURLOPT_ERRORBUFFER, arrError.data());
    curl_easy_setopt(pCurl, CURLOPT_URL, strUrl.c_str());
    curl_easy_setopt(pCurl, CURLOPT_FOLLOWLOCATION, 1L);
    curl_easy_setopt(pCurl, CURLOPT_MAXREDIRS, 5L);
    curl_easy_setopt(pCurl, CURLOPT_FAILONERROR, 1L);
-
-   curl_easy_setopt(
-      pCurl,
-      CURLOPT_USERAGENT,
-      "adecc-DeckKernel/0.1 (+https://github.com/adeccscholar/DeckKernel)"
-      );
-
+   curl_easy_setopt(pCurl, CURLOPT_USERAGENT, "adecc-DeckKernel/0.1 (+https://github.com/adeccscholar/DeckKernel)" );
    curl_easy_setopt(pCurl, CURLOPT_HTTPHEADER, aHeaders.Get());
    curl_easy_setopt(pCurl, CURLOPT_ACCEPT_ENCODING, "");
    curl_easy_setopt(pCurl, CURLOPT_SSL_VERIFYPEER, 1L);
@@ -182,11 +161,7 @@ void ConfigureCurl(
    curl_easy_setopt(pCurl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
 
 #if defined CURLSSLOPT_NATIVE_CA
-   curl_easy_setopt(
-      pCurl,
-      CURLOPT_SSL_OPTIONS,
-      static_cast<long>(CURLSSLOPT_NATIVE_CA)
-      );
+   curl_easy_setopt(pCurl, CURLOPT_SSL_OPTIONS, static_cast<long>(CURLSSLOPT_NATIVE_CA));
 #endif
 
    curl_easy_setopt(pCurl, CURLOPT_PROTOCOLS_STR, "https");
@@ -216,12 +191,8 @@ std::string HttpGet(std::string const& strUrl) {
    CURLcode const iResult = curl_easy_perform(upCurl.get());
 
    if (iResult != CURLE_OK) {
-      throw std::runtime_error{
-         std::format(
-            "HTTPS request failed for {}: {}",
-            strUrl,
-            arrError[0] != '\0' ? arrError.data() : curl_easy_strerror(iResult)
-            )
+      throw std::runtime_error {
+         std::format("HTTPS request failed for {}: {}", strUrl, arrError[0] != '\0' ? arrError.data() : curl_easy_strerror(iResult))
          };
       }
 
@@ -229,16 +200,11 @@ std::string HttpGet(std::string const& strUrl) {
    }
 
 
-void DownloadFile(
-   std::string const& strUrl,
-   std::filesystem::path const& aTarget
-) {
+void DownloadFile(std::string const& strUrl, std::filesystem::path const& aTarget) {
    std::ofstream osFile{ aTarget, std::ios::binary | std::ios::trunc };
 
    if (!osFile) {
-      throw std::runtime_error{
-         std::format("cannot create bulk-data file '{}'", aTarget.string())
-         };
+      throw std::runtime_error { std::format("cannot create bulk-data file '{}'", aTarget.string()) };
       }
 
    curl_handle_ty upCurl{ curl_easy_init() };
@@ -254,17 +220,13 @@ void DownloadFile(
    ConfigureCurl(upCurl.get(), strUrl, aHeaders, arrError);
 
    curl_easy_setopt(upCurl.get(), CURLOPT_WRITEFUNCTION, &WriteFile);
-   curl_easy_setopt(upCurl.get(), CURLOPT_WRITEDATA, std::addressof(osFile));
+   curl_easy_setopt(upCurl.get(), CURLOPT_WRITEDATA,     std::addressof(osFile));
 
    CURLcode const iResult = curl_easy_perform(upCurl.get());
 
    if (iResult != CURLE_OK) {
       throw std::runtime_error{
-         std::format(
-            "bulk download failed for {}: {}",
-            strUrl,
-            arrError[0] != '\0' ? arrError.data() : curl_easy_strerror(iResult)
-            )
+         std::format("bulk download failed for {}: {}", strUrl, arrError[0] != '\0' ? arrError.data() : curl_easy_strerror(iResult))
          };
       }
    }
@@ -333,22 +295,14 @@ bool AskForBulkDownload(std::filesystem::path const& aPath) {
       return true;
       }
 
-   std::print(
-      "Bulk data file '{}' is from today. Download it again? [y/N]: ",
-      aPath.string()
-      );
+   std::print("Bulk data file '{}' is from today. Download it again? [y/N]: ", aPath.string());
 
    std::string strAnswer;
    std::getline(std::cin, strAnswer);
 
-   std::ranges::transform(
-      strAnswer,
-      strAnswer.begin(),
-      [](unsigned char const chValue) {
-         return static_cast<char>(std::tolower(chValue));
-         }
-      );
-
+   std::ranges::transform(strAnswer, strAnswer.begin(), [](unsigned char const chValue) {
+                                                            return static_cast<char>(std::tolower(chValue));
+                                                            } );
    return strAnswer == "y" || strAnswer == "yes";
    }
 
@@ -359,29 +313,19 @@ LoadedBulkData LoadProcess() {
    CurlRuntime aCurlRuntime;
 
    // Borrowed library-owned pointer; it must not be deleted.
-   curl_version_info_data const* const pCurlInfo =
-      curl_version_info(CURLVERSION_NOW);
+   curl_version_info_data const* const pCurlInfo = curl_version_info(CURLVERSION_NOW);
 
    std::println("OpenSSL: {}", OpenSSL_version(OPENSSL_VERSION));
-   std::println(
-      "curl TLS backend: {}",
-      pCurlInfo != nullptr && pCurlInfo->ssl_version != nullptr
-         ? pCurlInfo->ssl_version
-         : "<unknown>"
-      );
+   std::println("curl TLS backend: {}", pCurlInfo != nullptr && pCurlInfo->ssl_version != nullptr
+                                                                                ? pCurlInfo->ssl_version : "<unknown>" );
 
    BulkDescriptor aBulk = ResolveBulkData();
 
-   std::println(
-      "Scryfall default_cards updated at: {}",
-      aBulk.strUpdatedAt.empty() ? "<not supplied>" : aBulk.strUpdatedAt
-      );
+   std::println("Scryfall default_cards updated at: {}", aBulk.strUpdatedAt.empty() ? "<not supplied>" : aBulk.strUpdatedAt);
 
-   std::filesystem::path const aBulkPath =
-      std::filesystem::temp_directory_path() /
-      (aBulk.boGzipJsonLines
-         ? "deckkernel-scryfall-default-cards.jsonl.gz"
-         : "deckkernel-scryfall-default-cards.json");
+   std::filesystem::path const aBulkPath = std::filesystem::temp_directory_path() /
+                                                   (aBulk.boGzipJsonLines ? "deckkernel-scryfall-default-cards.jsonl.gz"
+                                                                          : "deckkernel-scryfall-default-cards.json");
 
    bool const boDownload = AskForBulkDownload(aBulkPath);
 
@@ -393,7 +337,7 @@ LoadedBulkData LoadProcess() {
       std::println("Using today's existing bulk data: {}", aBulkPath.string());
       }
 
-   return LoadedBulkData{
+   return LoadedBulkData {
       .aDescriptor = std::move(aBulk),
       .aPath = aBulkPath,
       .boDownloaded = boDownload

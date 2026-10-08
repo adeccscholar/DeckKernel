@@ -28,19 +28,13 @@ domain names through selectors and manipulators.
 
 namespace deckkernel::test {
 
-using set_types = adecc::defined_type_list<
-   std::string,
-   std::string,
-   std::string
-   >;
+using set_types = adecc::defined_type_list<std::string, std::string, std::string>;
 
 struct SetMetaData {
    static constexpr std::string_view svTableName = "deckkernel_test.scryfall_sets";
 
    static constexpr std::array<std::string_view, 3> arrAttributeNames {
-      "id",
-      "code",
-      "name"
+      "id", "code", "name"
       };
 
    static constexpr std::array<std::size_t, 1> arrKeyIndices { 0 };
@@ -56,8 +50,7 @@ positions with domain selectors and manipulators as described in Rethinking C++
 (C++ neu denken). Selectors are const read access; same-named manipulators delegate
 validated/converting writes to SystemData::Set.
 */
-class TScryfallSet final
-   : public adecc::db::PersistentSystemData<set_types, SetMetaData> {
+class TScryfallSet final: public adecc::db::PersistentSystemData<set_types, SetMetaData> {
 public:
    using base_ty = adecc::db::PersistentSystemData<set_types, SetMetaData>;
    using base_ty::base_ty;
@@ -95,23 +88,13 @@ public:
    };
 
 
-using card_types = adecc::defined_type_list<
-   std::string,
-   std::optional<std::string>,
-   std::string,
-   std::string,
-   adecc::date_ty
-   >;
+using card_types = adecc::defined_type_list<std::string, std::optional<std::string>, std::string, std::string, adecc::date_ty>;
 
 struct CardMetaData {
    static constexpr std::string_view svTableName = "deckkernel_test.scryfall_cards";
 
    static constexpr std::array<std::string_view, 5> arrAttributeNames {
-      "id",
-      "oracle_id",
-      "name",
-      "set_id",
-      "released_at"
+      "id", "oracle_id", "name", "set_id", "released_at"
       };
 
    static constexpr std::array<std::size_t, 1> arrKeyIndices { 0 };
@@ -126,8 +109,7 @@ The class deliberately stores only the subset required by the first functional t
 Named selectors and manipulators hide tuple indices from application code while
 PersistentSystemData keeps the generic relational metadata and SQL builders.
 */
-class TScryfallCard final
-   : public adecc::db::PersistentSystemData<card_types, CardMetaData> {
+class TScryfallCard final : public adecc::db::PersistentSystemData<card_types, CardMetaData> {
 public:
    using base_ty = adecc::db::PersistentSystemData<card_types, CardMetaData>;
    using base_ty::base_ty;

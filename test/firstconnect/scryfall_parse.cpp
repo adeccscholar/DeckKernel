@@ -56,40 +56,24 @@ The bulk file repeats set_id, set code and set_name on every printing. We normal
 before the database boundary: one set tuple is deduplicated by set_id and every printing
 keeps set_id as the foreign-key value.
 */
-void AppendCard(
-   json_ty const& aCard,
-   ParsedBulkData& aParsed
-) {
-   std::string const strId = aCard.at("id").get<std::string>();
-   std::string const strSetId = aCard.at("set_id").get<std::string>();
-   std::string const strSetCode = aCard.at("set").get<std::string>();
-   std::string const strSetName = aCard.at("set_name").get<std::string>();
-   std::string const strName = aCard.at("name").get<std::string>();
+void AppendCard(json_ty const& aCard, ParsedBulkData& aParsed) {
+   std::string const strId         = aCard.at("id").get<std::string>();
+   std::string const strSetId      = aCard.at("set_id").get<std::string>();
+   std::string const strSetCode    = aCard.at("set").get<std::string>();
+   std::string const strSetName    = aCard.at("set_name").get<std::string>();
+   std::string const strName       = aCard.at("name").get<std::string>();
    std::string const strReleasedAt = aCard.at("released_at").get<std::string>();
 
    std::optional<std::string> optOracleId;
 
-   if (auto const it = aCard.find("oracle_id");
-       it != aCard.end() && !it->is_null()) {
+   if (auto const it = aCard.find("oracle_id"); it != aCard.end() && !it->is_null()) {
       optOracleId = it->get<std::string>();
       }
 
-   aParsed.mpSets.try_emplace(
-      strSetId,
-      TScryfallSet::data_ty{
-         strSetId,
-         strSetCode,
-         strSetName
-         }
-      );
+   aParsed.mpSets.try_emplace(strSetId, TScryfallSet::data_ty { strSetId, strSetCode, strSetName } );
 
-   aParsed.vecCards.emplace_back(
-      strId,
-      std::move(optOracleId),
-      strName,
-      strSetId,
-      adecc::ConvertTo<adecc::date_ty>(strReleasedAt)
-      );
+   aParsed.vecCards.emplace_back(strId, std::move(optOracleId), strName, strSetId,
+                                 adecc::ConvertTo<adecc::date_ty>(strReleasedAt) );
    }
 
 
@@ -102,27 +86,18 @@ This is one gzip stream, not a multi-entry archive, so zlib is sufficient and li
 is deliberately not involved. The RAII handle guarantees gzclose. A 64 KiB buffer is
 read blockwise; strPending keeps a JSON record that crosses a block boundary.
 */
-void ReadGzipJsonLines(
-   std::filesystem::path const& aPath,
-   ParsedBulkData& aParsed
-) {
+void ReadGzipJsonLines(std::filesystem::path const& aPath, ParsedBulkData& aParsed) {
    gzip_handle_ty upFile{ gzopen(aPath.string().c_str(), "rb") };
 
    if (!upFile) {
-      throw std::runtime_error{
-         std::format("cannot open gzip bulk-data file '{}'", aPath.string())
-         };
+      throw std::runtime_error { std::format("cannot open gzip bulk-data file '{}'", aPath.string()) };
       }
 
    std::array<char, 64U * 1024U> arrBuffer{};
    std::string strPending;
 
    while (true) {
-      int const iRead = gzread(
-         upFile.get(),
-         arrBuffer.data(),
-         static_cast<unsigned int>(arrBuffer.size())
-         );
+      int const iRead = gzread(upFile.get(), arrBuffer.data(), static_cast<unsigned int>(arrBuffer.size()) );
 
       if (iRead < 0) {
          int iError{};

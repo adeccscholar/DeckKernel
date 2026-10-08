@@ -17,15 +17,15 @@ nothing about JSON card decomposition or PostgreSQL.
 namespace deckkernel::test {
 
 struct BulkDescriptor {
-   std::string strDownloadUri;
-   std::string strUpdatedAt;
-   bool boGzipJsonLines{ false };
+   std::string           strDownloadUri;
+   std::string           strUpdatedAt;
+   bool                  boGzipJsonLines { false };
    };
 
 struct LoadedBulkData {
-   BulkDescriptor aDescriptor;
+   BulkDescriptor        aDescriptor;
    std::filesystem::path aPath;
-   bool boDownloaded{ false };
+   bool                  boDownloaded { false };
    };
 
 LoadedBulkData LoadProcess();

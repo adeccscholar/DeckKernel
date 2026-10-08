@@ -32,28 +32,20 @@ template <typename fn_ty>
 using process_result_ty = std::invoke_result_t<fn_ty>;
 
 template <typename fn_ty>
-process_result_ty<fn_ty> RunTimedProcess(
-   std::string_view const svName,
-   fn_ty&& fnProcess
-) {
+process_result_ty<fn_ty> RunTimedProcess(std::string_view const svName, fn_ty&& fnProcess) {
    auto const aStart = std::chrono::steady_clock::now();
 
    if constexpr (std::is_void_v<process_result_ty<fn_ty>>) {
       std::invoke(std::forward<fn_ty>(fnProcess));
 
-      double const flSeconds = std::chrono::duration<double>(
-         std::chrono::steady_clock::now() - aStart
-         ).count();
+      double const flSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - aStart).count();
 
       std::println("[TIME] {:<10}: {:.3f} s", svName, flSeconds);
       }
    else {
-      process_result_ty<fn_ty> aResult =
-         std::invoke(std::forward<fn_ty>(fnProcess));
+      process_result_ty<fn_ty> aResult = std::invoke(std::forward<fn_ty>(fnProcess));
 
-      double const flSeconds = std::chrono::duration<double>(
-         std::chrono::steady_clock::now() - aStart
-         ).count();
+      double const flSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - aStart).count();
 
       std::println("[TIME] {:<10}: {:.3f} s", svName, flSeconds);
       return aResult;
@@ -70,15 +62,9 @@ void ShowLatestCards(postgres_database_ty const& aDatabase) {
       { "Set", 40, adecc::EAlignmentType::left }
       };
 
-   backend_ty aBackend{
-      std::cout,
-      backend_ty::TableSeparators()
-      };
+   backend_ty aBackend { std::cout,  backend_ty::TableSeparators()  };
 
-   grid_ty aGrid{
-      std::move(aBackend),
-      vecCaptions
-      };
+   grid_ty aGrid { std::move(aBackend), vecCaptions };
 
    auto rngLatest = aDatabase.template Execute<std::string, std::string>(
       "SELECT c.name AS card_name, s.name AS set_name "

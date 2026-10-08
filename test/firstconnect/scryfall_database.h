@@ -15,16 +15,9 @@
 
 namespace deckkernel::test {
 
-using postgres_database_ty = adecc::db::logical_database<
-   adecc::db::postgres::postgres_database,
-   adecc::db::postgres::fw_query
-   >;
+using postgres_database_ty = adecc::db::logical_database<adecc::db::postgres::postgres_database, adecc::db::postgres::fw_query>;
 
 postgres_database_ty OpenDatabase();
-
-void StoreProcess(
-   postgres_database_ty& aDatabase,
-   ParsedBulkData const& aParsed
-);
+void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed);
 
 } // namespace deckkernel::test
