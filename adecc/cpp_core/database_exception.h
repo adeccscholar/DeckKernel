@@ -44,6 +44,7 @@ license from adecc Systemhaus GmbH.
 
 #include "value_types.h"
 #include "value_types_visitor.h"
+#include "diagnostic_text.h"
 
 #include <string>
 #include <stdexcept>
@@ -107,9 +108,11 @@ public:
                       std::string const& information_,
                       std::string const& errorinfo_)
       : std::runtime_error { msg_ },
-        strServer { server_ },
-        strInformation { std::move( clear_pwd(information_) ) },
-        strMessage{ std::move( clear_pwd(errorinfo_) ) } {
+        strServer { diagnostic::NarrowToUtf8(server_) },
+        strInformation {
+           clear_pwd(diagnostic::NarrowToUtf8(information_))
+           },
+        strMessage{ clear_pwd(errorinfo_) } {
       buildFinal_();
    }
 
@@ -180,7 +183,8 @@ public:
                    std::string const& query_,
                    std::string const& parameter_)
       : database_exception{ msg_, server_, information_, errorinfo_ },
-        strQuery{ query_ }, strParameter{ parameter_ } {
+        strQuery{ diagnostic::NarrowToUtf8(query_) },
+        strParameter{ parameter_ } {
       buildFinal_();
    }
 
@@ -195,7 +199,7 @@ public:
                             std::string{ svServer },
                             std::string{ svInformation },
                             std::string{ svErrorInfo } },
-        strQuery{ svQuery },
+        strQuery{ diagnostic::NarrowToUtf8(svQuery) },
         strParameter{ svParameter } {
       buildFinal_();
    }
