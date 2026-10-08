@@ -16,6 +16,10 @@ interfaces while this adapter is responsible for PostgreSQL-specific connection 
 transactions, parameter binding, statement execution, result conversion and error
 translation.
 
+Wide string values use std::wstring at the public adecc boundary. Because libpq/libpqxx
+exposes a byte-oriented text protocol, only the PostgreSQL adapter converts wide values
+to and from UTF-8 internally; application code does not need to use UTF-8 string values.
+
 The implementation follows the architectural principles described in
 "Rethinking C++" ("C++ neu denken"):
 
@@ -431,6 +435,144 @@ namespace adecc::db::postgres {
             }
 
          strResult.append(strSql, boHasSemicolon ? uInsertPos + 1 : uInsertPos, std::string::npos);
+         return strResult;
+         }
+
+
+      inline std::string WideToUtf8(std::wstring_view const svValue) {
+         std::string strResult;
+         strResult.reserve(svValue.size());
+
+         auto fnAppend = [&strResult](std::uint32_t const uCodePoint) {
+            if (uCodePoint <= 0x7f) {
+               strResult.push_back(static_cast<char>(uCodePoint));
+               }
+            else if (uCodePoint <= 0x7ff) {
+               strResult.push_back(static_cast<char>(0xc0 | (uCodePoint >> 6)));
+               strResult.push_back(static_cast<char>(0x80 | (uCodePoint & 0x3f)));
+               }
+            else if (uCodePoint <= 0xffff) {
+               strResult.push_back(static_cast<char>(0xe0 | (uCodePoint >> 12)));
+               strResult.push_back(static_cast<char>(0x80 | ((uCodePoint >> 6) & 0x3f)));
+               strResult.push_back(static_cast<char>(0x80 | (uCodePoint & 0x3f)));
+               }
+            else {
+               strResult.push_back(static_cast<char>(0xf0 | (uCodePoint >> 18)));
+               strResult.push_back(static_cast<char>(0x80 | ((uCodePoint >> 12) & 0x3f)));
+               strResult.push_back(static_cast<char>(0x80 | ((uCodePoint >> 6) & 0x3f)));
+               strResult.push_back(static_cast<char>(0x80 | (uCodePoint & 0x3f)));
+               }
+            };
+
+         if constexpr (sizeof(wchar_t) == 2) {
+            for (std::size_t uIndex{}; uIndex < svValue.size(); ++uIndex) {
+               std::uint32_t uCodePoint = static_cast<std::uint32_t>(svValue[uIndex]);
+
+               if (uCodePoint >= 0xd800 && uCodePoint <= 0xdbff) {
+                  if (++uIndex >= svValue.size()) {
+                     throw std::runtime_error("unpaired wchar_t high surrogate");
+                     }
+
+                  std::uint32_t const uLow = static_cast<std::uint32_t>(svValue[uIndex]);
+                  if (uLow < 0xdc00 || uLow > 0xdfff) {
+                     throw std::runtime_error("invalid wchar_t surrogate pair");
+                     }
+
+                  uCodePoint = 0x10000 + ((uCodePoint - 0xd800) << 10) + (uLow - 0xdc00);
+                  }
+               else if (uCodePoint >= 0xdc00 && uCodePoint <= 0xdfff) {
+                  throw std::runtime_error("unpaired wchar_t low surrogate");
+                  }
+
+               fnAppend(uCodePoint);
+               }
+            }
+         else {
+            for (wchar_t const ch : svValue) {
+               std::uint32_t const uCodePoint = static_cast<std::uint32_t>(ch);
+
+               if (uCodePoint > 0x10ffff ||
+                   (uCodePoint >= 0xd800 && uCodePoint <= 0xdfff)) {
+                  throw std::runtime_error("invalid wchar_t Unicode code point");
+                  }
+
+               fnAppend(uCodePoint);
+               }
+            }
+
+         return strResult;
+         }
+
+
+      inline std::wstring Utf8ToWide(std::string_view const svValue) {
+         std::wstring strResult;
+         strResult.reserve(svValue.size());
+
+         for (std::size_t uPos{}; uPos < svValue.size();) {
+            unsigned char const uFirst = static_cast<unsigned char>(svValue[uPos]);
+            std::uint32_t uCodePoint{};
+            std::size_t uCount{};
+
+            if (uFirst < 0x80) {
+               uCodePoint = uFirst;
+               uCount = 1;
+               }
+            else if ((uFirst & 0xe0) == 0xc0) {
+               uCodePoint = uFirst & 0x1f;
+               uCount = 2;
+               }
+            else if ((uFirst & 0xf0) == 0xe0) {
+               uCodePoint = uFirst & 0x0f;
+               uCount = 3;
+               }
+            else if ((uFirst & 0xf8) == 0xf0) {
+               uCodePoint = uFirst & 0x07;
+               uCount = 4;
+               }
+            else {
+               throw std::runtime_error("invalid UTF-8 leading byte from PostgreSQL");
+               }
+
+            if (uPos + uCount > svValue.size()) {
+               throw std::runtime_error("truncated UTF-8 sequence from PostgreSQL");
+               }
+
+            for (std::size_t uIndex{ 1 }; uIndex < uCount; ++uIndex) {
+               unsigned char const uNext =
+                  static_cast<unsigned char>(svValue[uPos + uIndex]);
+
+               if ((uNext & 0xc0) != 0x80) {
+                  throw std::runtime_error("invalid UTF-8 continuation byte from PostgreSQL");
+                  }
+
+               uCodePoint = (uCodePoint << 6) | (uNext & 0x3f);
+               }
+
+            if ((uCount == 2 && uCodePoint < 0x80) ||
+                (uCount == 3 && uCodePoint < 0x800) ||
+                (uCount == 4 && uCodePoint < 0x10000) ||
+                uCodePoint > 0x10ffff ||
+                (uCodePoint >= 0xd800 && uCodePoint <= 0xdfff)) {
+               throw std::runtime_error("invalid UTF-8 code point from PostgreSQL");
+               }
+
+            if constexpr (sizeof(wchar_t) == 2) {
+               if (uCodePoint <= 0xffff) {
+                  strResult.push_back(static_cast<wchar_t>(uCodePoint));
+                  }
+               else {
+                  uCodePoint -= 0x10000;
+                  strResult.push_back(static_cast<wchar_t>(0xd800 + (uCodePoint >> 10)));
+                  strResult.push_back(static_cast<wchar_t>(0xdc00 + (uCodePoint & 0x3ff)));
+                  }
+               }
+            else {
+               strResult.push_back(static_cast<wchar_t>(uCodePoint));
+               }
+
+            uPos += uCount;
+            }
+
          return strResult;
          }
 
@@ -1279,6 +1421,26 @@ namespace adecc::db::postgres {
             }
 
 
+         void operator()(std::wstring_view const svValue) const {
+            pParams->append(detail::WideToUtf8(svValue));
+            }
+
+
+         void operator()(wchar_t const* const szValue) const {
+            if (szValue) {
+               pParams->append(detail::WideToUtf8(szValue));
+               }
+            else {
+               pParams->append();
+               }
+            }
+
+
+         void operator()(std::wstring const& strValue) const {
+            pParams->append(detail::WideToUtf8(strValue));
+            }
+
+
          void operator()(double const flValue) const {
             pParams->append(flValue);
             }
@@ -1390,6 +1552,9 @@ namespace adecc::db::postgres {
 
          if constexpr (std::same_as<clean_ty, std::string>) {
             return std::string{ aField.view() };
+            }
+         else if constexpr (std::same_as<clean_ty, std::wstring>) {
+            return detail::Utf8ToWide(aField.view());
             }
          else if constexpr (adecc::is_in_type_list_v<clean_ty, pqxx_direct_types>) {
             return aField.template as<clean_ty>();
