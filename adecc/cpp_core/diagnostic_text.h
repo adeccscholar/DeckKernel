@@ -189,7 +189,7 @@ namespace adecc::diagnostic {
 
       int const iWideLength = MultiByteToWideChar(
          CP_ACP,
-         MB_ERR_INVALID_CHARS,
+         0,
          svValue.data(),
          static_cast<int>(svValue.size()),
          nullptr,
@@ -203,7 +203,7 @@ namespace adecc::diagnostic {
       std::wstring strWide(static_cast<std::size_t>(iWideLength), wchar_t{});
       int const iConverted = MultiByteToWideChar(
          CP_ACP,
-         MB_ERR_INVALID_CHARS,
+         0,
          svValue.data(),
          static_cast<int>(svValue.size()),
          strWide.data(),
