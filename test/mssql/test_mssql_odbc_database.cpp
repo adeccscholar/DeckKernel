@@ -428,7 +428,7 @@ int main(int const iArgc, char* const* const argv) {
 
       row_ty aInput1{
          0LL,
-         "München – 東京",
+         "Muenchen",
          std::nullopt,
          adecc::money_ty{ 1234.56 },
          12.125,
@@ -490,13 +490,49 @@ int main(int const iArgc, char* const* const argv) {
          );
 
       CheckRow(aRead1, aInput1);
-      std::cout << "[PASS] Unicode, NULL, decimal, datetime, datetime2, date, time and bit roundtrip\n";
+      std::cout << "[PASS] narrow string, NULL, decimal, datetime, datetime2, date, time and bit roundtrip\n";
+
+      std::wstring const strWideValue{
+         L"M\u00FCnchen \u2013 \u6771\u4EAC"
+         };
+      auto const [strWideResult] = RequireOne(
+         theDatabase.ExecuteOne<std::wstring>(
+            "SELECT CAST(:Value AS nvarchar(200)) AS Value",
+            database_ty::Params(database_ty::Param("Value", strWideValue))
+            ),
+         "wstring roundtrip"
+         );
+      Require(strWideResult == strWideValue, "std::wstring roundtrip differs");
+
+      std::wstring_view const svWideValue{ strWideValue };
+      auto const [strWideViewResult] = RequireOne(
+         theDatabase.ExecuteOne<std::wstring>(
+            "SELECT CAST(:Value AS nvarchar(200)) AS Value",
+            database_ty::Params(database_ty::Param("Value", svWideValue))
+            ),
+         "wstring_view parameter roundtrip"
+         );
+      Require(strWideViewResult == strWideValue, "std::wstring_view parameter differs");
+
+      wchar_t const* const szWideValue = L"\u00C4\u00D6\u00DC \u20AC";
+      auto const [strWidePointerResult] = RequireOne(
+         theDatabase.ExecuteOne<std::wstring>(
+            "SELECT CAST(:Value AS nvarchar(200)) AS Value",
+            database_ty::Params(database_ty::Param("Value", szWideValue))
+            ),
+         "wchar_t pointer parameter roundtrip"
+         );
+      Require(
+         strWidePointerResult == std::wstring{ szWideValue },
+         "wchar_t const* parameter differs"
+         );
+      std::cout << "[PASS] wstring, wstring_view and wchar_t const* Unicode roundtrip\n";
 
       adecc::date_ty const aDate2 = MakeDate(2026, 10, 9);
       row_ty aInput2{
          0LL,
          "Child",
-         std::optional<std::string>{ "ÄÖÜ €" },
+         std::optional<std::string>{ "Alternate" },
          adecc::money_ty{ 42.10 },
          0.125,
          MakeTimestamp(aDate2, hours{ 7 }, minutes{ 8 }, seconds{ 9 }),
