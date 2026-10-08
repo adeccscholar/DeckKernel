@@ -7,8 +7,10 @@
 
 \details
 Extends standard C++ exceptions with server information, query text, parameters, and backend details while
-preserving a stable what() result. The design follows the library principle that exceptions remain standard
-C++ objects but may carry richer contextual information.
+preserving a stable what() result. Diagnostic std::string content is UTF-8 by contract. This does not change
+the encoding semantics of ordinary application std::string values; conversion happens when values enter the
+diagnostic boundary. The design follows the library principle that exceptions remain standard C++ objects
+but may carry richer contextual information.
 
 \par Architectural background
 This header follows the architecture described by Volker Hillmann in
