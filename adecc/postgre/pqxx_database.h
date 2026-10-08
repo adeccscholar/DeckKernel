@@ -1622,23 +1622,48 @@ namespace adecc::db::postgres {
 
 
       template <class tup_ty, std::size_t I>
-      std::expected<std::optional<db_value>, error_ty> ReadIdentityAt_(pqxx::field_ref const& aField) const {
+      std::expected<std::optional<db_value>, error_ty> ReadIdentityAt_(
+         pqxx::field_ref const& aField
+      ) const {
          using elem_ty = std::tuple_element_t<I, tup_ty>;
          using clean_elem_ty = std::remove_cvref_t<elem_ty>;
 
          try {
             if constexpr (adecc::is_optional_v<clean_elem_ty>) {
                using value_ty = adecc::optional_value_type_t<clean_elem_ty>;
-               value_ty const aValue = ConvertField_<value_ty>(aField);
-               return std::optional<db_value>{ db_value{ aValue } };
+
+               if constexpr (std::integral<value_ty> &&
+                             !std::same_as<value_ty, bool>) {
+                  value_ty const aValue = ConvertField_<value_ty>(aField);
+                  return std::optional<db_value>{ db_value{ aValue } };
+                  }
+               else {
+                  return std::unexpected(error_ty{
+                     {},
+                     "error for read PostgreSQL output identity",
+                     "db_output_param_role::identity requires an integral adecc result type"
+                     });
+                  }
                }
-            else {
+            else if constexpr (std::integral<clean_elem_ty> &&
+                               !std::same_as<clean_elem_ty, bool>) {
                clean_elem_ty const aValue = ConvertField_<clean_elem_ty>(aField);
                return std::optional<db_value>{ db_value{ aValue } };
                }
+            else {
+               return std::unexpected(error_ty{
+                  {},
+                  "error for read PostgreSQL output identity",
+                  "db_output_param_role::identity requires an integral adecc result type"
+                  });
+               }
             }
          catch (std::exception const& ex) {
-            return std::unexpected(error_ty { {}, "error for read PostgreSQL output identity", ex.what()});
+            return std::unexpected(error_ty{
+               {},
+               "error for read PostgreSQL output identity",
+               ex.what()
+               });
             }
          }
 
