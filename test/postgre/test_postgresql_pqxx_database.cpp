@@ -652,7 +652,7 @@ int main(int const iArgc, char* const* const argv) {
             0LL,
             std::get<1>(aInput1),
             std::nullopt,
-            L"Duplicate",
+            L"Fehler \u00DC \u2013 \u6771\u4EAC",
             adecc::money_ty{ 9.99 },
             9.0,
             aTimestamp1,
