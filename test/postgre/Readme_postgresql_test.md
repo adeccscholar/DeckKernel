@@ -35,19 +35,26 @@ Build the test:
 cmake --build test\postgre\build
 ```
 
-The CMake target copies the PostgreSQL/libpqxx runtime DLLs required by the test next to
-the executable.
+Install the test and its runtime DLLs to `apps\Debug`:
+
+```cmd
+cmake --install test\postgre\build
+```
+
+For a Release configuration the destination is `apps\Release`. The install step copies
+the executable together with the required libpq, libpqxx, OpenSSL, zlib, Brotli, and zstd
+runtime DLLs.
 
 Run with integrated authentication:
 
 ```cmd
-test\postgre\build\adecc_postgresql_pqxx_test.exe --host localhost --database DeckKernel --user deckkernel_user --integrated
+apps\Debug\adecc_postgresql_pqxx_test.exe --host localhost --database DeckKernel --user deckkernel_user --integrated
 ```
 
 Run with password authentication:
 
 ```cmd
-test\postgre\build\adecc_postgresql_pqxx_test.exe --host localhost --database DeckKernel --user deckkernel_user --password-login --password <password>
+apps\Debug\adecc_postgresql_pqxx_test.exe --host localhost --database DeckKernel --user deckkernel_user --password-login --password <password>
 ```
 
 The defaults and environment variables match the existing DeckKernel PostgreSQL test
