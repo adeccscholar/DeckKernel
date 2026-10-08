@@ -346,138 +346,88 @@ namespace adecc::db::mssql {
          }
 
 
-      inline std::u16string Utf8ToUtf16(std::string_view const svValue) {
-         std::u16string strResult;
-         strResult.reserve(svValue.size());
+      inline std::vector<SQLWCHAR> ToOdbcWide(std::wstring_view const svValue) {
+         static_assert(sizeof(SQLWCHAR) == 2, "ODBC wide character must be UTF-16");
 
-         for (std::size_t uPos{}; uPos < svValue.size();) {
-            unsigned char const uFirst = static_cast<unsigned char>(svValue[uPos]);
-            char32_t uCodePoint{};
-            std::size_t uCount{};
-
-            if (uFirst < 0x80) {
-               uCodePoint = uFirst;
-               uCount = 1;
-               }
-            else if ((uFirst & 0xE0) == 0xC0) {
-               uCodePoint = uFirst & 0x1F;
-               uCount = 2;
-               }
-            else if ((uFirst & 0xF0) == 0xE0) {
-               uCodePoint = uFirst & 0x0F;
-               uCount = 3;
-               }
-            else if ((uFirst & 0xF8) == 0xF0) {
-               uCodePoint = uFirst & 0x07;
-               uCount = 4;
-               }
-            else {
-               throw std::runtime_error("invalid UTF-8 leading byte");
-               }
-
-            if (uPos + uCount > svValue.size()) {
-               throw std::runtime_error("truncated UTF-8 sequence");
-               }
-
-            for (std::size_t uIndex{ 1 }; uIndex < uCount; ++uIndex) {
-               unsigned char const uNext = static_cast<unsigned char>(svValue[uPos + uIndex]);
-               if ((uNext & 0xC0) != 0x80) {
-                  throw std::runtime_error("invalid UTF-8 continuation byte");
-                  }
-               uCodePoint = (uCodePoint << 6) | (uNext & 0x3F);
-               }
-
-            if ((uCount == 2 && uCodePoint < 0x80) ||
-                (uCount == 3 && uCodePoint < 0x800) ||
-                (uCount == 4 && uCodePoint < 0x10000) ||
-                uCodePoint > 0x10FFFF ||
-                (uCodePoint >= 0xD800 && uCodePoint <= 0xDFFF)) {
-               throw std::runtime_error("non-canonical or invalid UTF-8 code point");
-               }
-
-            if (uCodePoint <= 0xFFFF) {
-               strResult.push_back(static_cast<char16_t>(uCodePoint));
-               }
-            else {
-               uCodePoint -= 0x10000;
-               strResult.push_back(static_cast<char16_t>(0xD800 + (uCodePoint >> 10)));
-               strResult.push_back(static_cast<char16_t>(0xDC00 + (uCodePoint & 0x3FF)));
-               }
-
-            uPos += uCount;
-            }
-
-         return strResult;
-         }
-
-
-      inline std::string Utf16ToUtf8(std::u16string_view const svValue) {
-         std::string strResult;
-         strResult.reserve(svValue.size());
-
-         for (std::size_t uPos{}; uPos < svValue.size(); ++uPos) {
-            char32_t uCodePoint = svValue[uPos];
-
-            if (uCodePoint >= 0xD800 && uCodePoint <= 0xDBFF) {
-               if (uPos + 1 >= svValue.size()) {
-                  throw std::runtime_error("truncated UTF-16 surrogate pair");
-                  }
-               char32_t const uLow = svValue[++uPos];
-               if (uLow < 0xDC00 || uLow > 0xDFFF) {
-                  throw std::runtime_error("invalid UTF-16 surrogate pair");
-                  }
-               uCodePoint = 0x10000 + ((uCodePoint - 0xD800) << 10) + (uLow - 0xDC00);
-               }
-            else if (uCodePoint >= 0xDC00 && uCodePoint <= 0xDFFF) {
-               throw std::runtime_error("unpaired UTF-16 low surrogate");
-               }
-
-            if (uCodePoint <= 0x7F) {
-               strResult.push_back(static_cast<char>(uCodePoint));
-               }
-            else if (uCodePoint <= 0x7FF) {
-               strResult.push_back(static_cast<char>(0xC0 | (uCodePoint >> 6)));
-               strResult.push_back(static_cast<char>(0x80 | (uCodePoint & 0x3F)));
-               }
-            else if (uCodePoint <= 0xFFFF) {
-               strResult.push_back(static_cast<char>(0xE0 | (uCodePoint >> 12)));
-               strResult.push_back(static_cast<char>(0x80 | ((uCodePoint >> 6) & 0x3F)));
-               strResult.push_back(static_cast<char>(0x80 | (uCodePoint & 0x3F)));
-               }
-            else {
-               strResult.push_back(static_cast<char>(0xF0 | (uCodePoint >> 18)));
-               strResult.push_back(static_cast<char>(0x80 | ((uCodePoint >> 12) & 0x3F)));
-               strResult.push_back(static_cast<char>(0x80 | ((uCodePoint >> 6) & 0x3F)));
-               strResult.push_back(static_cast<char>(0x80 | (uCodePoint & 0x3F)));
-               }
-            }
-
-         return strResult;
-         }
-
-
-      inline std::vector<SQLWCHAR> ToOdbcWide(std::string_view const svValue) {
-         static_assert(sizeof(SQLWCHAR) == sizeof(char16_t));
-         auto const strUtf16 = Utf8ToUtf16(svValue);
          std::vector<SQLWCHAR> vecValue;
-         vecValue.reserve(strUtf16.size() + 1);
-         for (char16_t const ch : strUtf16) {
-            vecValue.push_back(static_cast<SQLWCHAR>(ch));
+         vecValue.reserve(svValue.size() + 1);
+
+         if constexpr (sizeof(wchar_t) == 2) {
+            for (wchar_t const ch : svValue) {
+               vecValue.push_back(static_cast<SQLWCHAR>(ch));
+               }
             }
+         else {
+            for (wchar_t const ch : svValue) {
+               std::uint32_t const uCodePoint = static_cast<std::uint32_t>(ch);
+
+               if (uCodePoint > 0x10ffff ||
+                   (uCodePoint >= 0xd800 && uCodePoint <= 0xdfff)) {
+                  throw std::runtime_error("invalid wchar_t Unicode code point");
+                  }
+
+               if (uCodePoint <= 0xffff) {
+                  vecValue.push_back(static_cast<SQLWCHAR>(uCodePoint));
+                  }
+               else {
+                  std::uint32_t const uValue = uCodePoint - 0x10000;
+                  vecValue.push_back(static_cast<SQLWCHAR>(0xd800 + (uValue >> 10)));
+                  vecValue.push_back(static_cast<SQLWCHAR>(0xdc00 + (uValue & 0x3ff)));
+                  }
+               }
+            }
+
          vecValue.push_back(SQLWCHAR{});
          return vecValue;
          }
 
 
-      inline std::string FromOdbcWide(SQLWCHAR const* const pValue,
-                                      std::size_t const uLength) {
-         static_assert(sizeof(SQLWCHAR) == sizeof(char16_t));
-         std::u16string strUtf16;
-         strUtf16.reserve(uLength);
-         for (std::size_t uIndex{}; uIndex < uLength; ++uIndex) {
-            strUtf16.push_back(static_cast<char16_t>(pValue[uIndex]));
+      inline std::wstring FromOdbcWide(SQLWCHAR const* const pValue,
+                                       std::size_t const uLength) {
+         static_assert(sizeof(SQLWCHAR) == 2, "ODBC wide character must be UTF-16");
+
+         std::wstring strResult;
+         strResult.reserve(uLength);
+
+         if constexpr (sizeof(wchar_t) == 2) {
+            for (std::size_t uIndex{}; uIndex < uLength; ++uIndex) {
+               strResult.push_back(static_cast<wchar_t>(pValue[uIndex]));
+               }
             }
-         return Utf16ToUtf8(strUtf16);
+         else {
+            for (std::size_t uIndex{}; uIndex < uLength; ++uIndex) {
+               std::uint32_t uCodePoint = static_cast<std::uint32_t>(pValue[uIndex]);
+
+               if (uCodePoint >= 0xd800 && uCodePoint <= 0xdbff) {
+                  if (++uIndex >= uLength) {
+                     throw std::runtime_error("unpaired UTF-16 high surrogate");
+                     }
+
+                  std::uint32_t const uLow = static_cast<std::uint32_t>(pValue[uIndex]);
+                  if (uLow < 0xdc00 || uLow > 0xdfff) {
+                     throw std::runtime_error("invalid UTF-16 surrogate pair");
+                     }
+
+                  uCodePoint = 0x10000 + ((uCodePoint - 0xd800) << 10) + (uLow - 0xdc00);
+                  }
+               else if (uCodePoint >= 0xdc00 && uCodePoint <= 0xdfff) {
+                  throw std::runtime_error("unpaired UTF-16 low surrogate");
+                  }
+
+               strResult.push_back(static_cast<wchar_t>(uCodePoint));
+               }
+            }
+
+         return strResult;
+         }
+
+
+      inline std::string FromOdbcNarrow(SQLCHAR const* const pValue,
+                                        std::size_t const uLength) {
+         return std::string{
+            reinterpret_cast<char const*>(pValue),
+            uLength
+            };
          }
 
 
@@ -974,13 +924,12 @@ namespace adecc::db::mssql {
             strConnection += "PWD=" + detail::EscapeConnectionValue(aCredentials.strPassword) + ";";
             }
 
-         auto vecConnection = detail::ToOdbcWide(strConnection);
-         std::array<SQLWCHAR, 2048> arrCompleted{};
+         std::array<SQLCHAR, 2048> arrCompleted{};
          SQLSMALLINT iCompletedLength{};
-         iResult = SQLDriverConnectW(
+         iResult = SQLDriverConnectA(
             hConnection,
             nullptr,
-            vecConnection.data(),
+            reinterpret_cast<SQLCHAR*>(strConnection.data()),
             SQL_NTS,
             arrCompleted.data(),
             static_cast<SQLSMALLINT>(arrCompleted.size()),
@@ -1342,10 +1291,9 @@ namespace adecc::db::mssql {
             }
 
          ResetStatement_();
-         auto vecSql = detail::ToOdbcWide(aParameterPlan.strSql);
-         SQLRETURN iResult = SQLExecDirectW(
+         SQLRETURN iResult = SQLExecDirectA(
             hStatement,
-            vecSql.data(),
+            reinterpret_cast<SQLCHAR*>(aParameterPlan.strSql.data()),
             SQL_NTS
             );
          if (auto aCheck = detail::CheckOdbc(
@@ -1502,13 +1450,13 @@ namespace adecc::db::mssql {
 
                bool boIdentityResult{ false };
                if (iColumns == 1) {
-                  std::array<SQLWCHAR, 128> arrColumnName{};
+                  std::array<SQLCHAR, 128> arrColumnName{};
                   SQLSMALLINT iColumnNameLength{};
                   SQLSMALLINT iType{};
                   SQLULEN uPrecision{};
                   SQLSMALLINT iScale{};
                   SQLSMALLINT iNullable{};
-                  iResult = SQLDescribeColW(
+                  iResult = SQLDescribeColA(
                      hStatement,
                      1,
                      arrColumnName.data(),
@@ -1528,7 +1476,7 @@ namespace adecc::db::mssql {
                       ); !aCheck) {
                      return std::unexpected(aCheck.error());
                      }
-                  auto const strColumnName = detail::FromOdbcWide(
+                  auto const strColumnName = detail::FromOdbcNarrow(
                      arrColumnName.data(),
                      static_cast<std::size_t>(std::max<SQLSMALLINT>(0, iColumnNameLength))
                      );
@@ -1895,10 +1843,9 @@ namespace adecc::db::mssql {
 
          ResetStatement_();
 
-         auto vecSql = detail::ToOdbcWide(aPlan.strSql);
-         SQLRETURN iResult = SQLPrepareW(
+         SQLRETURN iResult = SQLPrepareA(
             hStatement,
-            vecSql.data(),
+            reinterpret_cast<SQLCHAR*>(aPlan.strSql.data()),
             SQL_NTS
             );
          if (auto aCheck = detail::CheckOdbc(
@@ -2013,14 +1960,22 @@ namespace adecc::db::mssql {
          detail::parameter_descriptor const& aDescriptor
       ) {
          if (!optValue) {
+            using clean_ty = std::remove_cvref_t<ty>;
+            constexpr bool boWide =
+               std::same_as<clean_ty, std::wstring> ||
+               std::same_as<clean_ty, std::wstring_view> ||
+               std::same_as<clean_ty, wchar_t const*>;
+
             aStorage.aValue = std::monostate{};
             aStorage.iIndicator = SQL_NULL_DATA;
             SQLRETURN const iResult = SQLBindParameter(
                hStatement,
                uPosition,
                SQL_PARAM_INPUT,
-               SQL_C_CHAR,
-               aDescriptor.iSqlType,
+               boWide ? SQL_C_WCHAR : SQL_C_CHAR,
+               aDescriptor.iSqlType != SQL_UNKNOWN_TYPE
+                  ? aDescriptor.iSqlType
+                  : (boWide ? SQL_WVARCHAR : SQL_VARCHAR),
                std::max<SQLULEN>(1, aDescriptor.uPrecision),
                aDescriptor.iScale,
                nullptr,
@@ -2055,6 +2010,7 @@ namespace adecc::db::mssql {
          if (!szValue) {
             return BindValue_(uPosition, std::optional<std::string>{}, aStorage, aDescriptor);
             }
+
          aStorage.aValue = std::string{ szValue };
          return BindString_(uPosition, aStorage, aDescriptor);
          }
@@ -2069,20 +2025,94 @@ namespace adecc::db::mssql {
          }
 
 
+      framework_result_ty BindValue_(SQLUSMALLINT const uPosition,
+                                     std::wstring_view const svValue,
+                                     bound_value& aStorage,
+                                     detail::parameter_descriptor const& aDescriptor) {
+         aStorage.aValue = detail::ToOdbcWide(svValue);
+         return BindWideString_(uPosition, aStorage, aDescriptor);
+         }
+
+
+      framework_result_ty BindValue_(SQLUSMALLINT const uPosition,
+                                     wchar_t const* const szValue,
+                                     bound_value& aStorage,
+                                     detail::parameter_descriptor const& aDescriptor) {
+         if (!szValue) {
+            return BindValue_(uPosition, std::optional<std::wstring>{}, aStorage, aDescriptor);
+            }
+
+         return BindValue_(
+            uPosition,
+            std::wstring_view{ szValue },
+            aStorage,
+            aDescriptor
+            );
+         }
+
+
+      framework_result_ty BindValue_(SQLUSMALLINT const uPosition,
+                                     std::wstring const& strValue,
+                                     bound_value& aStorage,
+                                     detail::parameter_descriptor const& aDescriptor) {
+         return BindValue_(
+            uPosition,
+            std::wstring_view{ strValue },
+            aStorage,
+            aDescriptor
+            );
+         }
+
+
       framework_result_ty BindString_(SQLUSMALLINT const uPosition,
                                       bound_value& aStorage,
-                                     detail::parameter_descriptor const& aDescriptor) {
-         auto const strValue = std::get<std::string>(aStorage.aValue);
-         aStorage.aValue = detail::ToOdbcWide(strValue);
+                                      detail::parameter_descriptor const& aDescriptor) {
+         auto& strValue = std::get<std::string>(aStorage.aValue);
+         std::size_t const uCharacters = strValue.size();
+         aStorage.iIndicator = static_cast<SQLLEN>(uCharacters);
+
+         SQLRETURN const iResult = SQLBindParameter(
+            hStatement,
+            uPosition,
+            SQL_PARAM_INPUT,
+            SQL_C_CHAR,
+            aDescriptor.iSqlType != SQL_UNKNOWN_TYPE
+               ? aDescriptor.iSqlType
+               : SQL_VARCHAR,
+            aDescriptor.uPrecision > 0
+               ? aDescriptor.uPrecision
+               : std::max<SQLULEN>(1, static_cast<SQLULEN>(uCharacters)),
+            aDescriptor.iScale,
+            strValue.data(),
+            static_cast<SQLLEN>(strValue.size() + 1),
+            &aStorage.iIndicator
+            );
+
+         return detail::CheckOdbc(
+            iResult,
+            SQL_HANDLE_STMT,
+            hStatement,
+            std::format("SQLBindParameter({}) narrow string", uPosition),
+            true
+            );
+         }
+
+
+      framework_result_ty BindWideString_(SQLUSMALLINT const uPosition,
+                                          bound_value& aStorage,
+                                          detail::parameter_descriptor const& aDescriptor) {
          auto& vecValue = std::get<std::vector<SQLWCHAR>>(aStorage.aValue);
          std::size_t const uCharacters = vecValue.empty() ? 0 : vecValue.size() - 1;
          aStorage.iIndicator = static_cast<SQLLEN>(uCharacters * sizeof(SQLWCHAR));
+
          SQLRETURN const iResult = SQLBindParameter(
             hStatement,
             uPosition,
             SQL_PARAM_INPUT,
             SQL_C_WCHAR,
-            aDescriptor.iSqlType,
+            aDescriptor.iSqlType != SQL_UNKNOWN_TYPE
+               ? aDescriptor.iSqlType
+               : SQL_WVARCHAR,
             aDescriptor.uPrecision > 0
                ? aDescriptor.uPrecision
                : std::max<SQLULEN>(1, static_cast<SQLULEN>(uCharacters)),
@@ -2091,11 +2121,12 @@ namespace adecc::db::mssql {
             static_cast<SQLLEN>(vecValue.size() * sizeof(SQLWCHAR)),
             &aStorage.iIndicator
             );
+
          return detail::CheckOdbc(
             iResult,
             SQL_HANDLE_STMT,
             hStatement,
-            std::format("SQLBindParameter({}) string", uPosition),
+            std::format("SQLBindParameter({}) wide string", uPosition),
             true
             );
          }
@@ -2254,14 +2285,14 @@ namespace adecc::db::mssql {
          vecColumns.reserve(static_cast<std::size_t>(iColumns));
 
          for (SQLUSMALLINT uColumn{ 1 }; uColumn <= static_cast<SQLUSMALLINT>(iColumns); ++uColumn) {
-            std::array<SQLWCHAR, 512> arrName{};
+            std::array<SQLCHAR, 512> arrName{};
             SQLSMALLINT iNameLength{};
             SQLSMALLINT iType{};
             SQLULEN uPrecision{};
             SQLSMALLINT iScale{};
             SQLSMALLINT iNullable{};
 
-            iResult = SQLDescribeColW(
+            iResult = SQLDescribeColA(
                hStatement,
                uColumn,
                arrName.data(),
@@ -2282,9 +2313,9 @@ namespace adecc::db::mssql {
                return aCheck;
                }
 
-            std::array<SQLWCHAR, 256> arrTypeName{};
+            std::array<SQLCHAR, 256> arrTypeName{};
             SQLSMALLINT iTypeNameLength{};
-            iResult = SQLColAttributeW(
+            iResult = SQLColAttributeA(
                hStatement,
                uColumn,
                SQL_DESC_TYPE_NAME,
@@ -2304,11 +2335,11 @@ namespace adecc::db::mssql {
                }
 
             vecColumns.push_back(detail::column_descriptor{
-               .strName = detail::FromOdbcWide(
+               .strName = detail::FromOdbcNarrow(
                   arrName.data(),
                   static_cast<std::size_t>(std::max<SQLSMALLINT>(0, iNameLength))
                   ),
-               .strNativeTypeName = detail::FromOdbcWide(
+               .strNativeTypeName = detail::FromOdbcNarrow(
                   arrTypeName.data(),
                   static_cast<std::size_t>(std::max<SQLSMALLINT>(0, iTypeNameLength))
                   ),
@@ -2339,6 +2370,9 @@ namespace adecc::db::mssql {
 
          if constexpr (std::same_as<clean_ty, std::string>) {
             return ReadString_(uColumn);
+            }
+         else if constexpr (std::same_as<clean_ty, std::wstring>) {
+            return ReadWideString_(uColumn);
             }
          else if constexpr (std::same_as<clean_ty, double>) {
             return ReadScalar_<double, double>(uColumn, SQL_C_DOUBLE);
@@ -2467,7 +2501,87 @@ namespace adecc::db::mssql {
 
 
       framework_get_ty<std::string> ReadString_(SQLUSMALLINT const uColumn) const {
-         std::u16string strUtf16;
+         std::string strResult;
+         std::array<SQLCHAR, 4096> arrBuffer{};
+
+         for (;;) {
+            arrBuffer.fill(SQLCHAR{});
+            SQLLEN iIndicator{};
+            SQLRETURN const iResult = SQLGetData(
+               hStatement,
+               uColumn,
+               SQL_C_CHAR,
+               arrBuffer.data(),
+               static_cast<SQLLEN>(arrBuffer.size()),
+               &iIndicator
+               );
+
+            if (iResult == SQL_NO_DATA) {
+               break;
+               }
+
+            if (iIndicator == SQL_NULL_DATA) {
+               return std::optional<std::string>{};
+               }
+
+            if (iResult != SQL_SUCCESS && iResult != SQL_SUCCESS_WITH_INFO) {
+               auto const vecDiagnostics = detail::CollectDiagnostics(
+                  SQL_HANDLE_STMT,
+                  hStatement
+                  );
+               return std::unexpected(error_ty{
+                  {},
+                  "error for read SQL Server narrow string field",
+                  detail::FormatDiagnostics(
+                     "SQLGetData(narrow string)",
+                     iResult,
+                     vecDiagnostics
+                     )
+                  });
+               }
+
+            std::size_t uCharacters{};
+            while (uCharacters < arrBuffer.size() && arrBuffer[uCharacters] != SQLCHAR{}) {
+               ++uCharacters;
+               }
+
+            strResult.append(
+               reinterpret_cast<char const*>(arrBuffer.data()),
+               uCharacters
+               );
+
+            if (iResult == SQL_SUCCESS) {
+               break;
+               }
+
+            auto const vecDiagnostics = detail::CollectDiagnostics(
+               SQL_HANDLE_STMT,
+               hStatement
+               );
+            bool const boOnlyTruncation = !vecDiagnostics.empty() &&
+               std::ranges::all_of(vecDiagnostics, [](detail::diagnostic_record const& aDiag) {
+                  return aDiag.strSqlState == "01004";
+                  });
+
+            if (!boOnlyTruncation) {
+               return std::unexpected(error_ty{
+                  {},
+                  "warning while read SQL Server narrow string field",
+                  detail::FormatDiagnostics(
+                     "SQLGetData(narrow string)",
+                     iResult,
+                     vecDiagnostics
+                     )
+                  });
+               }
+            }
+
+         return std::optional<std::string>{ std::move(strResult) };
+         }
+
+
+      framework_get_ty<std::wstring> ReadWideString_(SQLUSMALLINT const uColumn) const {
+         std::vector<SQLWCHAR> vecResult;
          std::array<SQLWCHAR, 2048> arrBuffer{};
 
          for (;;) {
@@ -2487,7 +2601,7 @@ namespace adecc::db::mssql {
                }
 
             if (iIndicator == SQL_NULL_DATA) {
-               return std::optional<std::string>{};
+               return std::optional<std::wstring>{};
                }
 
             if (iResult != SQL_SUCCESS && iResult != SQL_SUCCESS_WITH_INFO) {
@@ -2497,8 +2611,12 @@ namespace adecc::db::mssql {
                   );
                return std::unexpected(error_ty{
                   {},
-                  "error for read SQL Server string field",
-                  detail::FormatDiagnostics("SQLGetData(string)", iResult, vecDiagnostics)
+                  "error for read SQL Server wide string field",
+                  detail::FormatDiagnostics(
+                     "SQLGetData(wide string)",
+                     iResult,
+                     vecDiagnostics
+                     )
                   });
                }
 
@@ -2506,9 +2624,12 @@ namespace adecc::db::mssql {
             while (uCharacters < arrBuffer.size() && arrBuffer[uCharacters] != SQLWCHAR{}) {
                ++uCharacters;
                }
-            for (std::size_t uIndex{}; uIndex < uCharacters; ++uIndex) {
-               strUtf16.push_back(static_cast<char16_t>(arrBuffer[uIndex]));
-               }
+
+            vecResult.insert(
+               vecResult.end(),
+               arrBuffer.begin(),
+               arrBuffer.begin() + static_cast<std::ptrdiff_t>(uCharacters)
+               );
 
             if (iResult == SQL_SUCCESS) {
                break;
@@ -2526,19 +2647,25 @@ namespace adecc::db::mssql {
             if (!boOnlyTruncation) {
                return std::unexpected(error_ty{
                   {},
-                  "warning while read SQL Server string field",
-                  detail::FormatDiagnostics("SQLGetData(string)", iResult, vecDiagnostics)
+                  "warning while read SQL Server wide string field",
+                  detail::FormatDiagnostics(
+                     "SQLGetData(wide string)",
+                     iResult,
+                     vecDiagnostics
+                     )
                   });
                }
             }
 
          try {
-            return std::optional<std::string>{ detail::Utf16ToUtf8(strUtf16) };
+            return std::optional<std::wstring>{
+               detail::FromOdbcWide(vecResult.data(), vecResult.size())
+               };
             }
          catch (std::exception const& ex) {
             return std::unexpected(error_ty{
                {},
-               "error for convert SQL Server Unicode string to UTF-8",
+               "error for convert SQL Server wide string field",
                ex.what()
                });
             }
