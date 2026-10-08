@@ -4,6 +4,7 @@
 #include "database_exception.h"
 #include "convert_core.h"
 #include "convert_fixed.h"
+#include "diagnostic_text.h"
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -448,12 +449,12 @@ namespace adecc::db::mssql {
             }
 
          for (SQLSMALLINT iRecord{ 1 };; ++iRecord) {
-            std::array<SQLCHAR, 6> arrState{};
+            std::array<SQLWCHAR, 6> arrState{};
             SQLINTEGER iNativeError{};
             SQLSMALLINT iMessageLength{};
-            std::vector<SQLCHAR> vecMessage(512);
+            std::vector<SQLWCHAR> vecMessage(512);
 
-            SQLRETURN iResult = SQLGetDiagRecA(
+            SQLRETURN iResult = SQLGetDiagRecW(
                iHandleType,
                hHandle,
                iRecord,
@@ -471,7 +472,7 @@ namespace adecc::db::mssql {
             if (iResult == SQL_SUCCESS_WITH_INFO &&
                 iMessageLength >= static_cast<SQLSMALLINT>(vecMessage.size())) {
                vecMessage.resize(static_cast<std::size_t>(iMessageLength) + 1);
-               iResult = SQLGetDiagRecA(
+               iResult = SQLGetDiagRecW(
                   iHandleType,
                   hHandle,
                   iRecord,
@@ -487,13 +488,19 @@ namespace adecc::db::mssql {
                break;
                }
 
+            std::wstring const strStateWide = FromOdbcWide(
+               arrState.data(),
+               static_cast<std::size_t>(std::char_traits<SQLWCHAR>::length(arrState.data()))
+               );
+            std::wstring const strMessageWide = FromOdbcWide(
+               vecMessage.data(),
+               static_cast<std::size_t>(std::max<SQLSMALLINT>(0, iMessageLength))
+               );
+
             vecDiagnostics.push_back(diagnostic_record{
-               .strSqlState = reinterpret_cast<char const*>(arrState.data()),
+               .strSqlState = diagnostic::WideToUtf8(strStateWide),
                .iNativeError = iNativeError,
-               .strMessage = std::string{
-                  reinterpret_cast<char const*>(vecMessage.data()),
-                  static_cast<std::size_t>(std::max<SQLSMALLINT>(0, iMessageLength))
-                  }
+               .strMessage = diagnostic::WideToUtf8(strMessageWide)
                });
             }
 
