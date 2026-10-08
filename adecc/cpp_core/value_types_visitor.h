@@ -41,6 +41,7 @@ license from adecc Systemhaus GmbH.
 
 #include "value_types.h"
 #include "convert_core.h"
+#include "diagnostic_text.h"
 
 #include <cstdint>
 #include <format>
@@ -80,27 +81,6 @@ namespace details {
       }
 
 
-   inline std::string WideDiagnosticText(std::wstring_view const svValue) {
-      std::string strResult;
-      strResult.reserve(svValue.size());
-
-      for (wchar_t const ch : svValue) {
-         std::uint32_t const uValue = static_cast<std::uint32_t>(ch);
-
-         if (uValue >= 0x20 && uValue <= 0x7e) {
-            strResult.push_back(static_cast<char>(uValue));
-            }
-         else if (uValue <= 0xffff) {
-            strResult += std::format("\\u{:04X}", uValue);
-            }
-         else {
-            strResult += std::format("\\U{:08X}", uValue);
-            }
-         }
-
-      return strResult;
-      }
-
 } // end of namespace details
 
 
@@ -122,30 +102,33 @@ public:
 
    // Strings: validate ConvertTo support for these types.
    return_ty operator()(std::string_view const sv) const {
-      return { adecc::ConvertTo<std::string>(sv), "std::string_view" };
+      return { diagnostic::NarrowToUtf8(sv), "std::string_view" };
    }
 
    return_ty operator()(char const* const p) const {
-      return { adecc::ConvertTo<std::string>(p), "char const*" };
+      return {
+         p ? diagnostic::NarrowToUtf8(p) : std::string{ "<null>" },
+         "char const*"
+         };
    }
 
    return_ty operator()(std::string const& s) const {
-      return { adecc::ConvertTo<std::string>(s), "std::string" };
+      return { diagnostic::NarrowToUtf8(s), "std::string" };
    }
 
    return_ty operator()(std::wstring_view const sv) const {
-      return { details::WideDiagnosticText(sv), "std::wstring_view" };
+      return { diagnostic::WideToUtf8(sv), "std::wstring_view" };
    }
 
    return_ty operator()(wchar_t const* const p) const {
       return {
-         p ? details::WideDiagnosticText(p) : std::string{ "<null>" },
+         p ? diagnostic::WideToUtf8(p) : std::string{ "<null>" },
          "wchar_t const*"
          };
    }
 
    return_ty operator()(std::wstring const& s) const {
-      return { details::WideDiagnosticText(s), "std::wstring" };
+      return { diagnostic::WideToUtf8(s), "std::wstring" };
    }
 
    // Numbers and bool.
