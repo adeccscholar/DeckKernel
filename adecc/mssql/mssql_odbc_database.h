@@ -488,9 +488,15 @@ namespace adecc::db::mssql {
                break;
                }
 
+            std::size_t uStateLength{};
+            while (uStateLength < arrState.size() &&
+                   arrState[uStateLength] != SQLWCHAR{}) {
+               ++uStateLength;
+               }
+
             std::wstring const strStateWide = FromOdbcWide(
                arrState.data(),
-               static_cast<std::size_t>(std::char_traits<SQLWCHAR>::length(arrState.data()))
+               uStateLength
                );
             std::wstring const strMessageWide = FromOdbcWide(
                vecMessage.data(),
