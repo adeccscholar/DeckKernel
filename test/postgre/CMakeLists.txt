@@ -43,7 +43,23 @@ if(NOT CMAKE_BUILD_TYPE)
    message(FATAL_ERROR "CMAKE_BUILD_TYPE must be Debug or Release.")
 endif()
 
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug" AND
+   NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+   message(FATAL_ERROR
+      "Unsupported CMAKE_BUILD_TYPE='${CMAKE_BUILD_TYPE}'. Use Debug or Release."
+   )
+endif()
+
 set(ADECC_THIRDPARTY_CONFIGURATION "${CMAKE_BUILD_TYPE}")
+
+set(
+   CMAKE_INSTALL_PREFIX
+   "${DECKKERNEL_ROOT}/apps/${CMAKE_BUILD_TYPE}"
+   CACHE PATH
+   "DeckKernel test deployment directory"
+   FORCE
+)
+
 include("${DECKKERNEL_ROOT}/Cache/cmake/ThirdParty.cmake")
 
 find_package(PostgreSQL REQUIRED)
@@ -84,25 +100,25 @@ target_link_libraries(
       ${ADECC_PQXX_TARGET}
 )
 
-function(adecc_copy_runtime_dlls thePackageRoot)
-   file(
-      GLOB ADECC_RUNTIME_DLLS
-      "${thePackageRoot}/bin/win64/${ADECC_THIRDPARTY_CONFIGURATION}/*.dll"
-   )
+install(
+   TARGETS adecc_postgresql_pqxx_test
+   RUNTIME DESTINATION .
+)
 
-   if(ADECC_RUNTIME_DLLS)
-      add_custom_command(
-         TARGET adecc_postgresql_pqxx_test
-         POST_BUILD
-         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            ${ADECC_RUNTIME_DLLS}
-            "$<TARGET_FILE_DIR:adecc_postgresql_pqxx_test>"
-         COMMAND_EXPAND_LISTS
-      )
-   endif()
+function(adecc_install_runtime_dlls thePackageRoot)
+   install(
+      DIRECTORY
+         "${thePackageRoot}/bin/win64/${ADECC_THIRDPARTY_CONFIGURATION}/"
+      DESTINATION .
+      OPTIONAL
+      FILES_MATCHING
+         PATTERN "*.dll"
+   )
 endfunction()
 
-adecc_copy_runtime_dlls("${ADECC_TP_LIBPQ_ROOT}")
-adecc_copy_runtime_dlls("${ADECC_TP_LIBPQXX_ROOT}")
-adecc_copy_runtime_dlls("${ADECC_TP_OPENSSL_ROOT}")
-adecc_copy_runtime_dlls("${ADECC_TP_ZLIB_ROOT}")
+adecc_install_runtime_dlls("${ADECC_TP_LIBPQ_ROOT}")
+adecc_install_runtime_dlls("${ADECC_TP_LIBPQXX_ROOT}")
+adecc_install_runtime_dlls("${ADECC_TP_OPENSSL_ROOT}")
+adecc_install_runtime_dlls("${ADECC_TP_ZLIB_ROOT}")
+adecc_install_runtime_dlls("${ADECC_TP_BROTLI_ROOT}")
+adecc_install_runtime_dlls("${ADECC_TP_ZSTD_ROOT}")
