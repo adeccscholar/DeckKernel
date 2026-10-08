@@ -664,7 +664,7 @@ int main(int const iArgc, char* const* const argv) {
                  "constraint error does not contain SQLSTATE");
          Require(strWhat.find("Native error:") != std::string::npos,
                  "constraint error does not contain native SQL Server error number");
-         Require(strWhat.find("Physical ODBC parameter map:") != std::string::npos,
+         Require(strWhat.find("ODBC parameter map:") != std::string::npos,
                  "constraint error does not contain physical/logical parameter mapping");
 
          std::cout << "[PASS] complete ODBC diagnostics retained\n";
