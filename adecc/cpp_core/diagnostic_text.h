@@ -31,8 +31,10 @@ pipes independent from the active console code page.
 #include <Windows.h>
 #endif
 
+#include <algorithm>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <ostream>
 #include <stdexcept>
 #include <string>
@@ -252,16 +254,35 @@ namespace adecc::diagnostic {
 
       if (IsAttachedConsole(hHandle)) {
          try {
-            std::wstring const strWide = Utf8ToWide(svText);
+            os.flush();
 
-            DWORD uWritten{};
-            if (WriteConsoleW(
-                   hHandle,
-                   strWide.data(),
-                   static_cast<DWORD>(strWide.size()),
-                   &uWritten,
-                   nullptr
-                ) != 0) {
+            std::wstring const strWide = Utf8ToWide(svText);
+            std::size_t uOffset{};
+
+            while (uOffset < strWide.size()) {
+               DWORD uWritten{};
+               DWORD const uRemaining = static_cast<DWORD>(
+                  std::min<std::size_t>(
+                     strWide.size() - uOffset,
+                     static_cast<std::size_t>(std::numeric_limits<DWORD>::max())
+                     )
+                  );
+
+               if (WriteConsoleW(
+                      hHandle,
+                      strWide.data() + uOffset,
+                      uRemaining,
+                      &uWritten,
+                      nullptr
+                   ) == 0 ||
+                   uWritten == 0) {
+                  break;
+                  }
+
+               uOffset += static_cast<std::size_t>(uWritten);
+               }
+
+            if (uOffset == strWide.size()) {
                return;
                }
             }
