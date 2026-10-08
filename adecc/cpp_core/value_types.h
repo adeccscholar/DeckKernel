@@ -47,6 +47,7 @@ license from adecc Systemhaus GmbH.
 #include "convert_fixed.h"
 
 #include <string>
+#include <string_view>
 #include <vector>
 #include <tuple>
 #include <chrono>
@@ -68,14 +69,16 @@ using money_ty = numeric<double, 2, RoundHalfAwayFromZeroPolicy<double>>;
 enum class EAlignmentType : uint32_t { left = 1, right = 2, center = 3, unknown = 100 };
 
 
-using defined_values_types = defined_type_list<std::string, double, money_ty,
+using defined_values_types = defined_type_list<std::string, std::wstring,
+                                               double, money_ty,
                                                int, long long, bool,
                                                unsigned int, unsigned long long,
                                                date_ty, timestamp_ty, time_ty>;
 
-using defined_param_types  = defined_type_list<std::string_view, const char*, // const wchar_t*,
-                                               std::string, double, money_ty,
-                                               int, long long, bool, 
+using defined_param_types  = defined_type_list<std::string_view, char const*, std::string,
+                                               std::wstring_view, wchar_t const*, std::wstring,
+                                               double, money_ty,
+                                               int, long long, bool,
                                                unsigned int, unsigned long long,
                                                date_ty, timestamp_ty, time_ty>;
 
