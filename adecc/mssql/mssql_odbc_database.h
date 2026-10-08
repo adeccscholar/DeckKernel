@@ -431,6 +431,12 @@ namespace adecc::db::mssql {
          }
 
 
+      inline SQLCHAR* OdbcNarrowData(std::string const& strValue) noexcept {
+         // ODBC input text is logically const, but the legacy C API is not const-correct.
+         return reinterpret_cast<SQLCHAR*>(const_cast<char*>(strValue.data()));
+         }
+
+
       inline std::vector<diagnostic_record> CollectDiagnostics(
          SQLSMALLINT const iHandleType,
          SQLHANDLE const hHandle
@@ -936,7 +942,7 @@ namespace adecc::db::mssql {
          iResult = SQLDriverConnectA(
             hConnection,
             nullptr,
-            reinterpret_cast<SQLCHAR*>(strConnection.data()),
+            detail::OdbcNarrowData(strConnection),
             SQL_NTS,
             arrCompleted.data(),
             static_cast<SQLSMALLINT>(arrCompleted.size()),
@@ -1300,7 +1306,7 @@ namespace adecc::db::mssql {
          ResetStatement_();
          SQLRETURN iResult = SQLExecDirectA(
             hStatement,
-            reinterpret_cast<SQLCHAR*>(aParameterPlan.strSql.data()),
+            detail::OdbcNarrowData(aParameterPlan.strSql),
             SQL_NTS
             );
          if (auto aCheck = detail::CheckOdbc(
@@ -1852,7 +1858,7 @@ namespace adecc::db::mssql {
 
          SQLRETURN iResult = SQLPrepareA(
             hStatement,
-            reinterpret_cast<SQLCHAR*>(aPlan.strSql.data()),
+            detail::OdbcNarrowData(aPlan.strSql),
             SQL_NTS
             );
          if (auto aCheck = detail::CheckOdbc(
