@@ -891,6 +891,10 @@ namespace adecc {
             return db_param2{ std::move(aName), db_param{ szValue }, bRequired };
             }
 
+         static db_param2 Param(std::string aName, wchar_t const* const szValue, bool bRequired = true) {
+            return db_param2{ std::move(aName), db_param{ szValue }, bRequired };
+            }
+
          template <class value_ty>
             requires (!adecc::is_optional_v<std::remove_cvref_t<value_ty>> &&
                       !std::same_as<std::remove_cvref_t<value_ty>, db_param>&&
