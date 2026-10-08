@@ -86,3 +86,22 @@ Normal application code does not need to encode `std::string` as UTF-8 for the w
 string contract. UTF-8 is used only inside the PostgreSQL backend because libpq/libpqxx
 transports text as bytes and the adapter explicitly configures the client connection for
 UTF-8.
+
+## Diagnostic text
+
+The PostgreSQL connection uses `client_encoding=UTF8`, therefore libpq/libpqxx server
+messages enter the backend as UTF-8. Database exception text keeps that UTF-8 encoding.
+
+This UTF-8 rule applies to diagnostics only. Ordinary application `std::string` values
+retain their normal narrow-string semantics. Narrow parameter values are converted when
+rendered for diagnostics, while `std::wstring` values are encoded to UTF-8 without
+loss.
+
+The test writes the intentional UNIQUE-constraint exception through
+`adecc::diagnostic::WriteUtf8`. On an attached Windows console the helper converts the
+UTF-8 diagnostic to UTF-16 and uses the wide console API. If output is redirected, the
+same message is written as UTF-8 bytes.
+
+The duplicate-row test also includes a non-ASCII `std::wstring` parameter so the
+diagnostic sample verifies both a localized PostgreSQL server message and a wide
+application value.
