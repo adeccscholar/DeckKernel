@@ -482,6 +482,24 @@ parameter information while preserving normal exception semantics.
 This supports an important architectural rule: error information may become richer when it crosses layers, but the
 core exception mechanism remains standard C++.
 
+Database and core diagnostics use UTF-8 in `std::string` as a dedicated diagnostic contract. This does not imply
+that ordinary application `std::string` values are UTF-8. Narrow application values are converted only when they
+enter diagnostic rendering, while `std::wstring` values are encoded to UTF-8 without loss.
+
+On Windows, UTF-8 diagnostic text is not written blindly through the active console code page. If stdout or stderr
+is attached to a console, `diagnostic_text.h` converts the diagnostic text to UTF-16 and writes it with the native
+wide console API. Redirected output remains UTF-8 bytes, so log files and pipes keep a stable encoding.
+
+The database backends establish the same boundary from the opposite direction. PostgreSQL already returns textual
+server diagnostics in the configured UTF-8 client encoding. The SQL Server ODBC backend retrieves diagnostic
+records through the wide ODBC API and converts them to UTF-8 before they enter `database_exception`.
+
+### Related files
+
+- `diagnostic_text.h`
+- `database_exception.h`
+- `value_types_visitor.h`
+
 ### Related book sections
 
 - *Exceptions in the Domain Core: Standard C++ with a Backpack*
