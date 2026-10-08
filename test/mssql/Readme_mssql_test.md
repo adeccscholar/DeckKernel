@@ -95,3 +95,16 @@ The final intentional UNIQUE constraint violation is expected. It verifies that 
 exception contains the ODBC operation, SQLSTATE, native SQL Server error number, driver
 message, and the mapping from physical ODBC parameters back to the logical adecc
 parameter names.
+
+## Diagnostic text
+
+Database exception text is stored as UTF-8 in `std::string`. This is a diagnostic
+contract only and does not make ordinary application `std::string` values UTF-8.
+
+The SQL Server backend retrieves ODBC diagnostic records with the wide ODBC API and
+converts them to UTF-8. The test writes diagnostic samples through
+`adecc::diagnostic::WriteUtf8`. On an attached Windows console this converts UTF-8 to
+UTF-16 and uses the wide console API; redirected output remains UTF-8.
+
+This allows localized SQL Server messages, object names, and wide parameter values to be
+shown without depending on the active OEM or ANSI console code page.
