@@ -660,9 +660,9 @@ int main(int const iArgc, char* const* const argv) {
          boDiagnosticException = true;
          std::string const strWhat{ ex.what() };
 
-         Require(strWhat.find("SQLSTATE:") != std::string::npos,
+         Require(strWhat.find("SQLSTATE=") != std::string::npos,
                  "constraint error does not contain SQLSTATE");
-         Require(strWhat.find("Native error:") != std::string::npos,
+         Require(strWhat.find("Native=") != std::string::npos,
                  "constraint error does not contain native SQL Server error number");
          Require(strWhat.find("ODBC parameter map:") != std::string::npos,
                  "constraint error does not contain physical/logical parameter mapping");
