@@ -766,13 +766,41 @@ struct Convert<std::string_view, std::chrono::hh_mm_ss<std::chrono::seconds>> {
 };
 
 template <>
-struct Convert<char const*, std::chrono::hh_mm_ss<std::chrono::seconds>> {
-   static std::chrono::hh_mm_ss<std::chrono::seconds> apply(char const* const sz) {
-      return Convert<std::string_view, std::chrono::hh_mm_ss<std::chrono::seconds>>::apply(details::MakeStringView(sz));
+struct Convert<std::string, std::chrono::hh_mm_ss<std::chrono::seconds>> {
+   static std::chrono::hh_mm_ss<std::chrono::seconds> apply(std::string const& s) {
+      return Convert<std::string_view, std::chrono::hh_mm_ss<std::chrono::seconds>>::apply(
+         std::string_view{s}
+         );
       }
 
-   static std::chrono::hh_mm_ss<std::chrono::seconds> apply(char const* const sz, TimeFmt const fmt) {
-      return Convert<std::string_view, std::chrono::hh_mm_ss<std::chrono::seconds>>::apply(details::MakeStringView(sz), fmt);
+   static std::chrono::hh_mm_ss<std::chrono::seconds> apply(
+      std::string const& s,
+      TimeFmt const fmt
+   ) {
+      return Convert<std::string_view, std::chrono::hh_mm_ss<std::chrono::seconds>>::apply(
+         std::string_view{s},
+         fmt
+         );
+      }
+   };
+
+
+template <>
+struct Convert<char const*, std::chrono::hh_mm_ss<std::chrono::seconds>> {
+   static std::chrono::hh_mm_ss<std::chrono::seconds> apply(char const* const sz) {
+      return Convert<std::string_view, std::chrono::hh_mm_ss<std::chrono::seconds>>::apply(
+         details::MakeStringView(sz)
+         );
+      }
+
+   static std::chrono::hh_mm_ss<std::chrono::seconds> apply(
+      char const* const sz,
+      TimeFmt const fmt
+   ) {
+      return Convert<std::string_view, std::chrono::hh_mm_ss<std::chrono::seconds>>::apply(
+         details::MakeStringView(sz),
+         fmt
+         );
       }
    };
 
