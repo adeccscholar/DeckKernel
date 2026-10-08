@@ -23,7 +23,6 @@ add_executable(adecc_mssql_odbc_test
 )
 
 target_compile_definitions(adecc_mssql_odbc_test PRIVATE CHRONO_WORK_AROUND CHRONO_MISSED_ZONEDB)
-target_compile_options(adecc_mssql_odbc_test PRIVATE -fborland-exec-code-page=65001)
 
 target_include_directories(adecc_mssql_odbc_test PRIVATE
    "${ADECC_CPP_CORE_DIR}"
