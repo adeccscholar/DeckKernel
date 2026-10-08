@@ -42,6 +42,8 @@ license from adecc Systemhaus GmbH.
 #include "value_types.h"
 #include "convert_core.h"
 
+#include <cstdint>
+#include <format>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -54,9 +56,11 @@ namespace details {
    consteval std::string_view type_token() {
       using U = std::remove_cvref_t<ty>;
       if constexpr (std::same_as<U, std::string>)                    return "string";
-	  else if constexpr (std::same_as<U, std::string_view>)          return "string_view";
-	  else if constexpr (std::same_as<U, char const*>)               return "char const*";
-	  else if constexpr (std::same_as<U, wchar_t const*>)            return "wcstring";
+      else if constexpr (std::same_as<U, std::string_view>)           return "string_view";
+      else if constexpr (std::same_as<U, char const*>)                return "char const*";
+      else if constexpr (std::same_as<U, std::wstring>)               return "wstring";
+      else if constexpr (std::same_as<U, std::wstring_view>)          return "wstring_view";
+      else if constexpr (std::same_as<U, wchar_t const*>)             return "wchar_t const*";
 	  else if constexpr (std::same_as<U, double>)                    return "double";
       else if constexpr (std::same_as<U, money_ty>)                  return "money_ty";
       else if constexpr (std::same_as<U, int>)                       return "int";
@@ -73,7 +77,29 @@ namespace details {
    template <class ty>
    std::string optional_token() {
       return std::format("optional<{}>", details::type_token<ty>());
-      }   
+      }
+
+
+   inline std::string WideDiagnosticText(std::wstring_view const svValue) {
+      std::string strResult;
+      strResult.reserve(svValue.size());
+
+      for (wchar_t const ch : svValue) {
+         std::uint32_t const uValue = static_cast<std::uint32_t>(ch);
+
+         if (uValue >= 0x20 && uValue <= 0x7e) {
+            strResult.push_back(static_cast<char>(uValue));
+            }
+         else if (uValue <= 0xffff) {
+            strResult += std::format("\\u{:04X}", uValue);
+            }
+         else {
+            strResult += std::format("\\U{:08X}", uValue);
+            }
+         }
+
+      return strResult;
+      }
 
 } // end of namespace details
 
@@ -105,6 +131,21 @@ public:
 
    return_ty operator()(std::string const& s) const {
       return { adecc::ConvertTo<std::string>(s), "std::string" };
+   }
+
+   return_ty operator()(std::wstring_view const sv) const {
+      return { details::WideDiagnosticText(sv), "std::wstring_view" };
+   }
+
+   return_ty operator()(wchar_t const* const p) const {
+      return {
+         p ? details::WideDiagnosticText(p) : std::string{ "<null>" },
+         "wchar_t const*"
+         };
+   }
+
+   return_ty operator()(std::wstring const& s) const {
+      return { details::WideDiagnosticText(s), "std::wstring" };
    }
 
    // Numbers and bool.
