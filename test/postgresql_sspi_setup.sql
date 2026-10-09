@@ -6,7 +6,7 @@
 -- ownership of the isolated test schema. Authentication itself is configured in
 -- pg_hba.conf and pg_ident.conf, not in SQL.
 
-DO $$
+DO $do$
 BEGIN
    IF NOT EXISTS (
       SELECT 1
@@ -14,9 +14,11 @@ BEGIN
       WHERE rolname = 'deckkernel_user'
    ) THEN
       CREATE ROLE deckkernel_user LOGIN;
+   ELSE
+      ALTER ROLE deckkernel_user LOGIN;
    END IF;
 END
-$$;
+$do$;
 
 GRANT CONNECT ON DATABASE "DeckKernel" TO deckkernel_user;
 
@@ -29,7 +31,7 @@ GRANT USAGE, CREATE ON SCHEMA deckkernel_test TO deckkernel_user;
 -- Existing test tables may have been created earlier by an administrator.
 -- Transfer them to the functional-test role so CREATE INDEX, TRUNCATE and
 -- subsequent schema-local DDL run with the same ownership model as fresh tables.
-DO $$
+DO $do$
 BEGIN
    IF to_regclass('deckkernel_test.scryfall_cards') IS NOT NULL THEN
       ALTER TABLE deckkernel_test.scryfall_cards OWNER TO deckkernel_user;
@@ -39,4 +41,4 @@ BEGIN
       ALTER TABLE deckkernel_test.scryfall_sets OWNER TO deckkernel_user;
    END IF;
 END
-$$;
+$do$;
