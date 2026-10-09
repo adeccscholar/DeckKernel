@@ -42,14 +42,41 @@ CREATE DATABASE "DeckKernel";
 
 Reconnect the Query Tool to database `DeckKernel`.
 
+PostgreSQL schemas are local to one database. Creating `deckkernel_test` while the
+Query Tool is still connected to the default `postgres` database does not create that
+schema in `DeckKernel`.
+
+Before executing any DeckKernel setup script, verify the active database:
+
+```sql
+SELECT current_database();
+```
+
+The result must be:
+
+```text
+DeckKernel
+```
+
+If it is not, change the pgAdmin Query Tool connection to `DeckKernel` or reconnect
+`psql` with `-d DeckKernel` before continuing.
+
 ## 3. Create the application role and test schema
 
 The repository contains the executable setup script:
 
 `test/postgresql_sspi_setup.sql`
 
-While connected to `DeckKernel` as a PostgreSQL administrator, execute that file in
-pgAdmin or `psql`. Its relevant SQL is:
+Before executing the script, verify again that the current connection is using
+`DeckKernel`:
+
+```sql
+SELECT current_database();
+```
+
+Only then execute the file as a PostgreSQL administrator in pgAdmin or `psql`.
+The script contains its own guard and aborts if it is run against another database.
+Its relevant SQL is:
 
 ```sql
 DO $do$
@@ -91,6 +118,7 @@ required; a single `$` is not valid syntax.
 
 The script:
 
+- verifies that the script is running in database `DeckKernel`;
 - creates `deckkernel_user LOGIN` if necessary and ensures an existing role has LOGIN;
 - grants it connection access to `DeckKernel`;
 - creates and assigns ownership of schema `deckkernel_test`;
