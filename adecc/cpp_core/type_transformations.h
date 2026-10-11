@@ -81,6 +81,7 @@ namespace adecc {
    \throw std::out_of_range If the key is absent from a map.
    \throw ... Exceptions raised by a callable or result construction.
    */
+   
    template<typename key_ty, typename value_ty, typename mapping_ty>
       requires key_value_mapping<mapping_ty, key_ty, value_ty>
    value_ty GetValue(mapping_ty&& theMapping, key_ty const& theKey) {
