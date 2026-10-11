@@ -14,6 +14,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include <tuple>
 
 namespace deckkernel::test {
 
