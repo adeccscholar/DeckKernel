@@ -70,13 +70,19 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
    aDatabase.ExecuteCommand("DROP VIEW IF EXISTS deckkernel_test.scryfall_cards_view");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_land_types");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_creature_types");
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_supertypes");
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_main_types");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_faces");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_cards");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_sets");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.land_types");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.creatures_types");
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.supertypes");
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.card_types");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.land_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE)");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.creatures_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE)");
+   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.supertypes (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE)");
+   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.card_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE)");
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_sets ("
       "id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, scryfall_id text NOT NULL UNIQUE, code text NOT NULL UNIQUE,"
@@ -94,6 +100,22 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
       "is_main boolean GENERATED ALWAYS AS (face_id = 0) STORED,"
       "name text NOT NULL, type_line text NOT NULL,"
       "PRIMARY KEY (card_id, face_id))");
+   aDatabase.ExecuteCommand(
+      "CREATE TABLE deckkernel_test.scryfall_card_supertypes ("
+      "card_id integer NOT NULL, face_id integer NOT NULL,"
+      "supertype_id integer NOT NULL REFERENCES deckkernel_test.supertypes(id),"
+      "position integer NOT NULL CHECK (position >= 0),"
+      "PRIMARY KEY (card_id, face_id, position),"
+      "UNIQUE (card_id, face_id, supertype_id),"
+      "FOREIGN KEY (card_id, face_id) REFERENCES deckkernel_test.scryfall_card_faces(card_id, face_id))");
+   aDatabase.ExecuteCommand(
+      "CREATE TABLE deckkernel_test.scryfall_card_main_types ("
+      "card_id integer NOT NULL, face_id integer NOT NULL,"
+      "main_type_id integer NOT NULL REFERENCES deckkernel_test.card_types(id),"
+      "position integer NOT NULL CHECK (position >= 0),"
+      "PRIMARY KEY (card_id, face_id, position),"
+      "UNIQUE (card_id, face_id, main_type_id),"
+      "FOREIGN KEY (card_id, face_id) REFERENCES deckkernel_test.scryfall_card_faces(card_id, face_id))");
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_card_land_types ("
       "card_id integer NOT NULL,"
@@ -211,6 +233,31 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       }
    std::println("[TIME] Store CreatureTypes: {:.3f} s", ElapsedSeconds(aCreatureStart));
    std::println("[STORE] CreatureTypes written: {} rows", mpCreatureIds.size());
+   auto fnStoreCatalog = [&]<typename meta_ty>(
+      std::map<std::string, int> const& mpSource, meta_ty) {
+      auto aOutput = catalog_types::invoke([&]<typename... types_ty>() {
+         return aDatabase.template MakeOutputRange<types_ty...>(
+            meta_ty::CreateInsertSql(), meta_ty::CreateInsertOutputParameters());
+         });
+      std::map<std::string, int> mpIds;
+      for (auto const& [strCode, iUnused] : mpSource) {
+         std::array<catalog_types::type_list, 1> arrInput{{catalog_types::type_list{0, strCode}}};
+         for (auto const& tplResult : aOutput(arrInput)) {
+            if (!mpIds.emplace(strCode, std::get<0>(tplResult)).second) {
+               throw std::runtime_error("duplicate catalog type: " + strCode);
+               }
+            }
+         }
+      return mpIds;
+      };
+   auto const aSuperStart = std::chrono::steady_clock::now();
+   auto mpSuperIds = fnStoreCatalog(aParsed.mpSuperTypes, TSuperType{});
+   std::println("[TIME] Store SuperTypes: {:.3f} s", ElapsedSeconds(aSuperStart));
+   std::println("[STORE] SuperTypes written: {} rows", mpSuperIds.size());
+   auto const aMainStart = std::chrono::steady_clock::now();
+   auto mpMainIds = fnStoreCatalog(aParsed.mpMainTypes, TMainType{});
+   std::println("[TIME] Store MainTypes: {:.3f} s", ElapsedSeconds(aMainStart));
+   std::println("[STORE] MainTypes written: {} rows", mpMainIds.size());
    aCatalogTransaction.CommitAndClose();
    std::println("[STORE] Catalogs committed: {} land types, {} creature types",
       mpLandIds.size(), mpCreatureIds.size());
@@ -342,6 +389,15 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       return aDatabase.template MakeOutputSink<types_ty...>(
          TCardCreatureType::CreateInsertSql(), TCardCreatureType::CreateInsertOutputParameters());
       });
+   auto aSuperLinkSink = card_type_link_types::invoke([&]<typename... types_ty>() {
+      return aDatabase.template MakeOutputSink<types_ty...>(
+         TCardSuperType::CreateInsertSql(), TCardSuperType::CreateInsertOutputParameters());
+      });
+   auto aMainLinkSink = card_type_link_types::invoke([&]<typename... types_ty>() {
+      return aDatabase.template MakeOutputSink<types_ty...>(
+         TCardMainType::CreateInsertSql(), TCardMainType::CreateInsertOutputParameters());
+      });
+   std::size_t uSuperLinks = 0, uMainLinks = 0;
    std::size_t uLandLinks = 0, uCreatureLinks = 0;
    for (std::size_t const uIndex : vecCardOrder) {
       StagedCard const& aCard = vecResolvedCards[uIndex];
@@ -383,6 +439,23 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
                   std::move(tplStage),
                   adecc::BindMapping<2, staged_card_type_link_types, card_type_link_types>(mpCreatureIds)));
                }
+            auto fnLinks = [&]<typename sink_ty>(std::vector<std::string> const& vecCodes,
+               std::map<std::string, int> const& mpIds, sink_ty& aSink) {
+               std::vector<card_type_link_types::type_list> vecLinks;
+               vecLinks.reserve(vecCodes.size());
+               for (std::size_t uPos = 0; uPos < vecCodes.size(); ++uPos) {
+                  staged_card_type_link_types::type_list tplSource{
+                     iId, aFace.iFaceId, vecCodes[uPos], static_cast<int>(uPos)};
+                  vecLinks.emplace_back(adecc::Transform<
+                     staged_card_type_link_types, card_type_link_types>(
+                     std::move(tplSource),
+                     adecc::BindMapping<2, staged_card_type_link_types, card_type_link_types>(mpIds)));
+                  }
+               if (!vecLinks.empty()) { aSink = vecLinks; }
+               return vecLinks.size();
+               };
+            uSuperLinks += fnLinks(aFace.vecSuperTypes, mpSuperIds, aSuperLinkSink);
+            uMainLinks += fnLinks(aFace.vecMainTypes, mpMainIds, aMainLinkSink);
             if (!vecLandLinks.empty()) { aLandLinkSink = vecLandLinks; }
             if (!vecCreatureLinks.empty()) { aCreatureLinkSink = vecCreatureLinks; }
             uLandLinks += vecLandLinks.size();
@@ -396,6 +469,14 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       "CREATE VIEW deckkernel_test.scryfall_cards_view AS "
       "SELECT c.*, f.face_id, f.is_main, f.name AS face_name, f.type_line, "
       "COALESCE((SELECT array_agg(t.code ORDER BY x.position) "
+      "FROM deckkernel_test.scryfall_card_supertypes x "
+      "JOIN deckkernel_test.supertypes t ON t.id=x.supertype_id "
+      "WHERE x.card_id=c.id AND x.face_id=f.face_id), ARRAY[]::text[]) AS supertypes, "
+      "COALESCE((SELECT array_agg(t.code ORDER BY x.position) "
+      "FROM deckkernel_test.scryfall_card_main_types x "
+      "JOIN deckkernel_test.card_types t ON t.id=x.main_type_id "
+      "WHERE x.card_id=c.id AND x.face_id=f.face_id), ARRAY[]::text[]) AS main_types, "
+      "COALESCE((SELECT array_agg(t.code ORDER BY x.position) "
       "FROM deckkernel_test.scryfall_card_land_types x "
       "JOIN deckkernel_test.land_types t ON t.id=x.land_type_id "
       "WHERE x.card_id=c.id AND x.face_id=f.face_id), ARRAY[]::text[]) AS land_types, "
@@ -408,6 +489,8 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    aCardTransaction.CommitAndClose();
    std::println("[STORE] Card subtype links committed: land={}, creature={}",
       uLandLinks, uCreatureLinks);
+   std::println("[STORE] Card supertypes/main types: super={}, main={}",
+      uSuperLinks, uMainLinks);
    std::println("[TIME] Store Cards: {:.3f} s", ElapsedSeconds(aCardStart));
    std::println("[STORE] Cards committed: {} rows, {} missing variation targets",
       mpCardIds.size(), uMissingVariations);
