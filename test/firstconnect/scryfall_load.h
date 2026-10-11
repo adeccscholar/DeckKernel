@@ -31,6 +31,7 @@ struct LoadedBulkData {
    std::string           strCreatureCatalog;
    std::string           strSuperCatalog;
    std::string           strMainTypeCatalog;
+   std::string           strArtifactCatalog;
    };
 
 LoadedBulkData LoadProcess();
