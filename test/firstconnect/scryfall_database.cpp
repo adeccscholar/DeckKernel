@@ -68,7 +68,7 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_sets");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.land_types");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.creatures_types");
-   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.land_types (id integer PRIMARY KEY, code text NOT NULL UNIQUE)");
+   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.land_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE)");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.creatures_types (id integer PRIMARY KEY, code text NOT NULL UNIQUE)");
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_sets ("
@@ -142,14 +142,24 @@ postgres_database_ty OpenDatabase() {
 void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed) {
    auto aTransaction = aDatabase.Transaction();
    EnsureSchema(aDatabase);
-   auto aLandSink = aDatabase.template MakeOutputSink<int, std::string>(
+   // Insert land types with PostgreSQL-generated identities via the adecc output range.
+   auto aLandOutput = aDatabase.template MakeOutputRange<int, std::string>(
       TLandType::CreateInsertSql(), TLandType::CreateInsertOutputParameters());
+   std::map<std::string, int> mpLandIds;
+   for (auto const& [strCode, iIgnored] : aParsed.mpLandTypes) {
+      std::array<TLandType::data_ty, 1> arrInput{{ TLandType::data_ty{0, strCode} }};
+      for (auto const& tplResult : aLandOutput(arrInput)) {
+         if (!mpLandIds.emplace(strCode, std::get<0>(tplResult)).second) {
+            throw std::runtime_error("duplicate land type: " + strCode);
+            }
+         }
+      }
    auto aCreatureSink = aDatabase.template MakeOutputSink<int, std::string>(
       TCreatureType::CreateInsertSql(), TCreatureType::CreateInsertOutputParameters());
-   std::vector<std::tuple<int, std::string>> vecLand, vecCreature;
-   for (auto const& [strCode, iId] : aParsed.mpLandTypes) { vecLand.emplace_back(iId, strCode); }
-   for (auto const& [strCode, iId] : aParsed.mpCreatureTypes) { vecCreature.emplace_back(iId, strCode); }
-   aLandSink = vecLand;
+   std::vector<std::tuple<int, std::string>> vecCreature;
+   for (auto const& [strCode, iId] : aParsed.mpCreatureTypes) {
+      vecCreature.emplace_back(iId, strCode);
+      }
    aCreatureSink = vecCreature;
 
    // Set graph: root sets are persisted before any child.
@@ -181,7 +191,7 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    std::map<std::optional<std::string>, std::optional<int>> mpLand, mpCreature;
    mpLand.emplace(std::nullopt, std::nullopt);
    mpCreature.emplace(std::nullopt, std::nullopt);
-   for (auto const& [strCode, iId] : aParsed.mpLandTypes) { mpLand.emplace(strCode, iId); }
+   for (auto const& [strCode, iId] : mpLandIds) { mpLand.emplace(strCode, iId); }
    for (auto const& [strCode, iId] : aParsed.mpCreatureTypes) { mpCreature.emplace(strCode, iId); }
 
    // variation_of references a Scryfall printing UUID; convert only after its parent is written.
