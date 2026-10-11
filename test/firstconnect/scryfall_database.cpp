@@ -164,7 +164,7 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       vecCreature.emplace_back(iId, strCode);
       }
    aCreatureSink = vecCreature;
-   aCatalogTransaction.Commit();
+   aCatalogTransaction.CommitAndClose();
    std::println("[STORE] Catalogs committed: {} land types, {} creature types",
       mpLandIds.size(), vecCreature.size());
 
@@ -229,7 +229,7 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
          }
       }
 
-   aSetTransaction.Commit();
+   aSetTransaction.CommitAndClose();
    std::println("[STORE] CardSets committed: {} rows (parents before children)", mpSetIds.size());
 
    std::map<std::optional<std::string>, std::optional<int>> mpLand, mpCreature;
@@ -279,7 +279,7 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       }
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_oracle_id ON deckkernel_test.scryfall_cards(oracle_id)");
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_released ON deckkernel_test.scryfall_cards(released_at DESC)");
-   aCardTransaction.Commit();
+   aCardTransaction.CommitAndClose();
    std::println("Stored {} cards and {} topologically ordered sets.", aParsed.vecCards.size(), vecSets.size());
    }
 
