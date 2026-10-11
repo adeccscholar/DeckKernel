@@ -89,7 +89,7 @@ namespace adecc {
       if constexpr (requires { theMapping.find(theKey); theMapping.end(); }) {
          auto it = theMapping.find(theKey);
          if (it == theMapping.end()) {
-            throw std::out_of_range(std::format("GetValue: key [{}]not found", theKey));
+            throw std::out_of_range("GetValue: key not found");
             }
          return it->second;
          }
