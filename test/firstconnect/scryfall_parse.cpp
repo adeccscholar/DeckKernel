@@ -95,6 +95,32 @@ std::vector<std::string> FindSubtypes(std::string const& strTypeLine,
    return vecTypes;
    }
 
+// Match ordered whole-word catalog entries in the main-type part.
+std::vector<std::string> FindMainTypes(std::string_view svTypeLine,
+   std::map<std::string, int> const& mpTypes) {
+   constexpr std::string_view svDash{"\xE2\x80\x94", 3};
+   auto const uDash = svTypeLine.find(svDash);
+   if (uDash != std::string_view::npos) { svTypeLine = svTypeLine.substr(0, uDash); }
+   std::vector<std::pair<std::size_t, std::string>> vecMatches;
+   for (auto const& [strCode, iUnused] : mpTypes) {
+      auto uPos = svTypeLine.find(strCode);
+      while (uPos != std::string_view::npos) {
+         auto const uEnd = uPos + strCode.size();
+         if ((uPos == 0 || svTypeLine[uPos - 1] == ' ') &&
+             (uEnd == svTypeLine.size() || svTypeLine[uEnd] == ' ')) {
+            vecMatches.emplace_back(uPos, strCode);
+            break;
+            }
+         uPos = svTypeLine.find(strCode, uPos + 1);
+         }
+      }
+   std::ranges::sort(vecMatches, {}, &std::pair<std::size_t, std::string>::first);
+   std::vector<std::string> vecResult;
+   vecResult.reserve(vecMatches.size());
+   for (auto const& [uPos, strCode] : vecMatches) { vecResult.emplace_back(strCode); }
+   return vecResult;
+   }
+
 std::optional<std::string> OptionalText(json_ty const& aObject, char const* const szField) {
    auto const it = aObject.find(szField);
    if (it == aObject.end() || it->is_null()) { return std::nullopt; }
@@ -138,6 +164,8 @@ void AppendCard(json_ty const& aCard, ParsedBulkData& aParsed) {
          };
       aFace.vecLandTypes = FindSubtypes(aFace.strTypeLine, aParsed.mpLandTypes, "Land");
       aFace.vecCreatureTypes = FindSubtypes(aFace.strTypeLine, aParsed.mpCreatureTypes, "Creature");
+      aFace.vecSuperTypes = FindMainTypes(aFace.strTypeLine, aParsed.mpSuperTypes);
+      aFace.vecMainTypes = FindMainTypes(aFace.strTypeLine, aParsed.mpMainTypes);
       aRow.vecFaces.emplace_back(std::move(aFace));
       };
    fnAppendFace(0, aRow.strName, aCard.value("type_line", std::string{}));
@@ -271,6 +299,8 @@ ParsedBulkData ParseProcess(LoadedBulkData const& aLoaded) {
    ParsedBulkData aParsed;
    ParseCatalog(aLoaded.strLandCatalog, aParsed.mpLandTypes);
    ParseCatalog(aLoaded.strCreatureCatalog, aParsed.mpCreatureTypes);
+   ParseCatalog(aLoaded.strSuperCatalog, aParsed.mpSuperTypes);
+   ParseCatalog(aLoaded.strMainTypeCatalog, aParsed.mpMainTypes);
    // Validate the actual catalog and UTF-8 parser before reading the full bulk file.
    constexpr std::string_view svEmDash{"\xE2\x80\x94", 3};
    std::string const strDash{svEmDash};
