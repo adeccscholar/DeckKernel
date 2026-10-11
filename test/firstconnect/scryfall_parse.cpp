@@ -152,6 +152,7 @@ void AppendCard(json_ty const& aCard, ParsedBulkData& aParsed) {
       .strUuid = aCard.at("id").get<std::string>(),
       .strName = aCard.at("name").get<std::string>(),
       .strSetCode = aCard.at("set").get<std::string>(),
+      .strRarity = aCard.at("rarity").get<std::string>(),
       .optOracleId = OptionalText(aCard, "oracle_id"),
       .optVariationOf = OptionalText(aCard, "variation_of"),
       .aReleasedAt = adecc::ConvertTo<adecc::date_ty>(aCard.at("released_at").get<std::string>())
@@ -164,7 +165,8 @@ void AppendCard(json_ty const& aCard, ParsedBulkData& aParsed) {
          .strTypeLine = std::move(strLine),
          .strManaCost = aSource.value("mana_cost", std::string{}),
          .optLayout = OptionalText(aSource, "layout"),
-         .optLoyalty = OptionalText(aSource, "loyalty")
+         .optLoyalty = OptionalText(aSource, "loyalty"),
+         .optPower = OptionalText(aSource, "power")
          };
       // A face normally has no layout field of its own; retain the parent layout if supplied.
       if (!aFace.optLayout) { aFace.optLayout = OptionalText(aCard, "layout"); }
