@@ -67,6 +67,12 @@ std::optional<std::string> FindSubtype(std::string const& strTypeLine,
    return optFound;
    }
 
+std::optional<std::string> OptionalText(json_ty const& aObject, char const* const szField) {
+   auto const it = aObject.find(szField);
+   if (it == aObject.end() || it->is_null()) { return std::nullopt; }
+   return it->get<std::string>();
+   }
+
 struct GzipDeleter {
    void operator()(std::remove_pointer_t<gzFile>* pFile) const noexcept {
       if (pFile != nullptr) {
@@ -92,8 +98,8 @@ void AppendCard(json_ty const& aCard, ParsedBulkData& aParsed) {
       .strUuid = aCard.at("id").get<std::string>(),
       .strName = aCard.at("name").get<std::string>(),
       .strSetCode = aCard.at("set").get<std::string>(),
-      .optOracleId = aCard.value("oracle_id", std::optional<std::string>{}),
-      .optVariationOf = aCard.value("variation_of", std::optional<std::string>{}),
+      .optOracleId = OptionalText(aCard, "oracle_id"),
+      .optVariationOf = OptionalText(aCard, "variation_of"),
       .aReleasedAt = adecc::ConvertTo<adecc::date_ty>(aCard.at("released_at").get<std::string>()),
       .optLandType = FindSubtype(aCard.value("type_line", ""), aParsed.mpLandTypes),
       .optCreatureType = FindSubtype(aCard.value("type_line", ""), aParsed.mpCreatureTypes)
@@ -227,7 +233,7 @@ ParsedBulkData ParseProcess(LoadedBulkData const& aLoaded) {
          .strUuid = aSet.at("id").get<std::string>(),
          .strCode = aSet.at("code").get<std::string>(),
          .strName = aSet.at("name").get<std::string>(),
-         .optParentCode = aSet.value("parent_set_code", std::optional<std::string>{})
+         .optParentCode = OptionalText(aSet, "parent_set_code")
          };
       if (!aParsed.mpSets.emplace(aRow.strCode, std::move(aRow)).second) {
          throw std::runtime_error("duplicate set code in Scryfall catalog");
