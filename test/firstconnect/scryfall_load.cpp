@@ -200,6 +200,20 @@ std::string HttpGet(std::string const& strUrl) {
    }
 
 
+std::string LoadAllSets() {
+   json_ty aAll = json_ty::object();
+   aAll["data"] = json_ty::array();
+   std::string strPage = "https://api.scryfall.com/sets";
+   while (!strPage.empty()) {
+      json_ty const aPage = json_ty::parse(HttpGet(strPage));
+      for (json_ty const& aSet : aPage.at("data")) { aAll["data"].push_back(aSet); }
+      bool const boHasMore = aPage.value("has_more", false);
+      strPage = boHasMore ? aPage.at("next_page").get<std::string>() : std::string{};
+      }
+   return aAll.dump();
+   }
+
+
 void DownloadFile(std::string const& strUrl, std::filesystem::path const& aTarget) {
    std::ofstream osFile{ aTarget, std::ios::binary | std::ios::trunc };
 
@@ -338,7 +352,7 @@ LoadedBulkData LoadProcess() {
       }
 
    // Catalogs are small; fetch once per import before the bulk parser runs.
-   std::string strSetsCatalog = HttpGet("https://api.scryfall.com/sets");
+   std::string strSetsCatalog = LoadAllSets();
    std::string strLandCatalog = HttpGet("https://api.scryfall.com/catalog/land-types");
    std::string strCreatureCatalog = HttpGet("https://api.scryfall.com/catalog/creature-types");
    return LoadedBulkData {
