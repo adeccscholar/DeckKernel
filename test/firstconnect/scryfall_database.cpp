@@ -24,6 +24,7 @@
 #include <ranges>
 #include <string>
 #include <string_view>
+#include <format>
 
 namespace deckkernel::test {
 namespace {
@@ -140,8 +141,10 @@ postgres_database_ty OpenDatabase() {
 
 
 void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed) {
-   auto aTransaction = aDatabase.Transaction();
+   // DDL is committed independently: a later data error must not restore an obsolete schema.
    EnsureSchema(aDatabase);
+   std::println("[STORE] Schema created: land_types, creatures_types, scryfall_sets, scryfall_cards");
+   auto aCatalogTransaction = aDatabase.Transaction();
    // Insert land types with PostgreSQL-generated identities via the adecc output range.
    auto aLandOutput = aDatabase.template MakeOutputRange<int, std::string>(
       TLandType::CreateInsertSql(), TLandType::CreateInsertOutputParameters());
@@ -161,13 +164,44 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       vecCreature.emplace_back(iId, strCode);
       }
    aCreatureSink = vecCreature;
+   aCatalogTransaction.Commit();
+   std::println("[STORE] Catalogs committed: {} land types, {} creature types",
+      mpLandIds.size(), vecCreature.size());
 
    // Set graph: root sets are persisted before any child.
    std::vector<StagedSet> vecSets;
    for (auto const& [strCode, aSet] : aParsed.mpSets) { vecSets.push_back(aSet); }
+   // The API documents parent_set_code as a code. Some feeds contain UUID-shaped
+   // references; resolve those through the set catalog before sorting.
+   std::map<std::string, std::string> mpUuidToCode;
+   for (StagedSet const& aSet : vecSets) {
+      if (!mpUuidToCode.emplace(aSet.strUuid, aSet.strCode).second) {
+         throw std::runtime_error("duplicate Scryfall set UUID: " + aSet.strUuid);
+         }
+      }
+   std::size_t uUuidReferences = 0;
+   for (StagedSet& aSet : vecSets) {
+      if (!aSet.optParentCode) { continue; }
+      if (aParsed.mpSets.contains(*aSet.optParentCode)) { continue; }
+      auto const it = mpUuidToCode.find(*aSet.optParentCode);
+      if (it != mpUuidToCode.end()) {
+         aSet.optParentCode = it->second;
+         ++uUuidReferences;
+         }
+      else {
+         throw std::runtime_error(std::format(
+            "CardSets unresolved parent: set code='{}', name='{}', uuid='{}', "
+            "parent_set_code='{}' (neither set code nor UUID in catalog)",
+            aSet.strCode, aSet.strName, aSet.strUuid, *aSet.optParentCode));
+         }
+      }
+   std::println("[STORE] Validating {} CardSets, {} UUID-form parent references",
+      vecSets.size(), uUuidReferences);
    auto const vecSetOrder = TopologicalOrder(vecSets,
       [](StagedSet const& aSet) { return aSet.strCode; },
       [](StagedSet const& aSet) { return aSet.optParentCode; });
+   std::println("[STORE] Topological order validated: {} CardSets", vecSetOrder.size());
+   auto aSetTransaction = aDatabase.Transaction();
    // PersistentSystemData omits identity from INSERT; the output range returns it.
    std::map<std::string, int> mpSetIds;
    auto aSetOutput = aDatabase.template MakeOutputRange<int, std::string, std::string,
@@ -188,6 +222,9 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
          }
       }
 
+   aSetTransaction.Commit();
+   std::println("[STORE] CardSets committed: {} rows (parents before children)", mpSetIds.size());
+
    std::map<std::optional<std::string>, std::optional<int>> mpLand, mpCreature;
    mpLand.emplace(std::nullopt, std::nullopt);
    mpCreature.emplace(std::nullopt, std::nullopt);
@@ -198,6 +235,8 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    auto const vecCardOrder = TopologicalOrder(aParsed.vecCards,
       [](StagedCard const& aCard) { return aCard.strUuid; },
       [](StagedCard const& aCard) { return aCard.optVariationOf; });
+   std::println("[STORE] Topological order validated: {} Cards", vecCardOrder.size());
+   auto aCardTransaction = aDatabase.Transaction();
    std::map<std::string, int> mpCardIds;
    auto aCardOutput = aDatabase.template MakeOutputRange<int, std::string,
       std::optional<std::string>, std::string, int, adecc::date_ty,
@@ -226,7 +265,7 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       }
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_oracle_id ON deckkernel_test.scryfall_cards(oracle_id)");
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_released ON deckkernel_test.scryfall_cards(released_at DESC)");
-   aTransaction.Commit();
+   aCardTransaction.Commit();
    std::println("Stored {} cards and {} topologically ordered sets.", aParsed.vecCards.size(), vecSets.size());
    }
 
