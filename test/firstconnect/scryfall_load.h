@@ -29,6 +29,8 @@ struct LoadedBulkData {
    std::string           strSetsCatalog;
    std::string           strLandCatalog;
    std::string           strCreatureCatalog;
+   std::string           strSuperCatalog;
+   std::string           strMainTypeCatalog;
    };
 
 LoadedBulkData LoadProcess();
