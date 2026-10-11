@@ -34,7 +34,7 @@ struct SetMetaData {
    static constexpr std::array<std::string_view, 5> arrAttributeNames{
       "id", "scryfall_id", "code", "name", "parent_set_code" };
    static constexpr std::array<std::size_t, 1> arrKeyIndices{0};
-   static constexpr std::optional<std::size_t> optIdentityIndex{};
+   static constexpr std::optional<std::size_t> optIdentityIndex{0};
    static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
    };
 class TScryfallSet final : public adecc::db::PersistentSystemData<set_types, SetMetaData> {
@@ -81,7 +81,7 @@ struct CardMetaData {
       "id", "scryfall_id", "oracle_id", "name", "set_id", "released_at",
       "land_type_id", "creature_type_id", "variation_of_id" };
    static constexpr std::array<std::size_t, 1> arrKeyIndices{0};
-   static constexpr std::optional<std::size_t> optIdentityIndex{};
+   static constexpr std::optional<std::size_t> optIdentityIndex{0};
    static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
    };
 class TScryfallCard final : public adecc::db::PersistentSystemData<card_types, CardMetaData> {
