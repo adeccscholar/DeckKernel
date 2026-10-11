@@ -23,6 +23,7 @@ and one card-printing relation before PostgreSQL is involved.
 #include <format>
 #include <fstream>
 #include <memory>
+#include <algorithm>
 #include <optional>
 #include <print>
 #include <stdexcept>
@@ -35,6 +36,36 @@ namespace deckkernel::test {
 namespace {
 
 using json_ty = nlohmann::json;
+
+// The catalog gives codes, not IDs. Assign stable IDs in catalog order for this fresh-load test.
+void ParseCatalog(std::string const& strJson, std::map<std::string, int>& mpCodes) {
+   json_ty const aCatalog = json_ty::parse(strJson);
+   for (json_ty const& aCode : aCatalog.at("data")) {
+      std::string const strCode = aCode.get<std::string>();
+      mpCodes.try_emplace(strCode, static_cast<int>(mpCodes.size() + 1));
+      }
+   }
+
+std::optional<std::string> FindSubtype(std::string const& strTypeLine,
+   std::map<std::string, int> const& mpTypes) {
+   std::size_t const uSep = strTypeLine.find(" — ");
+   if (uSep == std::string::npos) { return std::nullopt; }
+   std::string const strSubtypes = strTypeLine.substr(uSep + std::string_view(" — ").size());
+   std::optional<std::string> optFound;
+   for (auto const& [strCode, iId] : mpTypes) {
+      std::size_t uOffset = strSubtypes.find(strCode);
+      while (uOffset != std::string::npos) {
+         std::size_t const uEnd = uOffset + strCode.size();
+         if ((uOffset == 0 || strSubtypes[uOffset - 1] == ' ') &&
+             (uEnd == strSubtypes.size() || strSubtypes[uEnd] == ' ')) {
+            if (!optFound || strCode.size() > optFound->size()) { optFound = strCode; }
+            break;
+            }
+         uOffset = strSubtypes.find(strCode, uOffset + 1);
+         }
+      }
+   return optFound;
+   }
 
 struct GzipDeleter {
    void operator()(std::remove_pointer_t<gzFile>* pFile) const noexcept {
@@ -72,8 +103,12 @@ void AppendCard(json_ty const& aCard, ParsedBulkData& aParsed) {
 
    aParsed.mpSets.try_emplace(strSetId, TScryfallSet::data_ty { strSetId, strSetCode, strSetName } );
 
+   // Both nullable IDs are assigned at the storage boundary by the variadic transformation.
+   // The staging values are resolved into IDs after both catalogs have been imported.
+   aParsed.vecCardSubtypes.emplace_back(FindSubtype(aCard.value("type_line", ""), aParsed.mpLandTypes),
+      FindSubtype(aCard.value("type_line", ""), aParsed.mpCreatureTypes));
    aParsed.vecCards.emplace_back(strId, std::move(optOracleId), strName, strSetId,
-                                 adecc::ConvertTo<adecc::date_ty>(strReleasedAt) );
+      adecc::ConvertTo<adecc::date_ty>(strReleasedAt), std::nullopt, std::nullopt);
    }
 
 
@@ -194,6 +229,8 @@ void ReadPlainBulk(
 
 ParsedBulkData ParseProcess(LoadedBulkData const& aLoaded) {
    ParsedBulkData aParsed;
+   ParseCatalog(aLoaded.strLandCatalog, aParsed.mpLandTypes);
+   ParseCatalog(aLoaded.strCreatureCatalog, aParsed.mpCreatureTypes);
 
    if (aLoaded.aDescriptor.boGzipJsonLines) {
       ReadGzipJsonLines(aLoaded.aPath, aParsed);
