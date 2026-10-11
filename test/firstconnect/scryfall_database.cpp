@@ -67,6 +67,9 @@ adecc::db::postgres::postgres_credentials MakeCredentials() {
 
 
 void EnsureSchema(postgres_database_ty const& aDatabase) {
+   aDatabase.ExecuteCommand("DROP VIEW IF EXISTS deckkernel_test.scryfall_cards_view");
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_land_types");
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_creature_types");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_cards");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_sets");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.land_types");
@@ -82,9 +85,19 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
       "id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, scryfall_id text NOT NULL UNIQUE, oracle_id text,"
       "name text NOT NULL, set_id integer NOT NULL REFERENCES deckkernel_test.scryfall_sets(id),"
       "released_at date NOT NULL,"
-      "land_type_id integer REFERENCES deckkernel_test.land_types(id),"
-      "creature_type_id integer REFERENCES deckkernel_test.creatures_types(id),"
       "variation_of_id integer REFERENCES deckkernel_test.scryfall_cards(id))");
+   aDatabase.ExecuteCommand(
+      "CREATE TABLE deckkernel_test.scryfall_card_land_types ("
+      "card_id integer NOT NULL REFERENCES deckkernel_test.scryfall_cards(id),"
+      "land_type_id integer NOT NULL REFERENCES deckkernel_test.land_types(id),"
+      "position integer NOT NULL CHECK (position >= 0),"
+      "PRIMARY KEY (card_id, position), UNIQUE (card_id, land_type_id))");
+   aDatabase.ExecuteCommand(
+      "CREATE TABLE deckkernel_test.scryfall_card_creature_types ("
+      "card_id integer NOT NULL REFERENCES deckkernel_test.scryfall_cards(id),"
+      "creature_type_id integer NOT NULL REFERENCES deckkernel_test.creatures_types(id),"
+      "position integer NOT NULL CHECK (position >= 0),"
+      "PRIMARY KEY (card_id, position), UNIQUE (card_id, creature_type_id))");
    }
 
 /**
@@ -258,12 +271,6 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    aSetTransaction.CommitAndClose();
    std::println("[STORE] CardSets committed: {} rows (parents before children)", mpSetIds.size());
 
-   std::map<std::optional<std::string>, std::optional<int>> mpLand, mpCreature;
-   mpLand.emplace(std::nullopt, std::nullopt);
-   mpCreature.emplace(std::nullopt, std::nullopt);
-   for (auto const& [strCode, iId] : mpLandIds) { mpLand.emplace(strCode, iId); }
-   for (auto const& [strCode, iId] : mpCreatureIds) { mpCreature.emplace(strCode, iId); }
-
    // The default_cards bulk may omit localized printings referenced by variation_of.
    // Keep the reference diagnostic, but do not manufacture an invalid foreign key.
    std::set<std::string> setAvailableCards;
@@ -309,30 +316,73 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       return aDatabase.template MakeOutputRange<types_ty...>(
          TScryfallCard::CreateInsertSql(), TScryfallCard::CreateInsertOutputParameters());
       });
+   auto aLandLinkSink = card_type_link_types::invoke([&]<typename... types_ty>() {
+      return aDatabase.template MakeOutputSink<types_ty...>(
+         TCardLandType::CreateInsertSql(), TCardLandType::CreateInsertOutputParameters());
+      });
+   auto aCreatureLinkSink = card_type_link_types::invoke([&]<typename... types_ty>() {
+      return aDatabase.template MakeOutputSink<types_ty...>(
+         TCardCreatureType::CreateInsertSql(), TCardCreatureType::CreateInsertOutputParameters());
+      });
+   std::size_t uLandLinks = 0, uCreatureLinks = 0;
    for (std::size_t const uIndex : vecCardOrder) {
       StagedCard const& aCard = vecResolvedCards[uIndex];
       std::optional<int> optVariation;
       if (aCard.optVariationOf) { optVariation = mpCardIds.at(*aCard.optVariationOf); }
       staged_card_types::type_list tplStaged{
          0, aCard.strUuid, aCard.optOracleId, aCard.strName,
-         aCard.strSetCode, aCard.aReleasedAt, aCard.optLandType,
-         aCard.optCreatureType, optVariation };
+         aCard.strSetCode, aCard.aReleasedAt, optVariation };
       TScryfallCard::data_ty tplCard = adecc::Transform<staged_card_types, card_types>(
          std::move(tplStaged),
-         adecc::BindMapping<4, staged_card_types, card_types>(mpSetIds),
-         adecc::BindMapping<6, staged_card_types, card_types>(mpLand),
-         adecc::BindMapping<7, staged_card_types, card_types>(mpCreature));
+         adecc::BindMapping<4, staged_card_types, card_types>(mpSetIds));
       std::array<TScryfallCard::data_ty, 1> arrInput{{ std::move(tplCard) }};
       for (auto const& tplInserted : aCardOutput(arrInput)) {
          int const iId = std::get<0>(tplInserted);
          if (iId <= 0 || !mpCardIds.emplace(aCard.strUuid, iId).second) {
             throw std::runtime_error("invalid or duplicate generated card identity");
             }
+         std::vector<card_type_link_types::type_list> vecLandLinks, vecCreatureLinks;
+         vecLandLinks.reserve(aCard.vecLandTypes.size());
+         vecCreatureLinks.reserve(aCard.vecCreatureTypes.size());
+         for (std::size_t uPos = 0; uPos < aCard.vecLandTypes.size(); ++uPos) {
+            staged_card_type_link_types::type_list tplStage{
+               iId, aCard.vecLandTypes[uPos], static_cast<int>(uPos) };
+            vecLandLinks.emplace_back(adecc::Transform<
+               staged_card_type_link_types, card_type_link_types>(
+               std::move(tplStage),
+               adecc::BindMapping<1, staged_card_type_link_types, card_type_link_types>(mpLandIds)));
+            }
+         for (std::size_t uPos = 0; uPos < aCard.vecCreatureTypes.size(); ++uPos) {
+            staged_card_type_link_types::type_list tplStage{
+               iId, aCard.vecCreatureTypes[uPos], static_cast<int>(uPos) };
+            vecCreatureLinks.emplace_back(adecc::Transform<
+               staged_card_type_link_types, card_type_link_types>(
+               std::move(tplStage),
+               adecc::BindMapping<1, staged_card_type_link_types, card_type_link_types>(mpCreatureIds)));
+            }
+         if (!vecLandLinks.empty()) { aLandLinkSink = vecLandLinks; }
+         if (!vecCreatureLinks.empty()) { aCreatureLinkSink = vecCreatureLinks; }
+         uLandLinks += vecLandLinks.size();
+         uCreatureLinks += vecCreatureLinks.size();
          }
       }
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_oracle_id ON deckkernel_test.scryfall_cards(oracle_id)");
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_released ON deckkernel_test.scryfall_cards(released_at DESC)");
+   aDatabase.ExecuteCommand(
+      "CREATE VIEW deckkernel_test.scryfall_cards_view AS "
+      "SELECT c.*, "
+      "COALESCE((SELECT array_agg(t.code ORDER BY x.position) "
+      "FROM deckkernel_test.scryfall_card_land_types x "
+      "JOIN deckkernel_test.land_types t ON t.id=x.land_type_id "
+      "WHERE x.card_id=c.id), ARRAY[]::text[]) AS land_types, "
+      "COALESCE((SELECT array_agg(t.code ORDER BY x.position) "
+      "FROM deckkernel_test.scryfall_card_creature_types x "
+      "JOIN deckkernel_test.creatures_types t ON t.id=x.creature_type_id "
+      "WHERE x.card_id=c.id), ARRAY[]::text[]) AS creature_types "
+      "FROM deckkernel_test.scryfall_cards c");
    aCardTransaction.CommitAndClose();
+   std::println("[STORE] Card subtype links committed: land={}, creature={}",
+      uLandLinks, uCreatureLinks);
    std::println("[TIME] Store Cards: {:.3f} s", ElapsedSeconds(aCardStart));
    std::println("[STORE] Cards committed: {} rows, {} missing variation targets",
       mpCardIds.size(), uMissingVariations);
