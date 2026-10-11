@@ -232,22 +232,26 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    auto aSetTransaction = aDatabase.Transaction();
    // PersistentSystemData omits identity from INSERT; the output range returns it.
    std::map<std::string, int> mpSetIds;
+   std::map<std::optional<std::string>, std::optional<int>> mpParentIds;
+   mpParentIds.emplace(std::nullopt, std::nullopt);
    auto aSetOutput = set_types::invoke([&]<typename... types_ty>() {
       return aDatabase.template MakeOutputRange<types_ty...>(
          TScryfallSet::CreateInsertSql(), TScryfallSet::CreateInsertOutputParameters());
       });
    for (std::size_t const uIndex : vecSetOrder) {
       StagedSet const& aSet = vecSets[uIndex];
-      std::optional<int> optParent;
-      if (aSet.optParentCode) { optParent = mpSetIds.at(*aSet.optParentCode); }
-      std::array<TScryfallSet::data_ty, 1> arrInput{{
-         TScryfallSet::data_ty{0, aSet.strUuid, aSet.strCode, aSet.strName, optParent}
-         }};
+      staged_set_types::type_list tplStaged{
+         0, aSet.strUuid, aSet.strCode, aSet.strName, aSet.optParentCode };
+      auto tplSet = adecc::Transform<staged_set_types, set_types>(
+         std::move(tplStaged),
+         adecc::BindMapping<4, staged_set_types, set_types>(mpParentIds));
+      std::array<TScryfallSet::data_ty, 1> arrInput{{ std::move(tplSet) }};
       for (auto const& tplInserted : aSetOutput(arrInput)) {
          int const iId = std::get<0>(tplInserted);
          if (iId <= 0 || !mpSetIds.emplace(aSet.strCode, iId).second) {
             throw std::runtime_error("invalid or duplicate generated set identity");
             }
+         mpParentIds.emplace(aSet.strCode, iId);
          }
       }
 
