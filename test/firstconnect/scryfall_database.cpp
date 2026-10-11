@@ -15,6 +15,7 @@
 #include <vector>
 #include <stdexcept>
 #include <algorithm>
+#include <array>
 
 #include <cstdint>
 #include <cstdlib>
@@ -71,11 +72,11 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.creatures_types (id integer PRIMARY KEY, code text NOT NULL UNIQUE)");
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_sets ("
-      "id integer PRIMARY KEY, scryfall_id text NOT NULL UNIQUE, code text NOT NULL UNIQUE,"
+      "id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, scryfall_id text NOT NULL UNIQUE, code text NOT NULL UNIQUE,"
       "name text NOT NULL, parent_set_code integer REFERENCES deckkernel_test.scryfall_sets(id))");
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_cards ("
-      "id integer PRIMARY KEY, scryfall_id text NOT NULL UNIQUE, oracle_id text,"
+      "id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, scryfall_id text NOT NULL UNIQUE, oracle_id text,"
       "name text NOT NULL, set_id integer NOT NULL REFERENCES deckkernel_test.scryfall_sets(id),"
       "released_at date NOT NULL,"
       "land_type_id integer REFERENCES deckkernel_test.land_types(id),"
@@ -157,26 +158,25 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    auto const vecSetOrder = TopologicalOrder(vecSets,
       [](StagedSet const& aSet) { return aSet.strCode; },
       [](StagedSet const& aSet) { return aSet.optParentCode; });
+   // PersistentSystemData omits identity from INSERT; the output range returns it.
    std::map<std::string, int> mpSetIds;
-   int iNextSetId = 1;
-   auto aSetSink = aDatabase.template MakeOutputSink<int, std::string, std::string,
+   auto aSetOutput = aDatabase.template MakeOutputRange<int, std::string, std::string,
       std::string, std::optional<int>>(
       TScryfallSet::CreateInsertSql(), TScryfallSet::CreateInsertOutputParameters());
    for (std::size_t const uIndex : vecSetOrder) {
       StagedSet const& aSet = vecSets[uIndex];
       std::optional<int> optParent;
       if (aSet.optParentCode) { optParent = mpSetIds.at(*aSet.optParentCode); }
-      std::vector<TScryfallSet::data_ty> vecOne{
-         {iNextSetId++, aSet.strUuid, aSet.strCode, aSet.strName, optParent} };
-      aSetSink = vecOne;
-      mpSetIds.emplace(aSet.strCode, std::get<0>(vecOne.front()));
+      std::array<TScryfallSet::data_ty, 1> arrInput{{
+         TScryfallSet::data_ty{0, aSet.strUuid, aSet.strCode, aSet.strName, optParent}
+         }};
+      for (auto const& tplInserted : aSetOutput(arrInput)) {
+         int const iId = std::get<0>(tplInserted);
+         if (iId <= 0 || !mpSetIds.emplace(aSet.strCode, iId).second) {
+            throw std::runtime_error("invalid or duplicate generated set identity");
+            }
+         }
       }
-
-   // Re-read the IDs from PostgreSQL; cards no longer reference set UUIDs.
-   mpSetIds.clear();
-   auto rngSetIds = aDatabase.template Execute<int, std::string>(
-      "SELECT id, code FROM deckkernel_test.scryfall_sets");
-   for (auto const& tpl : rngSetIds) { mpSetIds.emplace(std::get<1>(tpl), std::get<0>(tpl)); }
 
    std::map<std::optional<std::string>, std::optional<int>> mpLand, mpCreature;
    mpLand.emplace(std::nullopt, std::nullopt);
@@ -188,9 +188,8 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    auto const vecCardOrder = TopologicalOrder(aParsed.vecCards,
       [](StagedCard const& aCard) { return aCard.strUuid; },
       [](StagedCard const& aCard) { return aCard.optVariationOf; });
-   int iNextCardId = 1;
    std::map<std::string, int> mpCardIds;
-   auto aCardSink = aDatabase.template MakeOutputSink<int, std::string,
+   auto aCardOutput = aDatabase.template MakeOutputRange<int, std::string,
       std::optional<std::string>, std::string, int, adecc::date_ty,
       std::optional<int>, std::optional<int>, std::optional<int>>(
       TScryfallCard::CreateInsertSql(), TScryfallCard::CreateInsertOutputParameters());
@@ -199,7 +198,7 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       std::optional<int> optVariation;
       if (aCard.optVariationOf) { optVariation = mpCardIds.at(*aCard.optVariationOf); }
       staged_card_types::type_list tplStaged{
-         iNextCardId++, aCard.strUuid, aCard.optOracleId, aCard.strName,
+         0, aCard.strUuid, aCard.optOracleId, aCard.strName,
          aCard.strSetCode, aCard.aReleasedAt, aCard.optLandType,
          aCard.optCreatureType, optVariation };
       TScryfallCard::data_ty tplCard = adecc::Transform<staged_card_types, card_types>(
@@ -207,9 +206,13 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
          adecc::BindMapping<4, staged_card_types, card_types>(mpSetIds),
          adecc::BindMapping<6, staged_card_types, card_types>(mpLand),
          adecc::BindMapping<7, staged_card_types, card_types>(mpCreature));
-      std::vector<TScryfallCard::data_ty> vecOne{std::move(tplCard)};
-      aCardSink = vecOne;
-      mpCardIds.emplace(aCard.strUuid, std::get<0>(vecOne.front()));
+      std::array<TScryfallCard::data_ty, 1> arrInput{{ std::move(tplCard) }};
+      for (auto const& tplInserted : aCardOutput(arrInput)) {
+         int const iId = std::get<0>(tplInserted);
+         if (iId <= 0 || !mpCardIds.emplace(aCard.strUuid, iId).second) {
+            throw std::runtime_error("invalid or duplicate generated card identity");
+            }
+         }
       }
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_oracle_id ON deckkernel_test.scryfall_cards(oracle_id)");
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_released ON deckkernel_test.scryfall_cards(released_at DESC)");
