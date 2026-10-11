@@ -475,7 +475,7 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
                });
          })
       | std::views::join;
-   aFaceSink = aFaceRows;
+   aFaceSink(aFaceRows);
 
    // One generic transformation pipeline for all five face-scoped type relations.
    auto fnWriteTypeLinks = [&]<typename sink_ty>(
@@ -494,7 +494,7 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
                   }) | std::views::join;
             }) | std::views::join;
       std::size_t const uRows = std::ranges::distance(aRows);
-      aSink = aRows;
+      aSink(aRows);
       return uRows;
       };
    std::size_t const uSuperLinks = fnWriteTypeLinks(
