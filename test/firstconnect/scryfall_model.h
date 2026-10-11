@@ -68,6 +68,9 @@ public:
       return Get<2>();
       }
 
+   element_ty<5> const& LandTypeId() const { return Get<5>(); }
+   element_ty<6> const& CreatureTypeId() const { return Get<6>(); }
+
    template <typename value_ty>
       requires adecc::HasConvertTo<value_ty, element_ty<0>>
    void Id(value_ty&& aValue) {
@@ -88,13 +91,16 @@ public:
    };
 
 
-using card_types = adecc::defined_type_list<std::string, std::optional<std::string>, std::string, std::string, adecc::date_ty>;
+using catalog_types = adecc::defined_type_list<int, std::string>;
+
+using card_types = adecc::defined_type_list<std::string, std::optional<std::string>, std::string, std::string,
+   adecc::date_ty, std::optional<int>, std::optional<int>>;
 
 struct CardMetaData {
    static constexpr std::string_view svTableName = "deckkernel_test.scryfall_cards";
 
-   static constexpr std::array<std::string_view, 5> arrAttributeNames {
-      "id", "oracle_id", "name", "set_id", "released_at"
+   static constexpr std::array<std::string_view, 7> arrAttributeNames {
+      "id", "oracle_id", "name", "set_id", "released_at", "land_type_id", "creature_type_id"
       };
 
    static constexpr std::array<std::size_t, 1> arrKeyIndices { 0 };
