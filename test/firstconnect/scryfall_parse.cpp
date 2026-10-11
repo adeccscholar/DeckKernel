@@ -122,23 +122,32 @@ before the database boundary: one set tuple is deduplicated by set_id and every 
 keeps set_id as the foreign-key value.
 */
 void AppendCard(json_ty const& aCard, ParsedBulkData& aParsed) {
-   std::string strTypeLine = aCard.value("type_line", std::string{});
-   if (strTypeLine.empty() && aCard.contains("card_faces") && aCard["card_faces"].is_array()) {
-      for (json_ty const& aFace : aCard["card_faces"]) {
-         strTypeLine += " // ";
-         strTypeLine += aFace.value("type_line", std::string{});
-         }
-      }
    StagedCard aRow{
       .strUuid = aCard.at("id").get<std::string>(),
       .strName = aCard.at("name").get<std::string>(),
       .strSetCode = aCard.at("set").get<std::string>(),
       .optOracleId = OptionalText(aCard, "oracle_id"),
       .optVariationOf = OptionalText(aCard, "variation_of"),
-      .aReleasedAt = adecc::ConvertTo<adecc::date_ty>(aCard.at("released_at").get<std::string>()),
-      .vecLandTypes = FindSubtypes(strTypeLine, aParsed.mpLandTypes, "Land"),
-      .vecCreatureTypes = FindSubtypes(strTypeLine, aParsed.mpCreatureTypes, "Creature")
+      .aReleasedAt = adecc::ConvertTo<adecc::date_ty>(aCard.at("released_at").get<std::string>())
       };
+   auto fnAppendFace = [&](int iFaceId, std::string strName, std::string strLine) {
+      StagedFace aFace{
+         .iFaceId = iFaceId,
+         .strName = std::move(strName),
+         .strTypeLine = std::move(strLine)
+         };
+      aFace.vecLandTypes = FindSubtypes(aFace.strTypeLine, aParsed.mpLandTypes, "Land");
+      aFace.vecCreatureTypes = FindSubtypes(aFace.strTypeLine, aParsed.mpCreatureTypes, "Creature");
+      aRow.vecFaces.emplace_back(std::move(aFace));
+      };
+   fnAppendFace(0, aRow.strName, aCard.value("type_line", std::string{}));
+   if (auto it = aCard.find("card_faces"); it != aCard.end() && it->is_array()) {
+      int iFaceId = 1;
+      for (json_ty const& aFace : *it) {
+         fnAppendFace(iFaceId++, aFace.value("name", aRow.strName),
+            aFace.value("type_line", std::string{}));
+         }
+      }
    aParsed.vecCards.emplace_back(std::move(aRow));
    }
 
@@ -308,8 +317,10 @@ ParsedBulkData ParseProcess(LoadedBulkData const& aLoaded) {
 
    std::size_t uLandMatches = 0, uCreatureMatches = 0;
    for (StagedCard const& aCard : aParsed.vecCards) {
-      uLandMatches += aCard.vecLandTypes.size();
-      uCreatureMatches += aCard.vecCreatureTypes.size();
+      for (StagedFace const& aFace : aCard.vecFaces) {
+         uLandMatches += aFace.vecLandTypes.size();
+         uCreatureMatches += aFace.vecCreatureTypes.size();
+         }
       }
    std::println("[PARSE] Subtype matches: land={}, creature={}, cards={}",
       uLandMatches, uCreatureMatches, aParsed.vecCards.size());
