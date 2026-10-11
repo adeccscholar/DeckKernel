@@ -27,6 +27,7 @@
 #include <string>
 #include <string_view>
 #include <format>
+#include <functional>
 
 namespace deckkernel::test {
 namespace {
