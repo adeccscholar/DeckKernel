@@ -91,6 +91,7 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
       "CREATE TABLE deckkernel_test.scryfall_card_faces ("
       "card_id integer NOT NULL REFERENCES deckkernel_test.scryfall_cards(id),"
       "face_id integer NOT NULL CHECK (face_id >= 0),"
+      "is_main boolean GENERATED ALWAYS AS (face_id = 0) STORED,"
       "name text NOT NULL, type_line text NOT NULL,"
       "PRIMARY KEY (card_id, face_id))");
    aDatabase.ExecuteCommand(
@@ -393,7 +394,7 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_released ON deckkernel_test.scryfall_cards(released_at DESC)");
    aDatabase.ExecuteCommand(
       "CREATE VIEW deckkernel_test.scryfall_cards_view AS "
-      "SELECT c.*, f.face_id, f.name AS face_name, f.type_line, "
+      "SELECT c.*, f.face_id, f.is_main, f.name AS face_name, f.type_line, "
       "COALESCE((SELECT array_agg(t.code ORDER BY x.position) "
       "FROM deckkernel_test.scryfall_card_land_types x "
       "JOIN deckkernel_test.land_types t ON t.id=x.land_type_id "
