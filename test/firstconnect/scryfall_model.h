@@ -68,9 +68,6 @@ public:
       return Get<2>();
       }
 
-   element_ty<5> const& LandTypeId() const { return Get<5>(); }
-   element_ty<6> const& CreatureTypeId() const { return Get<6>(); }
-
    template <typename value_ty>
       requires adecc::HasConvertTo<value_ty, element_ty<0>>
    void Id(value_ty&& aValue) {
@@ -92,6 +89,9 @@ public:
 
 
 using catalog_types = adecc::defined_type_list<int, std::string>;
+
+using staged_card_types = adecc::defined_type_list<std::string, std::optional<std::string>, std::string,
+   std::string, adecc::date_ty, std::optional<std::string>, std::optional<std::string>>;
 
 using card_types = adecc::defined_type_list<std::string, std::optional<std::string>, std::string, std::string,
    adecc::date_ty, std::optional<int>, std::optional<int>>;
@@ -140,6 +140,8 @@ public:
    element_ty<4> const& ReleasedAt() const {
       return Get<4>();
       }
+   element_ty<5> const& LandTypeId() const { return Get<5>(); }
+   element_ty<6> const& CreatureTypeId() const { return Get<6>(); }
 
    template <typename value_ty>
       requires adecc::HasConvertTo<value_ty, element_ty<0>>
