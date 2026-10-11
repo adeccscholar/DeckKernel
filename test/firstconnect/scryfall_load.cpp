@@ -352,17 +352,21 @@ LoadedBulkData LoadProcess() {
       }
 
    // Catalogs are small; fetch once per import before the bulk parser runs.
-   std::string strSetsCatalog = LoadAllSets();
    std::string strLandCatalog = HttpGet("https://api.scryfall.com/catalog/land-types");
    std::string strCreatureCatalog = HttpGet("https://api.scryfall.com/catalog/creature-types");
    return LoadedBulkData {
       .aDescriptor = std::move(aBulk),
       .aPath = aBulkPath,
       .boDownloaded = boDownload,
-      .strSetsCatalog = std::move(strSetsCatalog),
+      .strSetsCatalog = {},
       .strLandCatalog = std::move(strLandCatalog),
       .strCreatureCatalog = std::move(strCreatureCatalog)
       };
+   }
+
+std::string ReadCardSets() {
+   CurlRuntime aCurlRuntime;
+   return LoadAllSets();
    }
 
 } // namespace deckkernel::test
