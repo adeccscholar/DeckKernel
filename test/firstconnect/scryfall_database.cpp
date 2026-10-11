@@ -9,6 +9,10 @@
 #include "scryfall_database.h"
 
 #include "convert_integral.h"
+#include "type_transformations.h"
+#include <map>
+#include <tuple>
+#include <vector>
 
 #include <cstdint>
 #include <cstdlib>
@@ -57,8 +61,14 @@ adecc::db::postgres::postgres_credentials MakeCredentials() {
 
 
 void EnsureSchema(postgres_database_ty const& aDatabase) {
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_cards");
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.land_types");
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.creatures_types");
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_sets");
+   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.land_types (id integer PRIMARY KEY, code text NOT NULL UNIQUE)");
+   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.creatures_types (id integer PRIMARY KEY, code text NOT NULL UNIQUE)");
    aDatabase.ExecuteCommand(
-      "CREATE TABLE IF NOT EXISTS deckkernel_test.scryfall_sets ("
+      "CREATE TABLE deckkernel_test.scryfall_sets ("
       "  id text PRIMARY KEY,"
       "  code text NOT NULL UNIQUE,"
       "  name text NOT NULL"
@@ -66,12 +76,14 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
       );
 
    aDatabase.ExecuteCommand(
-      "CREATE TABLE IF NOT EXISTS deckkernel_test.scryfall_cards ("
+      "CREATE TABLE deckkernel_test.scryfall_cards ("
       "  id          text PRIMARY KEY,"
       "  oracle_id   text NULL,"
       "  name        text NOT NULL,"
       "  set_id      text NOT NULL REFERENCES deckkernel_test.scryfall_sets(id),"
-      "  released_at date NOT NULL"
+      "  released_at date NOT NULL,"
+      "  land_type_id integer NULL REFERENCES deckkernel_test.land_types(id),"
+      "  creature_type_id integer NULL REFERENCES deckkernel_test.creatures_types(id)"
       "  )"
       );
    }
@@ -97,7 +109,18 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    auto aTransaction = aDatabase.Transaction();
    aDatabase.ExecuteCommand("DROP INDEX IF EXISTS deckkernel_test.ix_scryfall_cards_oracle_id" );
    aDatabase.ExecuteCommand("DROP INDEX IF EXISTS deckkernel_test.ix_scryfall_cards_released" );
-   aDatabase.ExecuteCommand("TRUNCATE TABLE deckkernel_test.scryfall_cards, deckkernel_test.scryfall_sets");
+   // Fresh tables: populate catalog relations before card foreign keys.
+   auto aLandSink = aDatabase.template MakeOutputSink<int, std::string>(
+      "INSERT INTO deckkernel_test.land_types(id, code) VALUES ($1, $2)",
+      adecc::db_output_parameters{});
+   auto aCreatureSink = aDatabase.template MakeOutputSink<int, std::string>(
+      "INSERT INTO deckkernel_test.creatures_types(id, code) VALUES ($1, $2)",
+      adecc::db_output_parameters{});
+   std::vector<std::tuple<int, std::string>> vecLand, vecCreature;
+   for (auto const& [strCode, iId] : aParsed.mpLandTypes) { vecLand.emplace_back(iId, strCode); }
+   for (auto const& [strCode, iId] : aParsed.mpCreatureTypes) { vecCreature.emplace_back(iId, strCode); }
+   aLandSink = vecLand;
+   aCreatureSink = vecCreature;
 
    auto aSetSink = aDatabase.template MakeOutputSink<std::string, std::string, std::string>(
                                      TScryfallSet::CreateInsertSql(), TScryfallSet::CreateInsertOutputParameters()
@@ -106,11 +129,33 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    auto rngSets = aParsed.mpSets | std::views::values;
    aSetSink = rngSets;
 
-   auto aCardSink = aDatabase.template MakeOutputSink<std::string, std::optional<std::string>, std::string, 
-                                                      std::string, adecc::date_ty>(
+   auto aCardSink = aDatabase.template MakeOutputSink<std::string, std::optional<std::string>, std::string,
+      std::string, adecc::date_ty, std::optional<int>, std::optional<int>>(
          TScryfallCard::CreateInsertSql(), TScryfallCard::CreateInsertOutputParameters());
 
-   aCardSink = aParsed.vecCards;
+   // Bind two independent mappings in one variadic Transform instantiation.
+   using optional_string_ty = std::optional<std::string>;
+   using optional_int_ty = std::optional<int>;
+   std::map<optional_string_ty, optional_int_ty> mpLand, mpCreature;
+   mpLand.emplace(std::nullopt, std::nullopt);
+   mpCreature.emplace(std::nullopt, std::nullopt);
+   for (auto const& [strCode, iId] : aParsed.mpLandTypes) { mpLand.emplace(strCode, iId); }
+   for (auto const& [strCode, iId] : aParsed.mpCreatureTypes) { mpCreature.emplace(strCode, iId); }
+   std::vector<TScryfallCard::data_ty> vecTransformed;
+   vecTransformed.reserve(aParsed.vecCards.size());
+   for (std::size_t uIndex = 0; uIndex < aParsed.vecCards.size(); ++uIndex) {
+      auto const& tplCard = aParsed.vecCards[uIndex];
+      auto const& tplSubtypes = aParsed.vecCardSubtypes[uIndex];
+      staged_card_types::type_list tplStaged{
+         std::get<0>(tplCard), std::get<1>(tplCard), std::get<2>(tplCard),
+         std::get<3>(tplCard), std::get<4>(tplCard),
+         std::get<0>(tplSubtypes), std::get<1>(tplSubtypes) };
+      vecTransformed.emplace_back(adecc::Transform<staged_card_types, card_types>(
+         std::move(tplStaged),
+         adecc::BindMapping<5, staged_card_types, card_types>(mpLand),
+         adecc::BindMapping<6, staged_card_types, card_types>(mpCreature)));
+      }
+   aCardSink = vecTransformed;
 
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_oracle_id ON deckkernel_test.scryfall_cards(oracle_id)");
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_released ON deckkernel_test.scryfall_cards(released_at DESC)");
