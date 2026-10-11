@@ -164,6 +164,7 @@ void AppendCard(json_ty const& aCard, ParsedBulkData& aParsed) {
          };
       aFace.vecLandTypes = FindSubtypes(aFace.strTypeLine, aParsed.mpLandTypes, "Land");
       aFace.vecCreatureTypes = FindSubtypes(aFace.strTypeLine, aParsed.mpCreatureTypes, "Creature");
+      aFace.vecArtifactTypes = FindSubtypes(aFace.strTypeLine, aParsed.mpArtifactTypes, "Artifact");
       aFace.vecSuperTypes = FindMainTypes(aFace.strTypeLine, aParsed.mpSuperTypes);
       aFace.vecMainTypes = FindMainTypes(aFace.strTypeLine, aParsed.mpMainTypes);
       aRow.vecFaces.emplace_back(std::move(aFace));
@@ -301,6 +302,7 @@ ParsedBulkData ParseProcess(LoadedBulkData const& aLoaded) {
    ParseCatalog(aLoaded.strCreatureCatalog, aParsed.mpCreatureTypes);
    ParseCatalog(aLoaded.strSuperCatalog, aParsed.mpSuperTypes);
    ParseCatalog(aLoaded.strMainTypeCatalog, aParsed.mpMainTypes);
+   ParseCatalog(aLoaded.strArtifactCatalog, aParsed.mpArtifactTypes);
    // Validate the actual catalog and UTF-8 parser before reading the full bulk file.
    constexpr std::string_view svEmDash{"\xE2\x80\x94", 3};
    std::string const strDash{svEmDash};
