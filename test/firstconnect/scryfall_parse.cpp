@@ -46,22 +46,28 @@ void ParseCatalog(std::string const& strJson, std::map<std::string, int>& mpCode
       }
    }
 
+// Search only in the subtype section of type_line. A space-delimited search
+// avoids mistaking a type prefix for a subtype and supports multiword names.
 std::optional<std::string> FindSubtype(std::string const& strTypeLine,
    std::map<std::string, int> const& mpTypes) {
-   std::size_t const uSep = strTypeLine.find(" — ");
-   if (uSep == std::string::npos) { return std::nullopt; }
-   std::string const strSubtypes = strTypeLine.substr(uSep + std::string_view(" — ").size());
+   std::size_t uSeparator = strTypeLine.find("—");
+   if (uSeparator == std::string::npos) { return std::nullopt; }
+   std::string_view const svSubtypes{strTypeLine.data() + uSeparator + std::string_view("—").size(),
+      strTypeLine.size() - uSeparator - std::string_view("—").size()};
    std::optional<std::string> optFound;
-   for (auto const& [strCode, iId] : mpTypes) {
-      std::size_t uOffset = strSubtypes.find(strCode);
-      while (uOffset != std::string::npos) {
+   for (auto const& [strCode, iUnused] : mpTypes) {
+      std::size_t uOffset = svSubtypes.find(strCode);
+      while (uOffset != std::string_view::npos) {
          std::size_t const uEnd = uOffset + strCode.size();
-         if ((uOffset == 0 || strSubtypes[uOffset - 1] == ' ') &&
-             (uEnd == strSubtypes.size() || strSubtypes[uEnd] == ' ')) {
+         auto fnBoundary = [](char ch) {
+            return ch == ' ' || ch == '\\t' || ch == '\\r' || ch == '\\n';
+            };
+         if ((uOffset == 0 || fnBoundary(svSubtypes[uOffset - 1])) &&
+             (uEnd == svSubtypes.size() || fnBoundary(svSubtypes[uEnd]))) {
             if (!optFound || strCode.size() > optFound->size()) { optFound = strCode; }
             break;
             }
-         uOffset = strSubtypes.find(strCode, uOffset + 1);
+         uOffset = svSubtypes.find(strCode, uOffset + 1);
          }
       }
    return optFound;
@@ -247,6 +253,19 @@ ParsedBulkData ParseProcess(LoadedBulkData const& aLoaded) {
       ReadPlainBulk(aLoaded.aPath, aParsed);
       }
 
+   std::size_t uLandMatches = 0, uCreatureMatches = 0;
+   for (StagedCard const& aCard : aParsed.vecCards) {
+      uLandMatches += aCard.optLandType.has_value() ? 1U : 0U;
+      uCreatureMatches += aCard.optCreatureType.has_value() ? 1U : 0U;
+      }
+   std::println("[PARSE] Subtype matches: land={}, creature={}, cards={}",
+      uLandMatches, uCreatureMatches, aParsed.vecCards.size());
+   if (uLandMatches == 0 || uCreatureMatches == 0) {
+      throw std::runtime_error(std::format(
+         "Scryfall subtype parsing produced no {} matches (land={}, creature={}); "
+         "inspect type_line and catalog data before persisting",
+         uLandMatches == 0 ? "land" : "creature", uLandMatches, uCreatureMatches));
+      }
    std::println(
       "Parsed {} cards from {} sets.",
       aParsed.vecCards.size(),
