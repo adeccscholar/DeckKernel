@@ -55,7 +55,7 @@ struct LandTypeMetaData {
    static constexpr std::string_view svTableName = "deckkernel_test.land_types";
    static constexpr std::array<std::string_view, 2> arrAttributeNames{ "id", "code" };
    static constexpr std::array<std::size_t, 1> arrKeyIndices{ 0 };
-   static constexpr std::optional<std::size_t> optIdentityIndex{};
+   static constexpr std::optional<std::size_t> optIdentityIndex{0};
    static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
    };
 
