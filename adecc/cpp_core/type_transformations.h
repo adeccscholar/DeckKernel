@@ -35,6 +35,7 @@ license from adecc Systemhaus GmbH.
 #include <concepts>
 #include <cstddef>
 #include <functional>
+#include <format>
 #include <map>
 #include <stdexcept>
 #include <tuple>
