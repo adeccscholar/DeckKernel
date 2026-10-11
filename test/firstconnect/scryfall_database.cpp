@@ -81,11 +81,13 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.artifact_types");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.supertypes");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.card_types");
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.rarities");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.land_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE)");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.creatures_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE)");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.artifact_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE)");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.supertypes (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE)");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.card_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE)");
+   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.rarities (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE)");
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_sets ("
       "id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, scryfall_id text NOT NULL UNIQUE, code text NOT NULL UNIQUE,"
@@ -95,14 +97,15 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
       "id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, scryfall_id text NOT NULL UNIQUE, oracle_id text,"
       "name text NOT NULL, set_id integer NOT NULL REFERENCES deckkernel_test.scryfall_sets(id),"
       "released_at date NOT NULL,"
-      "variation_of_id integer REFERENCES deckkernel_test.scryfall_cards(id))");
+      "variation_of_id integer REFERENCES deckkernel_test.scryfall_cards(id),"
+      "rarity_id integer NOT NULL REFERENCES deckkernel_test.rarities(id))");
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_card_faces ("
       "card_id integer NOT NULL REFERENCES deckkernel_test.scryfall_cards(id),"
       "face_id integer NOT NULL CHECK (face_id >= 0),"
       "is_main boolean GENERATED ALWAYS AS (face_id = 0) STORED,"
       "name text NOT NULL, type_line text NOT NULL,"
-      "layout text, loyalty text, mana_cost text NOT NULL,"
+      "layout text, loyalty text, mana_cost text NOT NULL, power text,"
       "PRIMARY KEY (card_id, face_id))");
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_card_artifact_types ("
@@ -272,6 +275,13 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    auto mpMainIds = fnStoreCatalog(aParsed.mpMainTypes, TMainType{});
    std::println("[TIME] Store MainTypes: {:.3f} s", ElapsedSeconds(aMainStart));
    std::println("[STORE] MainTypes written: {} rows", mpMainIds.size());
+   // Scryfall has no separate rarity catalog; use its documented domain.
+   std::map<std::string, int> mpRaritySource{
+      {"common", 0}, {"uncommon", 0}, {"rare", 0},
+      {"mythic", 0}, {"special", 0}, {"bonus", 0}
+      };
+   auto mpRarityIds = fnStoreCatalog(mpRaritySource, TRarity{});
+   std::println("[STORE] Rarity domain written: {} values", mpRarityIds.size());
    aCatalogTransaction.CommitAndClose();
    std::println("[STORE] Catalogs committed: {} land types, {} creature types",
       mpLandIds.size(), mpCreatureIds.size());
@@ -423,10 +433,11 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       if (aCard.optVariationOf) { optVariation = mpCardIds.at(*aCard.optVariationOf); }
       staged_card_types::type_list tplStaged{
          0, aCard.strUuid, aCard.optOracleId, aCard.strName,
-         aCard.strSetCode, aCard.aReleasedAt, optVariation };
+         aCard.strSetCode, aCard.aReleasedAt, optVariation, aCard.strRarity };
       TScryfallCard::data_ty tplCard = adecc::Transform<staged_card_types, card_types>(
          std::move(tplStaged),
-         adecc::BindMapping<4, staged_card_types, card_types>(mpSetIds));
+         adecc::BindMapping<4, staged_card_types, card_types>(mpSetIds),
+         adecc::BindMapping<7, staged_card_types, card_types>(mpRarityIds));
       std::array<TScryfallCard::data_ty, 1> arrInput{{ std::move(tplCard) }};
       for (auto const& tplInserted : aCardOutput(arrInput)) {
          int const iId = std::get<0>(tplInserted);
@@ -436,7 +447,7 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
          for (StagedFace const& aFace : aCard.vecFaces) {
             std::array<card_face_types::type_list, 1> arrFace{{
                card_face_types::type_list{iId, aFace.iFaceId, aFace.strName, aFace.strTypeLine,
-                  aFace.optLayout, aFace.optLoyalty, aFace.strManaCost}
+                  aFace.optLayout, aFace.optLoyalty, aFace.strManaCost, aFace.optPower}
                }};
             aFaceSink = arrFace;
             std::vector<card_type_link_types::type_list> vecLandLinks, vecCreatureLinks;
@@ -487,8 +498,8 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_released ON deckkernel_test.scryfall_cards(released_at DESC)");
    aDatabase.ExecuteCommand(
       "CREATE VIEW deckkernel_test.scryfall_cards_view AS "
-      "SELECT c.*, f.face_id, f.is_main, f.name AS face_name, f.type_line, "
-      "f.layout, f.loyalty, f.mana_cost, "
+      "SELECT c.*, r.code AS rarity, f.face_id, f.is_main, f.name AS face_name, f.type_line, "
+      "f.layout, f.loyalty, f.mana_cost, f.power, "
       "COALESCE((SELECT array_agg(t.code ORDER BY x.position) "
       "FROM deckkernel_test.scryfall_card_supertypes x "
       "JOIN deckkernel_test.supertypes t ON t.id=x.supertype_id "
@@ -510,7 +521,8 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       "JOIN deckkernel_test.creatures_types t ON t.id=x.creature_type_id "
       "WHERE x.card_id=c.id AND x.face_id=f.face_id), ARRAY[]::text[]) AS creature_types "
       "FROM deckkernel_test.scryfall_cards c "
-      "JOIN deckkernel_test.scryfall_card_faces f ON f.card_id=c.id");
+      "JOIN deckkernel_test.scryfall_card_faces f ON f.card_id=c.id "
+      "JOIN deckkernel_test.rarities r ON r.id=c.rarity_id");
    aCardTransaction.CommitAndClose();
    std::println("[STORE] Card subtype links committed: land={}, creature={}",
       uLandLinks, uCreatureLinks);
