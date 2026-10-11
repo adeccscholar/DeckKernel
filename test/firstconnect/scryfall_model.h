@@ -28,6 +28,8 @@ domain names through selectors and manipulators.
 
 namespace deckkernel::test {
 
+using staged_set_types = adecc::defined_type_list<int, std::string, std::string, std::string, std::optional<std::string>>;
+
 using set_types = adecc::defined_type_list<int, std::string, std::string, std::string, std::optional<int>>;
 struct SetMetaData {
    static constexpr std::string_view svTableName = "deckkernel_test.scryfall_sets";
@@ -63,7 +65,7 @@ struct CreatureTypeMetaData {
    static constexpr std::string_view svTableName = "deckkernel_test.creatures_types";
    static constexpr std::array<std::string_view, 2> arrAttributeNames{ "id", "code" };
    static constexpr std::array<std::size_t, 1> arrKeyIndices{ 0 };
-   static constexpr std::optional<std::size_t> optIdentityIndex{};
+   static constexpr std::optional<std::size_t> optIdentityIndex{0};
    static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
    };
 
