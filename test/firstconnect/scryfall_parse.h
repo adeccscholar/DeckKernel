@@ -22,11 +22,16 @@ struct StagedSet {
    std::string strUuid, strCode, strName;
    std::optional<std::string> optParentCode;
    };
+struct StagedFace {
+   int iFaceId{};
+   std::string strName, strTypeLine;
+   std::vector<std::string> vecLandTypes, vecCreatureTypes;
+   };
 struct StagedCard {
    std::string strUuid, strName, strSetCode;
    std::optional<std::string> optOracleId, optVariationOf;
    adecc::date_ty aReleasedAt;
-   std::vector<std::string> vecLandTypes, vecCreatureTypes;
+   std::vector<StagedFace> vecFaces;
    };
 struct ParsedBulkData {
    std::map<std::string, StagedSet> mpSets;
