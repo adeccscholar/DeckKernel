@@ -88,27 +88,17 @@ before the database boundary: one set tuple is deduplicated by set_id and every 
 keeps set_id as the foreign-key value.
 */
 void AppendCard(json_ty const& aCard, ParsedBulkData& aParsed) {
-   std::string const strId         = aCard.at("id").get<std::string>();
-   std::string const strSetId      = aCard.at("set_id").get<std::string>();
-   std::string const strSetCode    = aCard.at("set").get<std::string>();
-   std::string const strSetName    = aCard.at("set_name").get<std::string>();
-   std::string const strName       = aCard.at("name").get<std::string>();
-   std::string const strReleasedAt = aCard.at("released_at").get<std::string>();
-
-   std::optional<std::string> optOracleId;
-
-   if (auto const it = aCard.find("oracle_id"); it != aCard.end() && !it->is_null()) {
-      optOracleId = it->get<std::string>();
-      }
-
-   aParsed.mpSets.try_emplace(strSetId, TScryfallSet::data_ty { strSetId, strSetCode, strSetName } );
-
-   // Both nullable IDs are assigned at the storage boundary by the variadic transformation.
-   // The staging values are resolved into IDs after both catalogs have been imported.
-   aParsed.vecCardSubtypes.emplace_back(FindSubtype(aCard.value("type_line", ""), aParsed.mpLandTypes),
-      FindSubtype(aCard.value("type_line", ""), aParsed.mpCreatureTypes));
-   aParsed.vecCards.emplace_back(strId, std::move(optOracleId), strName, strSetId,
-      adecc::ConvertTo<adecc::date_ty>(strReleasedAt), std::nullopt, std::nullopt);
+   StagedCard aRow{
+      .strUuid = aCard.at("id").get<std::string>(),
+      .strName = aCard.at("name").get<std::string>(),
+      .strSetCode = aCard.at("set").get<std::string>(),
+      .optOracleId = aCard.value("oracle_id", std::optional<std::string>{}),
+      .optVariationOf = aCard.value("variation_of", std::optional<std::string>{}),
+      .aReleasedAt = adecc::ConvertTo<adecc::date_ty>(aCard.at("released_at").get<std::string>()),
+      .optLandType = FindSubtype(aCard.value("type_line", ""), aParsed.mpLandTypes),
+      .optCreatureType = FindSubtype(aCard.value("type_line", ""), aParsed.mpCreatureTypes)
+      };
+   aParsed.vecCards.emplace_back(std::move(aRow));
    }
 
 
@@ -231,6 +221,18 @@ ParsedBulkData ParseProcess(LoadedBulkData const& aLoaded) {
    ParsedBulkData aParsed;
    ParseCatalog(aLoaded.strLandCatalog, aParsed.mpLandTypes);
    ParseCatalog(aLoaded.strCreatureCatalog, aParsed.mpCreatureTypes);
+   json_ty const aSets = json_ty::parse(aLoaded.strSetsCatalog);
+   for (json_ty const& aSet : aSets.at("data")) {
+      StagedSet aRow{
+         .strUuid = aSet.at("id").get<std::string>(),
+         .strCode = aSet.at("code").get<std::string>(),
+         .strName = aSet.at("name").get<std::string>(),
+         .optParentCode = aSet.value("parent_set_code", std::optional<std::string>{})
+         };
+      if (!aParsed.mpSets.emplace(aRow.strCode, std::move(aRow)).second) {
+         throw std::runtime_error("duplicate set code in Scryfall catalog");
+         }
+      }
 
    if (aLoaded.aDescriptor.boGzipJsonLines) {
       ReadGzipJsonLines(aLoaded.aPath, aParsed);
