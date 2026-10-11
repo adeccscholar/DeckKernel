@@ -72,6 +72,23 @@ struct CreatureTypeMetaData {
 using TLandType = adecc::db::PersistentSystemData<catalog_types, LandTypeMetaData>;
 using TCreatureType = adecc::db::PersistentSystemData<catalog_types, CreatureTypeMetaData>;
 
+struct SuperTypeMetaData {
+   static constexpr std::string_view svTableName = "deckkernel_test.supertypes";
+   static constexpr std::array<std::string_view, 2> arrAttributeNames{"id", "code"};
+   static constexpr std::array<std::size_t, 1> arrKeyIndices{0};
+   static constexpr std::optional<std::size_t> optIdentityIndex{0};
+   static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
+   };
+struct MainTypeMetaData {
+   static constexpr std::string_view svTableName = "deckkernel_test.card_types";
+   static constexpr std::array<std::string_view, 2> arrAttributeNames{"id", "code"};
+   static constexpr std::array<std::size_t, 1> arrKeyIndices{0};
+   static constexpr std::optional<std::size_t> optIdentityIndex{0};
+   static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
+   };
+using TSuperType = adecc::db::PersistentSystemData<catalog_types, SuperTypeMetaData>;
+using TMainType = adecc::db::PersistentSystemData<catalog_types, MainTypeMetaData>;
+
 using staged_card_types = adecc::defined_type_list<int, std::string,
    std::optional<std::string>, std::string, std::string, adecc::date_ty, std::optional<int>>;
 using card_types = adecc::defined_type_list<int, std::string,
@@ -90,6 +107,25 @@ struct CardFaceMetaData {
    static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
    };
 using TCardFace = adecc::db::PersistentSystemData<card_face_types, CardFaceMetaData>;
+
+struct CardSuperTypeMetaData {
+   static constexpr std::string_view svTableName = "deckkernel_test.scryfall_card_supertypes";
+   static constexpr std::array<std::string_view, 4> arrAttributeNames{
+      "card_id", "face_id", "supertype_id", "position"};
+   static constexpr std::array<std::size_t, 3> arrKeyIndices{0, 1, 3};
+   static constexpr std::optional<std::size_t> optIdentityIndex{};
+   static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
+   };
+struct CardMainTypeMetaData {
+   static constexpr std::string_view svTableName = "deckkernel_test.scryfall_card_main_types";
+   static constexpr std::array<std::string_view, 4> arrAttributeNames{
+      "card_id", "face_id", "main_type_id", "position"};
+   static constexpr std::array<std::size_t, 3> arrKeyIndices{0, 1, 3};
+   static constexpr std::optional<std::size_t> optIdentityIndex{};
+   static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
+   };
+using TCardSuperType = adecc::db::PersistentSystemData<card_type_link_types, CardSuperTypeMetaData>;
+using TCardMainType = adecc::db::PersistentSystemData<card_type_link_types, CardMainTypeMetaData>;
 
 struct CardLandTypeMetaData {
    static constexpr std::string_view svTableName = "deckkernel_test.scryfall_card_land_types";
