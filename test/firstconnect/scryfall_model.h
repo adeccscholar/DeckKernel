@@ -28,65 +28,26 @@ domain names through selectors and manipulators.
 
 namespace deckkernel::test {
 
-using set_types = adecc::defined_type_list<std::string, std::string, std::string>;
-
+using set_types = adecc::defined_type_list<int, std::string, std::string, std::string, std::optional<int>>;
 struct SetMetaData {
    static constexpr std::string_view svTableName = "deckkernel_test.scryfall_sets";
-
-   static constexpr std::array<std::string_view, 3> arrAttributeNames {
-      "id", "code", "name"
-      };
-
-   static constexpr std::array<std::size_t, 1> arrKeyIndices { 0 };
-   static constexpr std::optional<std::size_t> optIdentityIndex {};
-   static constexpr std::array<std::size_t, 0> arrReadOnlyIndices {};
+   static constexpr std::array<std::string_view, 5> arrAttributeNames{
+      "id", "scryfall_id", "code", "name", "parent_set_id" };
+   static constexpr std::array<std::size_t, 1> arrKeyIndices{0};
+   static constexpr std::optional<std::size_t> optIdentityIndex{};
+   static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
    };
-
-/**
-\brief Persistent projection of one Scryfall set.
-\details
-The base class owns tuple/persistence mechanics. This concrete class names the tuple
-positions with domain selectors and manipulators as described in Rethinking C++
-(C++ neu denken). Selectors are const read access; same-named manipulators delegate
-validated/converting writes to SystemData::Set.
-*/
-class TScryfallSet final: public adecc::db::PersistentSystemData<set_types, SetMetaData> {
+class TScryfallSet final : public adecc::db::PersistentSystemData<set_types, SetMetaData> {
 public:
    using base_ty = adecc::db::PersistentSystemData<set_types, SetMetaData>;
    using base_ty::base_ty;
    using base_ty::operator=;
-
-   element_ty<0> const& Id() const {
-      return Get<0>();
-      }
-
-   element_ty<1> const& Code() const {
-      return Get<1>();
-      }
-
-   element_ty<2> const& Name() const {
-      return Get<2>();
-      }
-
-   template <typename value_ty>
-      requires adecc::HasConvertTo<value_ty, element_ty<0>>
-   void Id(value_ty&& aValue) {
-      Set<0>(std::forward<value_ty>(aValue));
-      }
-
-   template <typename value_ty>
-      requires adecc::HasConvertTo<value_ty, element_ty<1>>
-   void Code(value_ty&& aValue) {
-      Set<1>(std::forward<value_ty>(aValue));
-      }
-
-   template <typename value_ty>
-      requires adecc::HasConvertTo<value_ty, element_ty<2>>
-   void Name(value_ty&& aValue) {
-      Set<2>(std::forward<value_ty>(aValue));
-      }
+   element_ty<0> const& Id() const { return Get<0>(); }
+   element_ty<1> const& ScryfallId() const { return Get<1>(); }
+   element_ty<2> const& Code() const { return Get<2>(); }
+   element_ty<3> const& Name() const { return Get<3>(); }
+   element_ty<4> const& ParentSetId() const { return Get<4>(); }
    };
-
 
 using catalog_types = adecc::defined_type_list<int, std::string>;
 
@@ -109,88 +70,33 @@ struct CreatureTypeMetaData {
 using TLandType = adecc::db::PersistentSystemData<catalog_types, LandTypeMetaData>;
 using TCreatureType = adecc::db::PersistentSystemData<catalog_types, CreatureTypeMetaData>;
 
-using staged_card_types = adecc::defined_type_list<std::string, std::optional<std::string>, std::string,
-   std::string, adecc::date_ty, std::optional<std::string>, std::optional<std::string>>;
-
-using card_types = adecc::defined_type_list<std::string, std::optional<std::string>, std::string, std::string,
-   adecc::date_ty, std::optional<int>, std::optional<int>>;
-
+using staged_card_types = adecc::defined_type_list<int, std::string, std::optional<std::string>,
+   std::string, int, adecc::date_ty, std::optional<std::string>,
+   std::optional<std::string>, std::optional<int>>;
+using card_types = adecc::defined_type_list<int, std::string, std::optional<std::string>,
+   std::string, int, adecc::date_ty, std::optional<int>, std::optional<int>, std::optional<int>>;
 struct CardMetaData {
    static constexpr std::string_view svTableName = "deckkernel_test.scryfall_cards";
-
-   static constexpr std::array<std::string_view, 7> arrAttributeNames {
-      "id", "oracle_id", "name", "set_id", "released_at", "land_type_id", "creature_type_id"
-      };
-
-   static constexpr std::array<std::size_t, 1> arrKeyIndices { 0 };
-   static constexpr std::optional<std::size_t> optIdentityIndex {};
-   static constexpr std::array<std::size_t, 0> arrReadOnlyIndices {};
+   static constexpr std::array<std::string_view, 9> arrAttributeNames{
+      "id", "scryfall_id", "oracle_id", "name", "set_id", "released_at",
+      "land_type_id", "creature_type_id", "variation_of_id" };
+   static constexpr std::array<std::size_t, 1> arrKeyIndices{0};
+   static constexpr std::optional<std::size_t> optIdentityIndex{};
+   static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
    };
-
-/**
-\brief Persistent projection of one Scryfall card printing.
-\details
-The class deliberately stores only the subset required by the first functional test.
-Named selectors and manipulators hide tuple indices from application code while
-PersistentSystemData keeps the generic relational metadata and SQL builders.
-*/
 class TScryfallCard final : public adecc::db::PersistentSystemData<card_types, CardMetaData> {
 public:
    using base_ty = adecc::db::PersistentSystemData<card_types, CardMetaData>;
    using base_ty::base_ty;
    using base_ty::operator=;
-
-   element_ty<0> const& Id() const {
-      return Get<0>();
-      }
-
-   element_ty<1> const& OracleId() const {
-      return Get<1>();
-      }
-
-   element_ty<2> const& Name() const {
-      return Get<2>();
-      }
-
-   element_ty<3> const& SetId() const {
-      return Get<3>();
-      }
-
-   element_ty<4> const& ReleasedAt() const {
-      return Get<4>();
-      }
-   element_ty<5> const& LandTypeId() const { return Get<5>(); }
-   element_ty<6> const& CreatureTypeId() const { return Get<6>(); }
-
-   template <typename value_ty>
-      requires adecc::HasConvertTo<value_ty, element_ty<0>>
-   void Id(value_ty&& aValue) {
-      Set<0>(std::forward<value_ty>(aValue));
-      }
-
-   template <typename value_ty>
-      requires adecc::HasConvertTo<value_ty, element_ty<1>>
-   void OracleId(value_ty&& aValue) {
-      Set<1>(std::forward<value_ty>(aValue));
-      }
-
-   template <typename value_ty>
-      requires adecc::HasConvertTo<value_ty, element_ty<2>>
-   void Name(value_ty&& aValue) {
-      Set<2>(std::forward<value_ty>(aValue));
-      }
-
-   template <typename value_ty>
-      requires adecc::HasConvertTo<value_ty, element_ty<3>>
-   void SetId(value_ty&& aValue) {
-      Set<3>(std::forward<value_ty>(aValue));
-      }
-
-   template <typename value_ty>
-      requires adecc::HasConvertTo<value_ty, element_ty<4>>
-   void ReleasedAt(value_ty&& aValue) {
-      Set<4>(std::forward<value_ty>(aValue));
-      }
+   element_ty<0> const& Id() const { return Get<0>(); }
+   element_ty<1> const& ScryfallId() const { return Get<1>(); }
+   element_ty<2> const& OracleId() const { return Get<2>(); }
+   element_ty<3> const& Name() const { return Get<3>(); }
+   element_ty<4> const& SetId() const { return Get<4>(); }
+   element_ty<5> const& ReleasedAt() const { return Get<5>(); }
+   element_ty<6> const& LandTypeId() const { return Get<6>(); }
+   element_ty<7> const& CreatureTypeId() const { return Get<7>(); }
+   element_ty<8> const& VariationOfId() const { return Get<8>(); }
    };
-
 } // namespace deckkernel::test
