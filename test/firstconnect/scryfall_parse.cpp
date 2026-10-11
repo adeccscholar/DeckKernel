@@ -38,51 +38,55 @@ namespace {
 
 using json_ty = nlohmann::json;
 
-// The catalog gives codes, not IDs. Assign stable IDs in catalog order for this fresh-load test.
 void ParseCatalog(std::string const& strJson, std::map<std::string, int>& mpCodes) {
    json_ty const aCatalog = json_ty::parse(strJson);
    for (json_ty const& aCode : aCatalog.at("data")) {
-      std::string const strCode = aCode.get<std::string>();
-      mpCodes.try_emplace(strCode, static_cast<int>(mpCodes.size() + 1));
+      mpCodes.try_emplace(aCode.get<std::string>(), 0);
       }
    }
 
-// Search only in the subtype section of type_line. A space-delimited search
-// avoids mistaking a type prefix for a subtype and supports multiword names.
-// Match whole subtype tokens, independent of punctuation around the separator.
-// Scryfall type lines may contain ASCII '-' or Unicode dash spellings.
-std::optional<std::string> FindSubtype(std::string const& strTypeLine,
-   std::map<std::string, int> const& mpTypes) {
-   if (strTypeLine.empty()) { return std::nullopt; }
-   std::string_view svLine{strTypeLine};
-   std::size_t uSeparator = svLine.find("—");
-   std::size_t uWidth = std::string_view("—").size();
-   if (uSeparator == std::string_view::npos) {
-      uSeparator = svLine.find("–");
-      uWidth = std::string_view("–").size();
-      }
-   if (uSeparator == std::string_view::npos) {
-      uSeparator = svLine.find(" - ");
-      uWidth = 3;
-      }
-   if (uSeparator == std::string_view::npos) { return std::nullopt; }
-   std::string_view const svSubtypes = svLine.substr(uSeparator + uWidth);
-   auto const fnSpace = [](unsigned char ch) { return std::isspace(ch) != 0; };
-   std::optional<std::string> optFound;
-   for (auto const& [strCode, iUnused] : mpTypes) {
-      std::size_t uOffset = svSubtypes.find(strCode);
-      while (uOffset != std::string_view::npos) {
-         std::size_t const uEnd = uOffset + strCode.size();
-         if ((uOffset == 0 || fnSpace(static_cast<unsigned char>(svSubtypes[uOffset - 1]))) &&
-             (uEnd == svSubtypes.size() ||
-              fnSpace(static_cast<unsigned char>(svSubtypes[uEnd])))) {
-            if (!optFound || strCode.size() > optFound->size()) { optFound = strCode; }
-            break;
+// Multiword subtypes are matched against the catalog, preserving source order.
+std::vector<std::string> FindSubtypes(std::string const& strTypeLine,
+   std::map<std::string, int> const& mpTypes, std::string_view const svMainType) {
+   std::vector<std::pair<std::size_t, std::string>> vecMatches;
+   std::size_t uStart = 0;
+   while (uStart < strTypeLine.size()) {
+      std::size_t const uEnd = strTypeLine.find(" // ", uStart);
+      std::string_view const svFace{strTypeLine.data() + uStart,
+         (uEnd == std::string::npos ? strTypeLine.size() : uEnd) - uStart};
+      std::size_t const uDash = svFace.find("—");
+      if (uDash != std::string_view::npos) {
+         std::string_view const svMain = svFace.substr(0, uDash);
+         auto const fnWord = [](std::string_view haystack, std::string_view needle) {
+            std::size_t const pos = haystack.find(needle);
+            return pos != std::string_view::npos &&
+               (pos == 0 || haystack[pos - 1] == ' ') &&
+               (pos + needle.size() == haystack.size() || haystack[pos + needle.size()] == ' ');
+            };
+         if (fnWord(svMain, svMainType)) {
+            std::string_view const svSubtypes = svFace.substr(uDash + std::string_view("—").size());
+            for (auto const& [strCode, iUnused] : mpTypes) {
+               std::size_t uPos = svSubtypes.find(strCode);
+               while (uPos != std::string_view::npos) {
+                  std::size_t const uAfter = uPos + strCode.size();
+                  if ((uPos == 0 || svSubtypes[uPos - 1] == ' ') &&
+                      (uAfter == svSubtypes.size() || svSubtypes[uAfter] == ' ')) {
+                     vecMatches.emplace_back(uStart + uDash + uPos, strCode);
+                     break;
+                     }
+                  uPos = svSubtypes.find(strCode, uPos + 1);
+                  }
+               }
             }
-         uOffset = svSubtypes.find(strCode, uOffset + 1);
          }
+      if (uEnd == std::string::npos) { break; }
+      uStart = uEnd + 4;
       }
-   return optFound;
+   std::ranges::sort(vecMatches, {}, &std::pair<std::size_t, std::string>::first);
+   std::vector<std::string> vecTypes;
+   vecTypes.reserve(vecMatches.size());
+   for (auto const& [uPos, strCode] : vecMatches) { vecTypes.emplace_back(strCode); }
+   return vecTypes;
    }
 
 std::optional<std::string> OptionalText(json_ty const& aObject, char const* const szField) {
@@ -126,8 +130,8 @@ void AppendCard(json_ty const& aCard, ParsedBulkData& aParsed) {
       .optOracleId = OptionalText(aCard, "oracle_id"),
       .optVariationOf = OptionalText(aCard, "variation_of"),
       .aReleasedAt = adecc::ConvertTo<adecc::date_ty>(aCard.at("released_at").get<std::string>()),
-      .optLandType = FindSubtype(strTypeLine, aParsed.mpLandTypes),
-      .optCreatureType = FindSubtype(strTypeLine, aParsed.mpCreatureTypes)
+      .vecLandTypes = FindSubtypes(strTypeLine, aParsed.mpLandTypes, "Land"),
+      .vecCreatureTypes = FindSubtypes(strTypeLine, aParsed.mpCreatureTypes, "Creature")
       };
    aParsed.vecCards.emplace_back(std::move(aRow));
    }
@@ -274,50 +278,15 @@ ParsedBulkData ParseProcess(LoadedBulkData const& aLoaded) {
 
    std::size_t uLandMatches = 0, uCreatureMatches = 0;
    for (StagedCard const& aCard : aParsed.vecCards) {
-      uLandMatches += aCard.optLandType.has_value() ? 1U : 0U;
-      uCreatureMatches += aCard.optCreatureType.has_value() ? 1U : 0U;
+      uLandMatches += aCard.vecLandTypes.size();
+      uCreatureMatches += aCard.vecCreatureTypes.size();
       }
    std::println("[PARSE] Subtype matches: land={}, creature={}, cards={}",
       uLandMatches, uCreatureMatches, aParsed.vecCards.size());
    if (uLandMatches == 0 || uCreatureMatches == 0) {
-      std::println(std::cerr, "[DIAG] Land catalog size={}, creature catalog size={}",
-         aParsed.mpLandTypes.size(), aParsed.mpCreatureTypes.size());
-      for (auto const& [strCode, iId] : aParsed.mpLandTypes | std::views::take(4)) {
-         std::println(std::cerr, "[DIAG] Land catalog code='{}'", strCode);
-         }
-      for (auto const& [strCode, iId] : aParsed.mpCreatureTypes | std::views::take(4)) {
-         std::println(std::cerr, "[DIAG] Creature catalog code='{}'", strCode);
-         }
-      std::println(std::cerr, "[DIAG] Test 'Basic Land — Forest' -> {}",
-         FindSubtype("Basic Land — Forest", aParsed.mpLandTypes).value_or("<no match>"));
-      std::println(std::cerr, "[DIAG] Test 'Creature — Human' -> {}",
-         FindSubtype("Creature — Human", aParsed.mpCreatureTypes).value_or("<no match>"));
-      std::size_t uShown = 0;
-      auto fnSample = [&](json_ty const& aCard) {
-         if (uShown < 6) {
-            std::println(std::cerr, "[DIAG] Card uuid='{}' type_line='{}'",
-               aCard.value("id", ""), aCard.value("type_line", ""));
-            ++uShown;
-            }
-         };
-      // Parse a few original records, not reconstructed staging tuples.
-      std::ifstream isSamples{aLoaded.aPath, std::ios::binary};
-      if (isSamples && !aLoaded.aDescriptor.boGzipJsonLines) {
-         std::string strLine;
-         while (uShown < 6 && std::getline(isSamples, strLine)) {
-            try {
-               json_ty const aLine = json_ty::parse(strLine);
-               if (aLine.is_object()) { fnSample(aLine); }
-               }
-            catch (json_ty::exception const&) { break; }
-            }
-         }
-      }
-   if (uLandMatches == 0 || uCreatureMatches == 0) {
       throw std::runtime_error(std::format(
-         "Scryfall subtype parsing produced no {} matches (land={}, creature={}); "
-         "inspect type_line and catalog data before persisting",
-         uLandMatches == 0 ? "land" : "creature", uLandMatches, uCreatureMatches));
+         "Subtype parsing found land={} creature={} across {} cards; check catalog and type_line",
+         uLandMatches, uCreatureMatches, aParsed.vecCards.size()));
       }
    std::println(
       "Parsed {} cards from {} sets.",
