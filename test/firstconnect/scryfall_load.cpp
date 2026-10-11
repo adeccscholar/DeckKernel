@@ -20,6 +20,9 @@ libcurl or C-runtime ABI requires them.
 #include <array>
 #include <cctype>
 #include <chrono>
+#include <deque>
+#include <functional>
+#include <thread>
 #include <ctime>
 #include <filesystem>
 #include <format>
@@ -205,7 +208,7 @@ std::string LoadAllSets() {
    aAll["data"] = json_ty::array();
    std::string strPage = "https://api.scryfall.com/sets";
    while (!strPage.empty()) {
-      json_ty const aPage = json_ty::parse(HttpGet(strPage));
+      json_ty const aPage = json_ty::parse(QueuedGet(strPage));
       for (json_ty const& aSet : aPage.at("data")) { aAll["data"].push_back(aSet); }
       bool const boHasMore = aPage.value("has_more", false);
       strPage = boHasMore ? aPage.at("next_page").get<std::string>() : std::string{};
@@ -246,8 +249,38 @@ void DownloadFile(std::string const& strUrl, std::filesystem::path const& aTarge
    }
 
 
+// Single consumer: all queued API reads use a shared minimum start interval.
+class RequestQueue final {
+public:
+   void Add(std::function<void()> fnRequest) {
+      m_queue.emplace_back(std::move(fnRequest));
+      }
+   void Run() {
+      while (!m_queue.empty()) {
+         auto fn = std::move(m_queue.front());
+         m_queue.pop_front();
+         WaitForSlot();
+         fn();
+         }
+      }
+   static void WaitForSlot() {
+      using namespace std::chrono;
+      static auto aNext = steady_clock::now();
+      auto const aNow = steady_clock::now();
+      if (aNow < aNext) { std::this_thread::sleep_until(aNext); }
+      aNext = steady_clock::now() + milliseconds{125};
+      }
+private:
+   std::deque<std::function<void()>> m_queue;
+   };
+
+std::string QueuedGet(std::string const& strUrl) {
+   RequestQueue::WaitForSlot();
+   return HttpGet(strUrl);
+   }
+
 BulkDescriptor ResolveBulkData() {
-   std::string const strMetadata = HttpGet("https://api.scryfall.com/bulk-data");
+   std::string const strMetadata = QueuedGet("https://api.scryfall.com/bulk-data");
    json_ty const aRoot = json_ty::parse(strMetadata);
 
    for (json_ty const& aEntry : aRoot.at("data")) {
@@ -345,17 +378,28 @@ LoadedBulkData LoadProcess() {
 
    if (boDownload) {
       std::println("Downloading bulk data to: {}", aBulkPath.string());
+      RequestQueue::WaitForSlot();
       DownloadFile(aBulk.strDownloadUri, aBulkPath);
       }
    else {
       std::println("Using today's existing bulk data: {}", aBulkPath.string());
       }
 
-   // Catalogs are small; fetch once per import before the bulk parser runs.
-   std::string strLandCatalog = HttpGet("https://api.scryfall.com/catalog/land-types");
-   std::string strCreatureCatalog = HttpGet("https://api.scryfall.com/catalog/creature-types");
-   std::string strSuperCatalog = HttpGet("https://api.scryfall.com/catalog/supertypes");
-   std::string strMainTypeCatalog = HttpGet("https://api.scryfall.com/catalog/card-types");
+   std::string strLandCatalog, strCreatureCatalog, strSuperCatalog;
+   std::string strMainTypeCatalog, strArtifactCatalog;
+   RequestQueue aQueue;
+   auto fnCatalog = [&](std::string_view svPath, std::string& strTarget) {
+      aQueue.Add([&, strUrl = std::string{"https://api.scryfall.com/catalog/"} +
+         std::string{svPath}, pTarget = &strTarget] {
+         *pTarget = HttpGet(strUrl);
+         });
+      };
+   fnCatalog("land-types", strLandCatalog);
+   fnCatalog("creature-types", strCreatureCatalog);
+   fnCatalog("supertypes", strSuperCatalog);
+   fnCatalog("card-types", strMainTypeCatalog);
+   fnCatalog("artifact-types", strArtifactCatalog);
+   aQueue.Run();
    return LoadedBulkData {
       .aDescriptor = std::move(aBulk),
       .aPath = aBulkPath,
@@ -364,7 +408,8 @@ LoadedBulkData LoadProcess() {
       .strLandCatalog = std::move(strLandCatalog),
       .strCreatureCatalog = std::move(strCreatureCatalog),
       .strSuperCatalog = std::move(strSuperCatalog),
-      .strMainTypeCatalog = std::move(strMainTypeCatalog)
+      .strMainTypeCatalog = std::move(strMainTypeCatalog),
+      .strArtifactCatalog = std::move(strArtifactCatalog)
       };
    }
 
