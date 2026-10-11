@@ -18,12 +18,20 @@
 
 namespace deckkernel::test {
 
+struct StagedSet {
+   std::string strUuid, strCode, strName;
+   std::optional<std::string> optParentCode;
+   };
+struct StagedCard {
+   std::string strUuid, strName, strSetCode;
+   std::optional<std::string> optOracleId, optVariationOf;
+   adecc::date_ty aReleasedAt;
+   std::optional<std::string> optLandType, optCreatureType;
+   };
 struct ParsedBulkData {
-   std::map<std::string, TScryfallSet::data_ty> mpSets;
-   std::vector<TScryfallCard::data_ty> vecCards;
-   std::map<std::string, int> mpLandTypes;
-   std::map<std::string, int> mpCreatureTypes;
-   std::vector<std::tuple<std::optional<std::string>, std::optional<std::string>>> vecCardSubtypes;
+   std::map<std::string, StagedSet> mpSets;
+   std::vector<StagedCard> vecCards;
+   std::map<std::string, int> mpLandTypes, mpCreatureTypes;
    };
 
 ParsedBulkData ParseProcess(LoadedBulkData const& aLoaded);
