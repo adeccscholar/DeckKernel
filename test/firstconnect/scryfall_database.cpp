@@ -111,11 +111,9 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    aDatabase.ExecuteCommand("DROP INDEX IF EXISTS deckkernel_test.ix_scryfall_cards_released" );
    // Fresh tables: populate catalog relations before card foreign keys.
    auto aLandSink = aDatabase.template MakeOutputSink<int, std::string>(
-      "INSERT INTO deckkernel_test.land_types(id, code) VALUES ($1, $2)",
-      adecc::db_output_parameters{});
+      TLandType::CreateInsertSql(), TLandType::CreateInsertOutputParameters());
    auto aCreatureSink = aDatabase.template MakeOutputSink<int, std::string>(
-      "INSERT INTO deckkernel_test.creatures_types(id, code) VALUES ($1, $2)",
-      adecc::db_output_parameters{});
+      TCreatureType::CreateInsertSql(), TCreatureType::CreateInsertOutputParameters());
    std::vector<std::tuple<int, std::string>> vecLand, vecCreature;
    for (auto const& [strCode, iId] : aParsed.mpLandTypes) { vecLand.emplace_back(iId, strCode); }
    for (auto const& [strCode, iId] : aParsed.mpCreatureTypes) { vecCreature.emplace_back(iId, strCode); }
