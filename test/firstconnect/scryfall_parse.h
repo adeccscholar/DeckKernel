@@ -25,12 +25,12 @@ struct StagedSet {
 struct StagedFace {
    int iFaceId{};
    std::string strName, strTypeLine, strManaCost;
-   std::optional<std::string> optLayout, optLoyalty;
+   std::optional<std::string> optLayout, optLoyalty, optPower;
    std::vector<std::string> vecLandTypes, vecCreatureTypes;
    std::vector<std::string> vecSuperTypes, vecMainTypes, vecArtifactTypes;
    };
 struct StagedCard {
-   std::string strUuid, strName, strSetCode;
+   std::string strUuid, strName, strSetCode, strRarity;
    std::optional<std::string> optOracleId, optVariationOf;
    adecc::date_ty aReleasedAt;
    std::vector<StagedFace> vecFaces;
