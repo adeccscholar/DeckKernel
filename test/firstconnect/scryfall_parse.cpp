@@ -156,12 +156,18 @@ void AppendCard(json_ty const& aCard, ParsedBulkData& aParsed) {
       .optVariationOf = OptionalText(aCard, "variation_of"),
       .aReleasedAt = adecc::ConvertTo<adecc::date_ty>(aCard.at("released_at").get<std::string>())
       };
-   auto fnAppendFace = [&](int iFaceId, std::string strName, std::string strLine) {
+   auto fnAppendFace = [&](int iFaceId, json_ty const& aSource,
+      std::string strName, std::string strLine) {
       StagedFace aFace{
          .iFaceId = iFaceId,
          .strName = std::move(strName),
-         .strTypeLine = std::move(strLine)
+         .strTypeLine = std::move(strLine),
+         .strManaCost = aSource.value("mana_cost", std::string{}),
+         .optLayout = OptionalText(aSource, "layout"),
+         .optLoyalty = OptionalText(aSource, "loyalty")
          };
+      // A face normally has no layout field of its own; retain the parent layout if supplied.
+      if (!aFace.optLayout) { aFace.optLayout = OptionalText(aCard, "layout"); }
       aFace.vecLandTypes = FindSubtypes(aFace.strTypeLine, aParsed.mpLandTypes, "Land");
       aFace.vecCreatureTypes = FindSubtypes(aFace.strTypeLine, aParsed.mpCreatureTypes, "Creature");
       aFace.vecArtifactTypes = FindSubtypes(aFace.strTypeLine, aParsed.mpArtifactTypes, "Artifact");
@@ -169,11 +175,11 @@ void AppendCard(json_ty const& aCard, ParsedBulkData& aParsed) {
       aFace.vecMainTypes = FindMainTypes(aFace.strTypeLine, aParsed.mpMainTypes);
       aRow.vecFaces.emplace_back(std::move(aFace));
       };
-   fnAppendFace(0, aRow.strName, aCard.value("type_line", std::string{}));
+   fnAppendFace(0, aCard, aRow.strName, aCard.value("type_line", std::string{}));
    if (auto it = aCard.find("card_faces"); it != aCard.end() && it->is_array()) {
       int iFaceId = 1;
       for (json_ty const& aFace : *it) {
-         fnAppendFace(iFaceId++, aFace.value("name", aRow.strName),
+         fnAppendFace(iFaceId++, aFace, aFace.value("name", aRow.strName),
             aFace.value("type_line", std::string{}));
          }
       }
