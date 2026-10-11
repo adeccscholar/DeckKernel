@@ -13,6 +13,8 @@
 #include <map>
 #include <tuple>
 #include <vector>
+#include <stdexcept>
+#include <algorithm>
 
 #include <cstdint>
 #include <cstdlib>
@@ -62,30 +64,63 @@ adecc::db::postgres::postgres_credentials MakeCredentials() {
 
 void EnsureSchema(postgres_database_ty const& aDatabase) {
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_cards");
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_sets");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.land_types");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.creatures_types");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_sets");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.land_types (id integer PRIMARY KEY, code text NOT NULL UNIQUE)");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.creatures_types (id integer PRIMARY KEY, code text NOT NULL UNIQUE)");
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_sets ("
-      "  id text PRIMARY KEY,"
-      "  code text NOT NULL UNIQUE,"
-      "  name text NOT NULL"
-      "  )"
-      );
-
+      "id integer PRIMARY KEY, scryfall_id text NOT NULL UNIQUE, code text NOT NULL UNIQUE,"
+      "name text NOT NULL, parent_set_id integer REFERENCES deckkernel_test.scryfall_sets(id))");
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_cards ("
-      "  id          text PRIMARY KEY,"
-      "  oracle_id   text NULL,"
-      "  name        text NOT NULL,"
-      "  set_id      text NOT NULL REFERENCES deckkernel_test.scryfall_sets(id),"
-      "  released_at date NOT NULL,"
-      "  land_type_id integer NULL REFERENCES deckkernel_test.land_types(id),"
-      "  creature_type_id integer NULL REFERENCES deckkernel_test.creatures_types(id)"
-      "  )"
-      );
+      "id integer PRIMARY KEY, scryfall_id text NOT NULL UNIQUE, oracle_id text,"
+      "name text NOT NULL, set_id integer NOT NULL REFERENCES deckkernel_test.scryfall_sets(id),"
+      "released_at date NOT NULL,"
+      "land_type_id integer REFERENCES deckkernel_test.land_types(id),"
+      "creature_type_id integer REFERENCES deckkernel_test.creatures_types(id),"
+      "variation_of_id integer REFERENCES deckkernel_test.scryfall_cards(id))");
+   }
+
+/**
+\brief Orders a directed parent relation before insertion.
+\details DFS detects both cycles and unknown parents; returned indices have parent before child.
+\tparam row_ty Input row.
+\tparam key_fn_ty Identity extractor.
+\tparam parent_fn_ty Parent extractor.
+\param vecRows Source rows.
+\param fnKey Identity extractor.
+\param fnParent Optional parent extractor.
+\returns Topologically sorted row indices.
+\throw std::runtime_error For cycles, missing parents or duplicate keys.
+*/
+template<typename row_ty, typename key_fn_ty, typename parent_fn_ty>
+std::vector<std::size_t> TopologicalOrder(std::vector<row_ty> const& vecRows,
+   key_fn_ty fnKey, parent_fn_ty fnParent) {
+   std::map<std::string, std::size_t> mpIndex;
+   for (std::size_t uIndex = 0; uIndex < vecRows.size(); ++uIndex) {
+      if (!mpIndex.emplace(fnKey(vecRows[uIndex]), uIndex).second) {
+         throw std::runtime_error("duplicate source identity in dependency graph");
+         }
+      }
+   std::vector<unsigned char> vecColor(vecRows.size(), 0);
+   std::vector<std::size_t> vecOrder;
+   vecOrder.reserve(vecRows.size());
+   auto fnVisit = [&](auto&& fnSelf, std::size_t const uIndex) -> void {
+      if (vecColor[uIndex] == 1) { throw std::runtime_error("cyclic parent dependency"); }
+      if (vecColor[uIndex] == 2) { return; }
+      vecColor[uIndex] = 1;
+      if (auto const optParent = fnParent(vecRows[uIndex]); optParent) {
+         auto const it = mpIndex.find(*optParent);
+         if (it == mpIndex.end()) { throw std::runtime_error("unknown parent: " + *optParent); }
+         fnSelf(fnSelf, it->second);
+         }
+      vecColor[uIndex] = 2;
+      vecOrder.emplace_back(uIndex);
+      };
+   for (std::size_t uIndex = 0; uIndex < vecRows.size(); ++uIndex) { fnVisit(fnVisit, uIndex); }
+   return vecOrder;
    }
 
 } // namespace
@@ -104,12 +139,8 @@ postgres_database_ty OpenDatabase() {
 
 
 void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed) {
-   EnsureSchema(aDatabase);
-
    auto aTransaction = aDatabase.Transaction();
-   aDatabase.ExecuteCommand("DROP INDEX IF EXISTS deckkernel_test.ix_scryfall_cards_oracle_id" );
-   aDatabase.ExecuteCommand("DROP INDEX IF EXISTS deckkernel_test.ix_scryfall_cards_released" );
-   // Fresh tables: populate catalog relations before card foreign keys.
+   EnsureSchema(aDatabase);
    auto aLandSink = aDatabase.template MakeOutputSink<int, std::string>(
       TLandType::CreateInsertSql(), TLandType::CreateInsertOutputParameters());
    auto aCreatureSink = aDatabase.template MakeOutputSink<int, std::string>(
@@ -120,46 +151,69 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    aLandSink = vecLand;
    aCreatureSink = vecCreature;
 
-   auto aSetSink = aDatabase.template MakeOutputSink<std::string, std::string, std::string>(
-                                     TScryfallSet::CreateInsertSql(), TScryfallSet::CreateInsertOutputParameters()
-                                     );
+   // Set graph: root sets are persisted before any child.
+   std::vector<StagedSet> vecSets;
+   for (auto const& [strCode, aSet] : aParsed.mpSets) { vecSets.push_back(aSet); }
+   auto const vecSetOrder = TopologicalOrder(vecSets,
+      [](StagedSet const& aSet) { return aSet.strCode; },
+      [](StagedSet const& aSet) { return aSet.optParentCode; });
+   std::map<std::string, int> mpSetIds;
+   int iNextSetId = 1;
+   auto aSetSink = aDatabase.template MakeOutputSink<int, std::string, std::string,
+      std::string, std::optional<int>>(
+      TScryfallSet::CreateInsertSql(), TScryfallSet::CreateInsertOutputParameters());
+   for (std::size_t const uIndex : vecSetOrder) {
+      StagedSet const& aSet = vecSets[uIndex];
+      std::optional<int> optParent;
+      if (aSet.optParentCode) { optParent = mpSetIds.at(*aSet.optParentCode); }
+      std::vector<TScryfallSet::data_ty> vecOne{
+         {iNextSetId++, aSet.strUuid, aSet.strCode, aSet.strName, optParent} };
+      aSetSink = vecOne;
+      mpSetIds.emplace(aSet.strCode, std::get<0>(vecOne.front()));
+      }
 
-   auto rngSets = aParsed.mpSets | std::views::values;
-   aSetSink = rngSets;
+   // Re-read the IDs from PostgreSQL; cards no longer reference set UUIDs.
+   mpSetIds.clear();
+   auto rngSetIds = aDatabase.template Execute<int, std::string>(
+      "SELECT id, code FROM deckkernel_test.scryfall_sets");
+   for (auto const& tpl : rngSetIds) { mpSetIds.emplace(std::get<1>(tpl), std::get<0>(tpl)); }
 
-   auto aCardSink = aDatabase.template MakeOutputSink<std::string, std::optional<std::string>, std::string,
-      std::string, adecc::date_ty, std::optional<int>, std::optional<int>>(
-         TScryfallCard::CreateInsertSql(), TScryfallCard::CreateInsertOutputParameters());
-
-   // Bind two independent mappings in one variadic Transform instantiation.
-   using optional_string_ty = std::optional<std::string>;
-   using optional_int_ty = std::optional<int>;
-   std::map<optional_string_ty, optional_int_ty> mpLand, mpCreature;
+   std::map<std::optional<std::string>, std::optional<int>> mpLand, mpCreature;
    mpLand.emplace(std::nullopt, std::nullopt);
    mpCreature.emplace(std::nullopt, std::nullopt);
    for (auto const& [strCode, iId] : aParsed.mpLandTypes) { mpLand.emplace(strCode, iId); }
    for (auto const& [strCode, iId] : aParsed.mpCreatureTypes) { mpCreature.emplace(strCode, iId); }
-   std::vector<TScryfallCard::data_ty> vecTransformed;
-   vecTransformed.reserve(aParsed.vecCards.size());
-   for (std::size_t uIndex = 0; uIndex < aParsed.vecCards.size(); ++uIndex) {
-      auto const& tplCard = aParsed.vecCards[uIndex];
-      auto const& tplSubtypes = aParsed.vecCardSubtypes[uIndex];
-      staged_card_types::type_list tplStaged{
-         std::get<0>(tplCard), std::get<1>(tplCard), std::get<2>(tplCard),
-         std::get<3>(tplCard), std::get<4>(tplCard),
-         std::get<0>(tplSubtypes), std::get<1>(tplSubtypes) };
-      vecTransformed.emplace_back(adecc::Transform<staged_card_types, card_types>(
-         std::move(tplStaged),
-         adecc::BindMapping<5, staged_card_types, card_types>(mpLand),
-         adecc::BindMapping<6, staged_card_types, card_types>(mpCreature)));
-      }
-   aCardSink = vecTransformed;
 
+   // variation_of references a Scryfall printing UUID; convert only after its parent is written.
+   auto const vecCardOrder = TopologicalOrder(aParsed.vecCards,
+      [](StagedCard const& aCard) { return aCard.strUuid; },
+      [](StagedCard const& aCard) { return aCard.optVariationOf; });
+   int iNextCardId = 1;
+   std::map<std::string, int> mpCardIds;
+   auto aCardSink = aDatabase.template MakeOutputSink<int, std::string,
+      std::optional<std::string>, std::string, int, adecc::date_ty,
+      std::optional<int>, std::optional<int>, std::optional<int>>(
+      TScryfallCard::CreateInsertSql(), TScryfallCard::CreateInsertOutputParameters());
+   for (std::size_t const uIndex : vecCardOrder) {
+      StagedCard const& aCard = aParsed.vecCards[uIndex];
+      std::optional<int> optVariation;
+      if (aCard.optVariationOf) { optVariation = mpCardIds.at(*aCard.optVariationOf); }
+      staged_card_types::type_list tplStaged{
+         iNextCardId++, aCard.strUuid, aCard.optOracleId, aCard.strName,
+         mpSetIds.at(aCard.strSetCode), aCard.aReleasedAt, aCard.optLandType,
+         aCard.optCreatureType, optVariation };
+      TScryfallCard::data_ty tplCard = adecc::Transform<staged_card_types, card_types>(
+         std::move(tplStaged),
+         adecc::BindMapping<6, staged_card_types, card_types>(mpLand),
+         adecc::BindMapping<7, staged_card_types, card_types>(mpCreature));
+      std::vector<TScryfallCard::data_ty> vecOne{std::move(tplCard)};
+      aCardSink = vecOne;
+      mpCardIds.emplace(aCard.strUuid, std::get<0>(vecOne.front()));
+      }
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_oracle_id ON deckkernel_test.scryfall_cards(oracle_id)");
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_released ON deckkernel_test.scryfall_cards(released_at DESC)");
    aTransaction.Commit();
-
-   std::println("Stored {} cards and {} sets through adecc output sinks.", aParsed.vecCards.size(), aParsed.mpSets.size());
+   std::println("Stored {} cards and {} topologically ordered sets.", aParsed.vecCards.size(), vecSets.size());
    }
 
 } // namespace deckkernel::test
