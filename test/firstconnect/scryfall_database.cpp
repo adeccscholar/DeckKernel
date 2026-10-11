@@ -72,7 +72,7 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.land_types");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.creatures_types");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.land_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE)");
-   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.creatures_types (id integer PRIMARY KEY, code text NOT NULL UNIQUE)");
+   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.creatures_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE)");
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_sets ("
       "id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, scryfall_id text NOT NULL UNIQUE, code text NOT NULL UNIQUE,"
@@ -153,8 +153,10 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    auto aCatalogTransaction = aDatabase.Transaction();
    auto const aLandStart = std::chrono::steady_clock::now();
    // Insert land types with PostgreSQL-generated identities via the adecc output range.
-   auto aLandOutput = aDatabase.template MakeOutputRange<int, std::string>(
-      TLandType::CreateInsertSql(), TLandType::CreateInsertOutputParameters());
+   auto aLandOutput = catalog_types::invoke([&]<typename... types_ty>() {
+      return aDatabase.template MakeOutputRange<types_ty...>(
+         TLandType::CreateInsertSql(), TLandType::CreateInsertOutputParameters());
+      });
    std::map<std::string, int> mpLandIds;
    for (auto const& [strCode, iIgnored] : aParsed.mpLandTypes) {
       std::array<TLandType::data_ty, 1> arrInput{{ TLandType::data_ty{0, strCode} }};
@@ -167,22 +169,29 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    std::println("[TIME] Store LandTypes: {:.3f} s", ElapsedSeconds(aLandStart));
    std::println("[STORE] LandTypes written: {} rows", mpLandIds.size());
    auto const aCreatureStart = std::chrono::steady_clock::now();
-   auto aCreatureSink = aDatabase.template MakeOutputSink<int, std::string>(
-      TCreatureType::CreateInsertSql(), TCreatureType::CreateInsertOutputParameters());
-   std::vector<std::tuple<int, std::string>> vecCreature;
-   for (auto const& [strCode, iId] : aParsed.mpCreatureTypes) {
-      vecCreature.emplace_back(iId, strCode);
+   auto aCreatureOutput = catalog_types::invoke([&]<typename... types_ty>() {
+      return aDatabase.template MakeOutputRange<types_ty...>(
+         TCreatureType::CreateInsertSql(), TCreatureType::CreateInsertOutputParameters());
+      });
+   std::map<std::string, int> mpCreatureIds;
+   for (auto const& [strCode, iUnused] : aParsed.mpCreatureTypes) {
+      std::array<TCreatureType::data_ty, 1> arrInput{{ TCreatureType::data_ty{0, strCode} }};
+      for (auto const& tplResult : aCreatureOutput(arrInput)) {
+         if (!mpCreatureIds.emplace(strCode, std::get<0>(tplResult)).second) {
+            throw std::runtime_error("duplicate creature type: " + strCode);
+            }
+         }
       }
-   aCreatureSink = vecCreature;
    std::println("[TIME] Store CreatureTypes: {:.3f} s", ElapsedSeconds(aCreatureStart));
-   std::println("[STORE] CreatureTypes written: {} rows", vecCreature.size());
+   std::println("[STORE] CreatureTypes written: {} rows", mpCreatureIds.size());
    aCatalogTransaction.CommitAndClose();
    std::println("[STORE] Catalogs committed: {} land types, {} creature types",
-      mpLandIds.size(), vecCreature.size());
+      mpLandIds.size(), mpCreatureIds.size());
 
    // Set graph: root sets are persisted before any child.
    std::vector<StagedSet> vecSets;
-   for (auto const& [strCode, aSet] : aParsed.mpSets) { vecSets.push_back(aSet); }
+   vecSets.reserve(aParsed.mpSets.size());
+   for (auto const& [strCode, aSet] : aParsed.mpSets) { vecSets.emplace_back(aSet); }
    // The API documents parent_set_code as a code. Some feeds contain UUID-shaped
    // references; resolve those through the set catalog before sorting.
    std::map<std::string, std::string> mpUuidToCode;
@@ -223,9 +232,10 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    auto aSetTransaction = aDatabase.Transaction();
    // PersistentSystemData omits identity from INSERT; the output range returns it.
    std::map<std::string, int> mpSetIds;
-   auto aSetOutput = aDatabase.template MakeOutputRange<int, std::string, std::string,
-      std::string, std::optional<int>>(
-      TScryfallSet::CreateInsertSql(), TScryfallSet::CreateInsertOutputParameters());
+   auto aSetOutput = set_types::invoke([&]<typename... types_ty>() {
+      return aDatabase.template MakeOutputRange<types_ty...>(
+         TScryfallSet::CreateInsertSql(), TScryfallSet::CreateInsertOutputParameters());
+      });
    for (std::size_t const uIndex : vecSetOrder) {
       StagedSet const& aSet = vecSets[uIndex];
       std::optional<int> optParent;
@@ -248,7 +258,7 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    mpLand.emplace(std::nullopt, std::nullopt);
    mpCreature.emplace(std::nullopt, std::nullopt);
    for (auto const& [strCode, iId] : mpLandIds) { mpLand.emplace(strCode, iId); }
-   for (auto const& [strCode, iId] : aParsed.mpCreatureTypes) { mpCreature.emplace(strCode, iId); }
+   for (auto const& [strCode, iId] : mpCreatureIds) { mpCreature.emplace(strCode, iId); }
 
    // The default_cards bulk may omit localized printings referenced by variation_of.
    // Keep the reference diagnostic, but do not manufacture an invalid foreign key.
@@ -291,10 +301,10 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    auto aCardTransaction = aDatabase.Transaction();
    auto const aCardStart = std::chrono::steady_clock::now();
    std::map<std::string, int> mpCardIds;
-   auto aCardOutput = aDatabase.template MakeOutputRange<int, std::string,
-      std::optional<std::string>, std::string, int, adecc::date_ty,
-      std::optional<int>, std::optional<int>, std::optional<int>>(
-      TScryfallCard::CreateInsertSql(), TScryfallCard::CreateInsertOutputParameters());
+   auto aCardOutput = card_types::invoke([&]<typename... types_ty>() {
+      return aDatabase.template MakeOutputRange<types_ty...>(
+         TScryfallCard::CreateInsertSql(), TScryfallCard::CreateInsertOutputParameters());
+      });
    for (std::size_t const uIndex : vecCardOrder) {
       StagedCard const& aCard = vecResolvedCards[uIndex];
       std::optional<int> optVariation;
