@@ -20,6 +20,9 @@ namespace deckkernel::test {
 struct ParsedBulkData {
    std::map<std::string, TScryfallSet::data_ty> mpSets;
    std::vector<TScryfallCard::data_ty> vecCards;
+   std::map<std::string, int> mpLandTypes;
+   std::map<std::string, int> mpCreatureTypes;
+   std::vector<std::tuple<std::optional<std::string>, std::optional<std::string>>> vecCardSubtypes;
    };
 
 ParsedBulkData ParseProcess(LoadedBulkData const& aLoaded);
