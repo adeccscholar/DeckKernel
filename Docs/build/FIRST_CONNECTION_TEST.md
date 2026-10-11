@@ -18,6 +18,11 @@ The PostgreSQL server must be prepared first. See:
 
 [PostgreSQL setup](../preparation/POSTGRESQL_SETUP.md)
 
+The setup SQL must be executed while connected to database `DeckKernel`. PostgreSQL
+schemas are database-local; a `deckkernel_test` schema created in the default
+`postgres` database is not visible to this test. The setup guide and setup script both
+check this explicitly.
+
 ## From git pull to program start
 
 Run all commands from the DeckKernel repository root in a C++Builder Developer
