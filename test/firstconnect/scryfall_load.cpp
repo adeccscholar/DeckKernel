@@ -203,6 +203,8 @@ std::string HttpGet(std::string const& strUrl) {
    }
 
 
+std::string QueuedGet(std::string const& strUrl);
+
 std::string LoadAllSets() {
    json_ty aAll = json_ty::object();
    aAll["data"] = json_ty::array();
