@@ -72,7 +72,7 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_sets ("
       "id integer PRIMARY KEY, scryfall_id text NOT NULL UNIQUE, code text NOT NULL UNIQUE,"
-      "name text NOT NULL, parent_set_id integer REFERENCES deckkernel_test.scryfall_sets(id))");
+      "name text NOT NULL, parent_set_code integer REFERENCES deckkernel_test.scryfall_sets(id))");
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_cards ("
       "id integer PRIMARY KEY, scryfall_id text NOT NULL UNIQUE, oracle_id text,"
@@ -200,10 +200,11 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       if (aCard.optVariationOf) { optVariation = mpCardIds.at(*aCard.optVariationOf); }
       staged_card_types::type_list tplStaged{
          iNextCardId++, aCard.strUuid, aCard.optOracleId, aCard.strName,
-         mpSetIds.at(aCard.strSetCode), aCard.aReleasedAt, aCard.optLandType,
+         aCard.strSetCode, aCard.aReleasedAt, aCard.optLandType,
          aCard.optCreatureType, optVariation };
       TScryfallCard::data_ty tplCard = adecc::Transform<staged_card_types, card_types>(
          std::move(tplStaged),
+         adecc::BindMapping<4, staged_card_types, card_types>(mpSetIds),
          adecc::BindMapping<6, staged_card_types, card_types>(mpLand),
          adecc::BindMapping<7, staged_card_types, card_types>(mpCreature));
       std::vector<TScryfallCard::data_ty> vecOne{std::move(tplCard)};
