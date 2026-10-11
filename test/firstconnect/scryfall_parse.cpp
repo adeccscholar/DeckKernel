@@ -25,6 +25,7 @@ and one card-printing relation before PostgreSQL is involved.
 #include <memory>
 #include <algorithm>
 #include <optional>
+#include <ranges>
 #include <print>
 #include <stdexcept>
 #include <string>
@@ -48,22 +49,33 @@ void ParseCatalog(std::string const& strJson, std::map<std::string, int>& mpCode
 
 // Search only in the subtype section of type_line. A space-delimited search
 // avoids mistaking a type prefix for a subtype and supports multiword names.
+// Match whole subtype tokens, independent of punctuation around the separator.
+// Scryfall type lines may contain ASCII '-' or Unicode dash spellings.
 std::optional<std::string> FindSubtype(std::string const& strTypeLine,
    std::map<std::string, int> const& mpTypes) {
-   std::size_t uSeparator = strTypeLine.find("—");
-   if (uSeparator == std::string::npos) { return std::nullopt; }
-   std::string_view const svSubtypes{strTypeLine.data() + uSeparator + std::string_view("—").size(),
-      strTypeLine.size() - uSeparator - std::string_view("—").size()};
+   if (strTypeLine.empty()) { return std::nullopt; }
+   std::string_view svLine{strTypeLine};
+   std::size_t uSeparator = svLine.find("—");
+   std::size_t uWidth = std::string_view("—").size();
+   if (uSeparator == std::string_view::npos) {
+      uSeparator = svLine.find("–");
+      uWidth = std::string_view("–").size();
+      }
+   if (uSeparator == std::string_view::npos) {
+      uSeparator = svLine.find(" - ");
+      uWidth = 3;
+      }
+   if (uSeparator == std::string_view::npos) { return std::nullopt; }
+   std::string_view const svSubtypes = svLine.substr(uSeparator + uWidth);
+   auto const fnSpace = [](unsigned char ch) { return std::isspace(ch) != 0; };
    std::optional<std::string> optFound;
    for (auto const& [strCode, iUnused] : mpTypes) {
       std::size_t uOffset = svSubtypes.find(strCode);
       while (uOffset != std::string_view::npos) {
          std::size_t const uEnd = uOffset + strCode.size();
-         auto fnBoundary = [](char ch) {
-            return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n';
-            };
-         if ((uOffset == 0 || fnBoundary(svSubtypes[uOffset - 1])) &&
-             (uEnd == svSubtypes.size() || fnBoundary(svSubtypes[uEnd]))) {
+         if ((uOffset == 0 || fnSpace(static_cast<unsigned char>(svSubtypes[uOffset - 1]))) &&
+             (uEnd == svSubtypes.size() ||
+              fnSpace(static_cast<unsigned char>(svSubtypes[uEnd])))) {
             if (!optFound || strCode.size() > optFound->size()) { optFound = strCode; }
             break;
             }
@@ -100,6 +112,13 @@ before the database boundary: one set tuple is deduplicated by set_id and every 
 keeps set_id as the foreign-key value.
 */
 void AppendCard(json_ty const& aCard, ParsedBulkData& aParsed) {
+   std::string strTypeLine = aCard.value("type_line", std::string{});
+   if (strTypeLine.empty() && aCard.contains("card_faces") && aCard["card_faces"].is_array()) {
+      for (json_ty const& aFace : aCard["card_faces"]) {
+         strTypeLine += " // ";
+         strTypeLine += aFace.value("type_line", std::string{});
+         }
+      }
    StagedCard aRow{
       .strUuid = aCard.at("id").get<std::string>(),
       .strName = aCard.at("name").get<std::string>(),
@@ -107,8 +126,8 @@ void AppendCard(json_ty const& aCard, ParsedBulkData& aParsed) {
       .optOracleId = OptionalText(aCard, "oracle_id"),
       .optVariationOf = OptionalText(aCard, "variation_of"),
       .aReleasedAt = adecc::ConvertTo<adecc::date_ty>(aCard.at("released_at").get<std::string>()),
-      .optLandType = FindSubtype(aCard.value("type_line", ""), aParsed.mpLandTypes),
-      .optCreatureType = FindSubtype(aCard.value("type_line", ""), aParsed.mpCreatureTypes)
+      .optLandType = FindSubtype(strTypeLine, aParsed.mpLandTypes),
+      .optCreatureType = FindSubtype(strTypeLine, aParsed.mpCreatureTypes)
       };
    aParsed.vecCards.emplace_back(std::move(aRow));
    }
@@ -260,6 +279,40 @@ ParsedBulkData ParseProcess(LoadedBulkData const& aLoaded) {
       }
    std::println("[PARSE] Subtype matches: land={}, creature={}, cards={}",
       uLandMatches, uCreatureMatches, aParsed.vecCards.size());
+   if (uLandMatches == 0 || uCreatureMatches == 0) {
+      std::println(std::cerr, "[DIAG] Land catalog size={}, creature catalog size={}",
+         aParsed.mpLandTypes.size(), aParsed.mpCreatureTypes.size());
+      for (auto const& [strCode, iId] : aParsed.mpLandTypes | std::views::take(4)) {
+         std::println(std::cerr, "[DIAG] Land catalog code='{}'", strCode);
+         }
+      for (auto const& [strCode, iId] : aParsed.mpCreatureTypes | std::views::take(4)) {
+         std::println(std::cerr, "[DIAG] Creature catalog code='{}'", strCode);
+         }
+      std::println(std::cerr, "[DIAG] Test 'Basic Land — Forest' -> {}",
+         FindSubtype("Basic Land — Forest", aParsed.mpLandTypes).value_or("<no match>"));
+      std::println(std::cerr, "[DIAG] Test 'Creature — Human' -> {}",
+         FindSubtype("Creature — Human", aParsed.mpCreatureTypes).value_or("<no match>"));
+      std::size_t uShown = 0;
+      auto fnSample = [&](json_ty const& aCard) {
+         if (uShown < 6) {
+            std::println(std::cerr, "[DIAG] Card uuid='{}' type_line='{}'",
+               aCard.value("id", ""), aCard.value("type_line", ""));
+            ++uShown;
+            }
+         };
+      // Parse a few original records, not reconstructed staging tuples.
+      std::ifstream isSamples{aLoaded.aPath, std::ios::binary};
+      if (isSamples && !aLoaded.aDescriptor.boGzipJsonLines) {
+         std::string strLine;
+         while (uShown < 6 && std::getline(isSamples, strLine)) {
+            try {
+               json_ty const aLine = json_ty::parse(strLine);
+               if (aLine.is_object()) { fnSample(aLine); }
+               }
+            catch (json_ty::exception const&) { break; }
+            }
+         }
+      }
    if (uLandMatches == 0 || uCreatureMatches == 0) {
       throw std::runtime_error(std::format(
          "Scryfall subtype parsing produced no {} matches (land={}, creature={}); "
