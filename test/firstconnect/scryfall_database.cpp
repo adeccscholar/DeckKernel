@@ -102,6 +102,7 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
       "face_id integer NOT NULL CHECK (face_id >= 0),"
       "is_main boolean GENERATED ALWAYS AS (face_id = 0) STORED,"
       "name text NOT NULL, type_line text NOT NULL,"
+      "layout text, loyalty text, mana_cost text NOT NULL,"
       "PRIMARY KEY (card_id, face_id))");
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_card_artifact_types ("
@@ -434,7 +435,8 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
             }
          for (StagedFace const& aFace : aCard.vecFaces) {
             std::array<card_face_types::type_list, 1> arrFace{{
-               card_face_types::type_list{iId, aFace.iFaceId, aFace.strName, aFace.strTypeLine}
+               card_face_types::type_list{iId, aFace.iFaceId, aFace.strName, aFace.strTypeLine,
+                  aFace.optLayout, aFace.optLoyalty, aFace.strManaCost}
                }};
             aFaceSink = arrFace;
             std::vector<card_type_link_types::type_list> vecLandLinks, vecCreatureLinks;
@@ -486,10 +488,7 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    aDatabase.ExecuteCommand(
       "CREATE VIEW deckkernel_test.scryfall_cards_view AS "
       "SELECT c.*, f.face_id, f.is_main, f.name AS face_name, f.type_line, "
-      "COALESCE((SELECT array_agg(t.code ORDER BY x.position) "
-      "FROM deckkernel_test.scryfall_card_artifact_types x "
-      "JOIN deckkernel_test.artifact_types t ON t.id=x.artifact_type_id "
-      "WHERE x.card_id=c.id AND x.face_id=f.face_id), ARRAY[]::text[]) AS artifact_types, "
+      "f.layout, f.loyalty, f.mana_cost, "
       "COALESCE((SELECT array_agg(t.code ORDER BY x.position) "
       "FROM deckkernel_test.scryfall_card_supertypes x "
       "JOIN deckkernel_test.supertypes t ON t.id=x.supertype_id "
@@ -498,6 +497,10 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       "FROM deckkernel_test.scryfall_card_main_types x "
       "JOIN deckkernel_test.card_types t ON t.id=x.main_type_id "
       "WHERE x.card_id=c.id AND x.face_id=f.face_id), ARRAY[]::text[]) AS main_types, "
+      "COALESCE((SELECT array_agg(t.code ORDER BY x.position) "
+      "FROM deckkernel_test.scryfall_card_artifact_types x "
+      "JOIN deckkernel_test.artifact_types t ON t.id=x.artifact_type_id "
+      "WHERE x.card_id=c.id AND x.face_id=f.face_id), ARRAY[]::text[]) AS artifact_types, "
       "COALESCE((SELECT array_agg(t.code ORDER BY x.position) "
       "FROM deckkernel_test.scryfall_card_land_types x "
       "JOIN deckkernel_test.land_types t ON t.id=x.land_type_id "
