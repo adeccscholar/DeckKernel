@@ -197,9 +197,16 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       }
    std::println("[STORE] Validating {} CardSets, {} UUID-form parent references",
       vecSets.size(), uUuidReferences);
-   auto const vecSetOrder = TopologicalOrder(vecSets,
-      [](StagedSet const& aSet) { return aSet.strCode; },
-      [](StagedSet const& aSet) { return aSet.optParentCode; });
+   std::vector<std::size_t> vecSetOrder;
+   try {
+      vecSetOrder = TopologicalOrder(vecSets,
+         [](StagedSet const& aSet) { return aSet.strCode; },
+         [](StagedSet const& aSet) { return aSet.optParentCode; });
+      }
+   catch (std::exception const& ex) {
+      throw std::runtime_error(std::format(
+         "CardSets dependency validation failed ({} sets): {}", vecSets.size(), ex.what()));
+      }
    std::println("[STORE] Topological order validated: {} CardSets", vecSetOrder.size());
    auto aSetTransaction = aDatabase.Transaction();
    // PersistentSystemData omits identity from INSERT; the output range returns it.
@@ -232,9 +239,16 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    for (auto const& [strCode, iId] : aParsed.mpCreatureTypes) { mpCreature.emplace(strCode, iId); }
 
    // variation_of references a Scryfall printing UUID; convert only after its parent is written.
-   auto const vecCardOrder = TopologicalOrder(aParsed.vecCards,
-      [](StagedCard const& aCard) { return aCard.strUuid; },
-      [](StagedCard const& aCard) { return aCard.optVariationOf; });
+   std::vector<std::size_t> vecCardOrder;
+   try {
+      vecCardOrder = TopologicalOrder(aParsed.vecCards,
+         [](StagedCard const& aCard) { return aCard.strUuid; },
+         [](StagedCard const& aCard) { return aCard.optVariationOf; });
+      }
+   catch (std::exception const& ex) {
+      throw std::runtime_error(std::format(
+         "Card dependency validation failed ({} cards): {}", aParsed.vecCards.size(), ex.what()));
+      }
    std::println("[STORE] Topological order validated: {} Cards", vecCardOrder.size());
    auto aCardTransaction = aDatabase.Transaction();
    std::map<std::string, int> mpCardIds;
