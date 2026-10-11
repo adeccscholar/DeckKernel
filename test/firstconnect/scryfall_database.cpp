@@ -425,75 +425,83 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       return aDatabase.template MakeOutputSink<types_ty...>(
          TCardMainType::CreateInsertSql(), TCardMainType::CreateInsertOutputParameters());
       });
-   std::size_t uSuperLinks = 0, uMainLinks = 0, uArtifactLinks = 0;
-   std::size_t uLandLinks = 0, uCreatureLinks = 0;
-   for (std::size_t const uIndex : vecCardOrder) {
+   // Source -> Transform -> database OutputRange -> generated-ID map.
+   // Card dependencies must be resolved in topological order before face relations flow.
+   auto aCardSource = vecCardOrder | std::views::transform([&](std::size_t uIndex) {
       StagedCard const& aCard = vecResolvedCards[uIndex];
       std::optional<int> optVariation;
       if (aCard.optVariationOf) { optVariation = mpCardIds.at(*aCard.optVariationOf); }
       staged_card_types::type_list tplStaged{
          0, aCard.strUuid, aCard.optOracleId, aCard.strName,
          aCard.strSetCode, aCard.aReleasedAt, optVariation, aCard.strRarity };
-      TScryfallCard::data_ty tplCard = adecc::Transform<staged_card_types, card_types>(
+      return adecc::Transform<staged_card_types, card_types>(
          std::move(tplStaged),
          adecc::BindMapping<4, staged_card_types, card_types>(mpSetIds),
          adecc::BindMapping<7, staged_card_types, card_types>(mpRarityIds));
-      std::array<TScryfallCard::data_ty, 1> arrInput{{ std::move(tplCard) }};
-      for (auto const& tplInserted : aCardOutput(arrInput)) {
-         int const iId = std::get<0>(tplInserted);
-         if (iId <= 0 || !mpCardIds.emplace(aCard.strUuid, iId).second) {
-            throw std::runtime_error("invalid or duplicate generated card identity");
-            }
-         for (StagedFace const& aFace : aCard.vecFaces) {
-            std::array<card_face_types::type_list, 1> arrFace{{
-               card_face_types::type_list{iId, aFace.iFaceId, aFace.strName, aFace.strTypeLine,
-                  aFace.optLayout, aFace.optLoyalty, aFace.strManaCost, aFace.optPower}
-               }};
-            aFaceSink = arrFace;
-            std::vector<card_type_link_types::type_list> vecLandLinks, vecCreatureLinks;
-            vecLandLinks.reserve(aFace.vecLandTypes.size());
-            vecCreatureLinks.reserve(aFace.vecCreatureTypes.size());
-            for (std::size_t uPos = 0; uPos < aFace.vecLandTypes.size(); ++uPos) {
-               staged_card_type_link_types::type_list tplStage{
-                  iId, aFace.iFaceId, aFace.vecLandTypes[uPos], static_cast<int>(uPos) };
-               vecLandLinks.emplace_back(adecc::Transform<
-                  staged_card_type_link_types, card_type_link_types>(
-                  std::move(tplStage),
-                  adecc::BindMapping<2, staged_card_type_link_types, card_type_link_types>(mpLandIds)));
-               }
-            for (std::size_t uPos = 0; uPos < aFace.vecCreatureTypes.size(); ++uPos) {
-               staged_card_type_link_types::type_list tplStage{
-                  iId, aFace.iFaceId, aFace.vecCreatureTypes[uPos], static_cast<int>(uPos) };
-               vecCreatureLinks.emplace_back(adecc::Transform<
-                  staged_card_type_link_types, card_type_link_types>(
-                  std::move(tplStage),
-                  adecc::BindMapping<2, staged_card_type_link_types, card_type_link_types>(mpCreatureIds)));
-               }
-            auto fnLinks = [&]<typename sink_ty>(std::vector<std::string> const& vecCodes,
-               std::map<std::string, int> const& mpIds, sink_ty& aSink) {
-               std::vector<card_type_link_types::type_list> vecLinks;
-               vecLinks.reserve(vecCodes.size());
-               for (std::size_t uPos = 0; uPos < vecCodes.size(); ++uPos) {
-                  staged_card_type_link_types::type_list tplSource{
-                     iId, aFace.iFaceId, vecCodes[uPos], static_cast<int>(uPos)};
-                  vecLinks.emplace_back(adecc::Transform<
-                     staged_card_type_link_types, card_type_link_types>(
-                     std::move(tplSource),
-                     adecc::BindMapping<2, staged_card_type_link_types, card_type_link_types>(mpIds)));
-                  }
-               if (!vecLinks.empty()) { aSink = vecLinks; }
-               return vecLinks.size();
-               };
-            uArtifactLinks += fnLinks(aFace.vecArtifactTypes, mpArtifactIds, aArtifactLinkSink);
-            uSuperLinks += fnLinks(aFace.vecSuperTypes, mpSuperIds, aSuperLinkSink);
-            uMainLinks += fnLinks(aFace.vecMainTypes, mpMainIds, aMainLinkSink);
-            if (!vecLandLinks.empty()) { aLandLinkSink = vecLandLinks; }
-            if (!vecCreatureLinks.empty()) { aCreatureLinkSink = vecCreatureLinks; }
-            uLandLinks += vecLandLinks.size();
-            uCreatureLinks += vecCreatureLinks.size();
-            }
+      });
+   std::ranges::for_each(aCardOutput(aCardSource), [&](auto const& tplInserted) {
+      int const iId = std::get<0>(tplInserted);
+      std::string const& strUuid = std::get<1>(tplInserted);
+      if (iId <= 0 || !mpCardIds.emplace(strUuid, iId).second) {
+         throw std::runtime_error("invalid or duplicate generated card identity");
          }
-      }
+      });
+
+   // The next sources are flattened only once; no per-card/per-face database writes.
+   // Face rows need their parent identity: produce ranges of mapped tuples and flatten.
+   auto aFaceRows = vecResolvedCards
+      | std::views::transform([&](StagedCard const& aCard) {
+         int const iCardId = mpCardIds.at(aCard.strUuid);
+         return aCard.vecFaces | std::views::transform([iCardId](StagedFace const& aFace) {
+            return card_face_types::type_list{
+               iCardId, aFace.iFaceId, aFace.strName, aFace.strTypeLine,
+               aFace.optLayout, aFace.optLoyalty, aFace.strManaCost, aFace.optPower};
+            });
+         })
+      | std::views::join;
+   aFaceSink = aFaceRows;
+
+   // One generic transformation pipeline for all five face-scoped type relations.
+   auto fnWriteTypeLinks = [&]<typename sink_ty>(
+      auto fnCodes, std::map<std::string, int> const& mpIds, sink_ty& aSink) {
+      auto aRows = vecResolvedCards
+         | std::views::transform([&](StagedCard const& aCard) {
+            int const iCardId = mpCardIds.at(aCard.strUuid);
+            return aCard.vecFaces | std::views::transform([&, iCardId](StagedFace const& aFace) {
+               auto const& vecCodes = std::invoke(fnCodes, aFace);
+               return std::views::iota(std::size_t{0}, vecCodes.size())
+                  | std::views::transform([&, iCardId, iFaceId = aFace.iFaceId](
+                     std::size_t uPos) {
+                     staged_card_type_link_types::type_list tplStage{
+                        iCardId, iFaceId, vecCodes[uPos], static_cast<int>(uPos)};
+                     return adecc::Transform<
+                        staged_card_type_link_types, card_type_link_types>(
+                        std::move(tplStage),
+                        adecc::BindMapping<2, staged_card_type_link_types,
+                           card_type_link_types>(mpIds));
+                     });
+               }) | std::views::join;
+            }) | std::views::join;
+      // Sink consumes the range; count input without materializing intermediate vectors.
+      std::size_t const uRows = std::ranges::distance(aRows);
+      aSink = aRows;
+      return uRows;
+      };
+   std::size_t const uSuperLinks = fnWriteTypeLinks(
+      [](StagedFace const& aFace) -> auto const& { return aFace.vecSuperTypes; },
+      mpSuperIds, aSuperLinkSink);
+   std::size_t const uMainLinks = fnWriteTypeLinks(
+      [](StagedFace const& aFace) -> auto const& { return aFace.vecMainTypes; },
+      mpMainIds, aMainLinkSink);
+   std::size_t const uArtifactLinks = fnWriteTypeLinks(
+      [](StagedFace const& aFace) -> auto const& { return aFace.vecArtifactTypes; },
+      mpArtifactIds, aArtifactLinkSink);
+   std::size_t const uLandLinks = fnWriteTypeLinks(
+      [](StagedFace const& aFace) -> auto const& { return aFace.vecLandTypes; },
+      mpLandIds, aLandLinkSink);
+   std::size_t const uCreatureLinks = fnWriteTypeLinks(
+      [](StagedFace const& aFace) -> auto const& { return aFace.vecCreatureTypes; },
+      mpCreatureIds, aCreatureLinkSink);
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_oracle_id ON deckkernel_test.scryfall_cards(oracle_id)");
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_released ON deckkernel_test.scryfall_cards(released_at DESC)");
    aDatabase.ExecuteCommand(
