@@ -86,6 +86,15 @@ struct MainTypeMetaData {
    static constexpr std::optional<std::size_t> optIdentityIndex{0};
    static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
    };
+struct ArtifactTypeMetaData {
+   static constexpr std::string_view svTableName = "deckkernel_test.artifact_types";
+   static constexpr std::array<std::string_view, 2> arrAttributeNames{"id", "code"};
+   static constexpr std::array<std::size_t, 1> arrKeyIndices{0};
+   static constexpr std::optional<std::size_t> optIdentityIndex{0};
+   static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
+   };
+using TArtifactType = adecc::db::PersistentSystemData<catalog_types, ArtifactTypeMetaData>;
+
 using TSuperType = adecc::db::PersistentSystemData<catalog_types, SuperTypeMetaData>;
 using TMainType = adecc::db::PersistentSystemData<catalog_types, MainTypeMetaData>;
 
@@ -107,6 +116,16 @@ struct CardFaceMetaData {
    static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
    };
 using TCardFace = adecc::db::PersistentSystemData<card_face_types, CardFaceMetaData>;
+
+struct CardArtifactTypeMetaData {
+   static constexpr std::string_view svTableName = "deckkernel_test.scryfall_card_artifact_types";
+   static constexpr std::array<std::string_view, 4> arrAttributeNames{
+      "card_id", "face_id", "artifact_type_id", "position"};
+   static constexpr std::array<std::size_t, 3> arrKeyIndices{0, 1, 3};
+   static constexpr std::optional<std::size_t> optIdentityIndex{};
+   static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
+   };
+using TCardArtifactType = adecc::db::PersistentSystemData<card_type_link_types, CardArtifactTypeMetaData>;
 
 struct CardSuperTypeMetaData {
    static constexpr std::string_view svTableName = "deckkernel_test.scryfall_card_supertypes";
