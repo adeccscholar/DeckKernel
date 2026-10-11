@@ -60,7 +60,7 @@ std::optional<std::string> FindSubtype(std::string const& strTypeLine,
       while (uOffset != std::string_view::npos) {
          std::size_t const uEnd = uOffset + strCode.size();
          auto fnBoundary = [](char ch) {
-            return ch == ' ' || ch == '\\t' || ch == '\\r' || ch == '\\n';
+            return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n';
             };
          if ((uOffset == 0 || fnBoundary(svSubtypes[uOffset - 1])) &&
              (uEnd == svSubtypes.size() || fnBoundary(svSubtypes[uEnd]))) {
