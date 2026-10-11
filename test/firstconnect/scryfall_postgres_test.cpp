@@ -127,12 +127,14 @@ int main() {
    using namespace deckkernel::test;
 
    try {
-      LoadedBulkData const aLoaded = RunTimedProcess(
+      LoadedBulkData aLoaded = RunTimedProcess(
          "Load",
          []() {
             return LoadProcess();
             }
          );
+
+      aLoaded.strSetsCatalog = RunTimedProcess("Read CardSets", []() { return ReadCardSets(); });
 
       ParsedBulkData const aParsed = RunTimedProcess(
          "Parse",
