@@ -16,6 +16,8 @@
 #include <stdexcept>
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <set>
 
 #include <cstdint>
 #include <cstdlib>
@@ -140,11 +142,16 @@ postgres_database_ty OpenDatabase() {
    }
 
 
+static double ElapsedSeconds(std::chrono::steady_clock::time_point const aStart) {
+   return std::chrono::duration<double>(std::chrono::steady_clock::now() - aStart).count();
+   }
+
 void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed) {
    // DDL is committed independently: a later data error must not restore an obsolete schema.
    EnsureSchema(aDatabase);
    std::println("[STORE] Schema created: land_types, creatures_types, scryfall_sets, scryfall_cards");
    auto aCatalogTransaction = aDatabase.Transaction();
+   auto const aLandStart = std::chrono::steady_clock::now();
    // Insert land types with PostgreSQL-generated identities via the adecc output range.
    auto aLandOutput = aDatabase.template MakeOutputRange<int, std::string>(
       TLandType::CreateInsertSql(), TLandType::CreateInsertOutputParameters());
@@ -157,6 +164,9 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
             }
          }
       }
+   std::println("[TIME] Store LandTypes: {:.3f} s", ElapsedSeconds(aLandStart));
+   std::println("[STORE] LandTypes written: {} rows", mpLandIds.size());
+   auto const aCreatureStart = std::chrono::steady_clock::now();
    auto aCreatureSink = aDatabase.template MakeOutputSink<int, std::string>(
       TCreatureType::CreateInsertSql(), TCreatureType::CreateInsertOutputParameters());
    std::vector<std::tuple<int, std::string>> vecCreature;
@@ -164,6 +174,8 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       vecCreature.emplace_back(iId, strCode);
       }
    aCreatureSink = vecCreature;
+   std::println("[TIME] Store CreatureTypes: {:.3f} s", ElapsedSeconds(aCreatureStart));
+   std::println("[STORE] CreatureTypes written: {} rows", vecCreature.size());
    aCatalogTransaction.CommitAndClose();
    std::println("[STORE] Catalogs committed: {} land types, {} creature types",
       mpLandIds.size(), vecCreature.size());
@@ -238,26 +250,53 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    for (auto const& [strCode, iId] : mpLandIds) { mpLand.emplace(strCode, iId); }
    for (auto const& [strCode, iId] : aParsed.mpCreatureTypes) { mpCreature.emplace(strCode, iId); }
 
-   // variation_of references a Scryfall printing UUID; convert only after its parent is written.
+   // The default_cards bulk may omit localized printings referenced by variation_of.
+   // Keep the reference diagnostic, but do not manufacture an invalid foreign key.
+   std::set<std::string> setAvailableCards;
+   for (StagedCard const& aCard : aParsed.vecCards) {
+      if (!setAvailableCards.emplace(aCard.strUuid).second) {
+         throw std::runtime_error("duplicate Scryfall card UUID: " + aCard.strUuid);
+         }
+      }
+   std::vector<StagedCard> vecResolvedCards = aParsed.vecCards;
+   std::size_t uMissingVariations = 0;
+   constexpr std::size_t uMaxExamples = 12;
+   for (StagedCard& aCard : vecResolvedCards) {
+      if (!aCard.optVariationOf || setAvailableCards.contains(*aCard.optVariationOf)) { continue; }
+      ++uMissingVariations;
+      if (uMissingVariations <= uMaxExamples) {
+         std::println(std::cerr,
+            "[WARN] Card variation target missing: card='{}', uuid='{}', set='{}', variation_of='{}'",
+            aCard.strName, aCard.strUuid, aCard.strSetCode, *aCard.optVariationOf);
+         }
+      aCard.optVariationOf.reset();
+      }
+   if (uMissingVariations > uMaxExamples) {
+      std::println(std::cerr, "[WARN] {} additional missing variation targets not printed",
+         uMissingVariations - uMaxExamples);
+      }
+   std::println("[STORE] Card dependency check: {} cards, {} unresolved variation_of references",
+      vecResolvedCards.size(), uMissingVariations);
    std::vector<std::size_t> vecCardOrder;
    try {
-      vecCardOrder = TopologicalOrder(aParsed.vecCards,
+      vecCardOrder = TopologicalOrder(vecResolvedCards,
          [](StagedCard const& aCard) { return aCard.strUuid; },
          [](StagedCard const& aCard) { return aCard.optVariationOf; });
       }
    catch (std::exception const& ex) {
       throw std::runtime_error(std::format(
-         "Card dependency validation failed ({} cards): {}", aParsed.vecCards.size(), ex.what()));
+         "Card dependency validation failed ({} cards): {}", vecResolvedCards.size(), ex.what()));
       }
    std::println("[STORE] Topological order validated: {} Cards", vecCardOrder.size());
    auto aCardTransaction = aDatabase.Transaction();
+   auto const aCardStart = std::chrono::steady_clock::now();
    std::map<std::string, int> mpCardIds;
    auto aCardOutput = aDatabase.template MakeOutputRange<int, std::string,
       std::optional<std::string>, std::string, int, adecc::date_ty,
       std::optional<int>, std::optional<int>, std::optional<int>>(
       TScryfallCard::CreateInsertSql(), TScryfallCard::CreateInsertOutputParameters());
    for (std::size_t const uIndex : vecCardOrder) {
-      StagedCard const& aCard = aParsed.vecCards[uIndex];
+      StagedCard const& aCard = vecResolvedCards[uIndex];
       std::optional<int> optVariation;
       if (aCard.optVariationOf) { optVariation = mpCardIds.at(*aCard.optVariationOf); }
       staged_card_types::type_list tplStaged{
@@ -280,6 +319,9 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_oracle_id ON deckkernel_test.scryfall_cards(oracle_id)");
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_released ON deckkernel_test.scryfall_cards(released_at DESC)");
    aCardTransaction.CommitAndClose();
+   std::println("[TIME] Store Cards: {:.3f} s", ElapsedSeconds(aCardStart));
+   std::println("[STORE] Cards committed: {} rows, {} missing variation targets",
+      mpCardIds.size(), uMissingVariations);
    std::println("Stored {} cards and {} topologically ordered sets.", aParsed.vecCards.size(), vecSets.size());
    }
 
