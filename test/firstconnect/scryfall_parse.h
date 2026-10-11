@@ -24,7 +24,8 @@ struct StagedSet {
    };
 struct StagedFace {
    int iFaceId{};
-   std::string strName, strTypeLine;
+   std::string strName, strTypeLine, strManaCost;
+   std::optional<std::string> optLayout, optLoyalty;
    std::vector<std::string> vecLandTypes, vecCreatureTypes;
    std::vector<std::string> vecSuperTypes, vecMainTypes, vecArtifactTypes;
    };
