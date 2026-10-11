@@ -90,6 +90,25 @@ public:
 
 using catalog_types = adecc::defined_type_list<int, std::string>;
 
+struct LandTypeMetaData {
+   static constexpr std::string_view svTableName = "deckkernel_test.land_types";
+   static constexpr std::array<std::string_view, 2> arrAttributeNames{ "id", "code" };
+   static constexpr std::array<std::size_t, 1> arrKeyIndices{ 0 };
+   static constexpr std::optional<std::size_t> optIdentityIndex{};
+   static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
+   };
+
+struct CreatureTypeMetaData {
+   static constexpr std::string_view svTableName = "deckkernel_test.creatures_types";
+   static constexpr std::array<std::string_view, 2> arrAttributeNames{ "id", "code" };
+   static constexpr std::array<std::size_t, 1> arrKeyIndices{ 0 };
+   static constexpr std::optional<std::size_t> optIdentityIndex{};
+   static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
+   };
+
+using TLandType = adecc::db::PersistentSystemData<catalog_types, LandTypeMetaData>;
+using TCreatureType = adecc::db::PersistentSystemData<catalog_types, CreatureTypeMetaData>;
+
 using staged_card_types = adecc::defined_type_list<std::string, std::optional<std::string>, std::string,
    std::string, adecc::date_ty, std::optional<std::string>, std::optional<std::string>>;
 
