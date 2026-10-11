@@ -10,6 +10,7 @@
 
 #include "convert_integral.h"
 #include "type_transformations.h"
+#include "type_lists.h"
 #include <map>
 #include <tuple>
 #include <vector>
@@ -426,38 +427,52 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       return aDatabase.template MakeOutputSink<types_ty...>(
          TCardMainType::CreateInsertSql(), TCardMainType::CreateInsertOutputParameters());
       });
-   // Source -> Transform -> database OutputRange -> generated-ID map.
-   // Card dependencies must be resolved in topological order before face relations flow.
-   auto aCardSource = vecCardOrder | std::views::transform([&](std::size_t uIndex) {
-      StagedCard const& aCard = vecResolvedCards[uIndex];
-      std::optional<int> optVariation;
-      if (aCard.optVariationOf) { optVariation = mpCardIds.at(*aCard.optVariationOf); }
+   // Mutable carrier: printing columns 0..7 plus the dependent face collection.
+   using import_types = adecc::defined_type_list<int, std::string,
+      std::optional<std::string>, std::string, int, adecc::date_ty,
+      std::optional<int>, int, std::vector<StagedFace>>;
+   using printing_projection = std::make_index_sequence<8>;
+   using id_projection = std::index_sequence<0>;
+   std::vector<import_types::type_list> vecImport;
+   vecImport.reserve(vecResolvedCards.size());
+   std::map<std::string, std::size_t> mpImportIndices;
+   for (StagedCard const& aCard : vecResolvedCards) {
       staged_card_types::type_list tplStaged{
          0, aCard.strUuid, aCard.optOracleId, aCard.strName,
-         aCard.strSetCode, aCard.aReleasedAt, optVariation, aCard.strRarity };
-      return adecc::Transform<staged_card_types, card_types>(
+         aCard.strSetCode, aCard.aReleasedAt, std::nullopt, aCard.strRarity};
+      auto tplPrinting = adecc::Transform<staged_card_types, card_types>(
          std::move(tplStaged),
          adecc::BindMapping<4, staged_card_types, card_types>(mpSetIds),
          adecc::BindMapping<7, staged_card_types, card_types>(mpRarityIds));
+      mpImportIndices.emplace(aCard.strUuid, vecImport.size());
+      vecImport.emplace_back(std::tuple_cat(std::move(tplPrinting),
+         std::tuple{aCard.vecFaces}));
+      }
+   auto aPrintingRows = vecCardOrder | std::views::transform([&](std::size_t uIndex) {
+      auto& tplData = vecImport[uIndex];
+      StagedCard const& aCard = vecResolvedCards[uIndex];
+      if (aCard.optVariationOf) {
+         std::get<6>(tplData) = mpCardIds.at(*aCard.optVariationOf);
+         }
+      return adecc::selectTplValues<printing_projection>(tplData);
       });
-   std::ranges::for_each(aCardOutput(aCardSource), [&](auto const& tplInserted) {
+   std::ranges::for_each(aCardOutput(aPrintingRows), [&](auto const& tplInserted) {
       int const iId = std::get<0>(tplInserted);
       std::string const& strUuid = std::get<1>(tplInserted);
       if (iId <= 0 || !mpCardIds.emplace(strUuid, iId).second) {
          throw std::runtime_error("invalid or duplicate generated card identity");
          }
+      adecc::assignTplValues<id_projection>(
+         vecImport.at(mpImportIndices.at(strUuid)), std::tuple{iId});
       });
-
-   // The next sources are flattened only once; no per-card/per-face database writes.
-   // Face rows need their parent identity: produce ranges of mapped tuples and flatten.
-   auto aFaceRows = vecResolvedCards
-      | std::views::transform([&](StagedCard const& aCard) {
-         int const iCardId = mpCardIds.at(aCard.strUuid);
-         return aCard.vecFaces | std::views::transform([iCardId](StagedFace const& aFace) {
-            return card_face_types::type_list{
-               iCardId, aFace.iFaceId, aFace.strName, aFace.strTypeLine,
-               aFace.optLayout, aFace.optLoyalty, aFace.strManaCost, aFace.optPower};
-            });
+   auto aFaceRows = vecImport
+      | std::views::transform([](import_types::type_list const& tplData) {
+         return std::get<8>(tplData)
+            | std::views::transform([&tplData](StagedFace const& aFace) {
+               return card_face_types::type_list{
+                  std::get<0>(tplData), aFace.iFaceId, aFace.strName, aFace.strTypeLine,
+                  aFace.optLayout, aFace.optLoyalty, aFace.strManaCost, aFace.optPower};
+               });
          })
       | std::views::join;
    aFaceSink = aFaceRows;
@@ -465,25 +480,19 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    // One generic transformation pipeline for all five face-scoped type relations.
    auto fnWriteTypeLinks = [&]<typename sink_ty>(
       auto fnCodes, std::map<std::string, int> const& mpIds, sink_ty& aSink) {
-      auto aRows = vecResolvedCards
-         | std::views::transform([&](StagedCard const& aCard) {
-            int const iCardId = mpCardIds.at(aCard.strUuid);
-            return aCard.vecFaces | std::views::transform([&, iCardId](StagedFace const& aFace) {
-               auto const& vecCodes = std::invoke(fnCodes, aFace);
-               return std::views::iota(std::size_t{0}, vecCodes.size())
-                  | std::views::transform([&, iCardId, iFaceId = aFace.iFaceId](
-                     std::size_t uPos) {
-                     staged_card_type_link_types::type_list tplStage{
-                        iCardId, iFaceId, vecCodes[uPos], static_cast<int>(uPos)};
-                     return adecc::Transform<
-                        staged_card_type_link_types, card_type_link_types>(
-                        std::move(tplStage),
-                        adecc::BindMapping<2, staged_card_type_link_types,
-                           card_type_link_types>(mpIds));
-                     });
-               }) | std::views::join;
+      auto aRows = vecImport
+         | std::views::transform([&](import_types::type_list const& tplData) {
+            return std::get<8>(tplData)
+               | std::views::transform([&](StagedFace const& aFace) {
+                  auto const& vecCodes = std::invoke(fnCodes, aFace);
+                  return std::views::iota(std::size_t{0}, vecCodes.size())
+                     | std::views::transform([&](std::size_t uPos) {
+                        return card_type_link_types::type_list{
+                           std::get<0>(tplData), aFace.iFaceId,
+                           mpIds.at(vecCodes[uPos]), static_cast<int>(uPos)};
+                        });
+                  }) | std::views::join;
             }) | std::views::join;
-      // Sink consumes the range; count input without materializing intermediate vectors.
       std::size_t const uRows = std::ranges::distance(aRows);
       aSink = aRows;
       return uRows;
