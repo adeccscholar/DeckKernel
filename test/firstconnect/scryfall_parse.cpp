@@ -85,7 +85,11 @@ std::vector<std::string> FindSubtypes(std::string const& strTypeLine,
    std::ranges::sort(vecMatches, {}, &std::pair<std::size_t, std::string>::first);
    std::vector<std::string> vecTypes;
    vecTypes.reserve(vecMatches.size());
-   for (auto const& [uPos, strCode] : vecMatches) { vecTypes.emplace_back(strCode); }
+   for (auto const& [uPos, strCode] : vecMatches) {
+      if (std::ranges::find(vecTypes, strCode) == vecTypes.end()) {
+         vecTypes.emplace_back(strCode);
+         }
+      }
    return vecTypes;
    }
 
