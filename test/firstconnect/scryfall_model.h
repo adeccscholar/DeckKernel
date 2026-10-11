@@ -32,7 +32,7 @@ using set_types = adecc::defined_type_list<int, std::string, std::string, std::s
 struct SetMetaData {
    static constexpr std::string_view svTableName = "deckkernel_test.scryfall_sets";
    static constexpr std::array<std::string_view, 5> arrAttributeNames{
-      "id", "scryfall_id", "code", "name", "parent_set_id" };
+      "id", "scryfall_id", "code", "name", "parent_set_code" };
    static constexpr std::array<std::size_t, 1> arrKeyIndices{0};
    static constexpr std::optional<std::size_t> optIdentityIndex{};
    static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
@@ -71,7 +71,7 @@ using TLandType = adecc::db::PersistentSystemData<catalog_types, LandTypeMetaDat
 using TCreatureType = adecc::db::PersistentSystemData<catalog_types, CreatureTypeMetaData>;
 
 using staged_card_types = adecc::defined_type_list<int, std::string, std::optional<std::string>,
-   std::string, int, adecc::date_ty, std::optional<std::string>,
+   std::string, std::string, adecc::date_ty, std::optional<std::string>,
    std::optional<std::string>, std::optional<int>>;
 using card_types = adecc::defined_type_list<int, std::string, std::optional<std::string>,
    std::string, int, adecc::date_ty, std::optional<int>, std::optional<int>, std::optional<int>>;
