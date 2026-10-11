@@ -32,5 +32,6 @@ struct LoadedBulkData {
    };
 
 LoadedBulkData LoadProcess();
+std::string ReadCardSets();
 
 } // namespace deckkernel::test
