@@ -54,7 +54,9 @@ std::vector<std::string> FindSubtypes(std::string const& strTypeLine,
       std::size_t const uEnd = strTypeLine.find(" // ", uStart);
       std::string_view const svFace{strTypeLine.data() + uStart,
          (uEnd == std::string::npos ? strTypeLine.size() : uEnd) - uStart};
-      std::size_t const uDash = svFace.find("—");
+      // Scryfall JSON is UTF-8. Use byte spelling to avoid Windows execution-charset conversion.
+      constexpr std::string_view svEmDash{"\xE2\x80\x94", 3};
+      std::size_t const uDash = svFace.find(svEmDash);
       if (uDash != std::string_view::npos) {
          std::string_view const svMain = svFace.substr(0, uDash);
          auto const fnWord = [](std::string_view haystack, std::string_view needle) {
@@ -64,7 +66,7 @@ std::vector<std::string> FindSubtypes(std::string const& strTypeLine,
                (pos + needle.size() == haystack.size() || haystack[pos + needle.size()] == ' ');
             };
          if (fnWord(svMain, svMainType)) {
-            std::string_view const svSubtypes = svFace.substr(uDash + std::string_view("—").size());
+            std::string_view const svSubtypes = svFace.substr(uDash + svEmDash.size());
             for (auto const& [strCode, iUnused] : mpTypes) {
                std::size_t uPos = svSubtypes.find(strCode);
                while (uPos != std::string_view::npos) {
@@ -260,6 +262,30 @@ ParsedBulkData ParseProcess(LoadedBulkData const& aLoaded) {
    ParsedBulkData aParsed;
    ParseCatalog(aLoaded.strLandCatalog, aParsed.mpLandTypes);
    ParseCatalog(aLoaded.strCreatureCatalog, aParsed.mpCreatureTypes);
+   // Validate the actual catalog and UTF-8 parser before reading the full bulk file.
+   constexpr std::string_view svEmDash{"\xE2\x80\x94", 3};
+   std::string const strDash{svEmDash};
+   auto fnCheck = [&](std::string const& strLine, std::string_view svMain,
+      std::map<std::string, int> const& mpCatalog, std::string_view svExpected) {
+      auto const vecFound = FindSubtypes(strLine, mpCatalog, svMain);
+      if (std::ranges::find(vecFound, std::string{svExpected}) == vecFound.end()) {
+         throw std::runtime_error(std::format(
+            "Subtype parser preflight failed: type_line='{}', category='{}', "
+            "expected='{}', catalog_size={}, matches={}",
+            strLine, svMain, svExpected, mpCatalog.size(), vecFound.size()));
+         }
+      };
+   fnCheck("Basic Land " + strDash + " Swamp", "Land", aParsed.mpLandTypes, "Swamp");
+   fnCheck("Legendary Creature " + strDash + " Vedalken Artificer",
+      "Creature", aParsed.mpCreatureTypes, "Vedalken");
+   fnCheck("Legendary Creature " + strDash + " Vedalken Artificer",
+      "Creature", aParsed.mpCreatureTypes, "Artificer");
+   if (aParsed.mpLandTypes.contains("Power-Plant")) {
+      fnCheck("Land " + strDash + " Urza's Power-Plant",
+         "Land", aParsed.mpLandTypes, "Power-Plant");
+      }
+   std::println("[PARSE] UTF-8 subtype preflight passed (land={}, creature={})",
+      aParsed.mpLandTypes.size(), aParsed.mpCreatureTypes.size());
    json_ty const aSets = json_ty::parse(aLoaded.strSetsCatalog);
    for (json_ty const& aSet : aSets.at("data")) {
       StagedSet aRow{
