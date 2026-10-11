@@ -26,6 +26,8 @@ struct LoadedBulkData {
    BulkDescriptor        aDescriptor;
    std::filesystem::path aPath;
    bool                  boDownloaded { false };
+   std::string           strLandCatalog;
+   std::string           strCreatureCatalog;
    };
 
 LoadedBulkData LoadProcess();
