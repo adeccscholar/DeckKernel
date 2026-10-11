@@ -26,6 +26,7 @@ struct StagedFace {
    int iFaceId{};
    std::string strName, strTypeLine;
    std::vector<std::string> vecLandTypes, vecCreatureTypes;
+   std::vector<std::string> vecSuperTypes, vecMainTypes;
    };
 struct StagedCard {
    std::string strUuid, strName, strSetCode;
@@ -37,6 +38,7 @@ struct ParsedBulkData {
    std::map<std::string, StagedSet> mpSets;
    std::vector<StagedCard> vecCards;
    std::map<std::string, int> mpLandTypes, mpCreatureTypes;
+   std::map<std::string, int> mpSuperTypes, mpMainTypes;
    };
 
 ParsedBulkData ParseProcess(LoadedBulkData const& aLoaded);
