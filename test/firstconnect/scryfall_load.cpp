@@ -354,13 +354,17 @@ LoadedBulkData LoadProcess() {
    // Catalogs are small; fetch once per import before the bulk parser runs.
    std::string strLandCatalog = HttpGet("https://api.scryfall.com/catalog/land-types");
    std::string strCreatureCatalog = HttpGet("https://api.scryfall.com/catalog/creature-types");
+   std::string strSuperCatalog = HttpGet("https://api.scryfall.com/catalog/supertypes");
+   std::string strMainTypeCatalog = HttpGet("https://api.scryfall.com/catalog/card-types");
    return LoadedBulkData {
       .aDescriptor = std::move(aBulk),
       .aPath = aBulkPath,
       .boDownloaded = boDownload,
       .strSetsCatalog = {},
       .strLandCatalog = std::move(strLandCatalog),
-      .strCreatureCatalog = std::move(strCreatureCatalog)
+      .strCreatureCatalog = std::move(strCreatureCatalog),
+      .strSuperCatalog = std::move(strSuperCatalog),
+      .strMainTypeCatalog = std::move(strMainTypeCatalog)
       };
    }
 
