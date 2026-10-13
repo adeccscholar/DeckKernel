@@ -285,7 +285,7 @@ void PrintReport(database_ty& aDb, id_names_ty const& mpAccountNames) {
    using grid_ty = adecc::grid::WriteGridModel<backend_ty>;
    using align_ty = adecc::EAlignmentType;
    using account_source_ty = adecc::defined_type_list<
-      int, std::string, adecc::money_ty, adecc::money_ty, adecc::money_ty>;
+      std::string, int, adecc::money_ty, adecc::money_ty, adecc::money_ty>;
    using account_display_ty = adecc::defined_type_list<
       std::string, std::string, std::string, std::string, std::string>;
 
@@ -302,7 +302,7 @@ void PrintReport(database_ty& aDb, id_names_ty const& mpAccountNames) {
 
    auto aAccounts = account_source_ty::invoke([&]<typename... types_ty>() {
       return aDb.template Execute<types_ty...>(
-         "SELECT CAST(a.id AS int) AS AccountId, a.code AS AccountCode, "
+         "SELECT a.code AS AccountCode, CAST(a.id AS int) AS AccountId, "
          "COALESCE(SUM(CASE WHEN b.debit_account_id=a.id THEN b.amount_eur "
          "ELSE CONVERT(decimal(18,2),0) END), CONVERT(decimal(18,2),0)) AS DebitAmount, "
          "COALESCE(SUM(CASE WHEN b.credit_account_id=a.id THEN b.amount_eur "
@@ -318,7 +318,7 @@ void PrintReport(database_ty& aDb, id_names_ty const& mpAccountNames) {
    auto aDisplay = aAccounts | std::views::transform(
       [&](account_source_ty::type_list const& tplRow) {
          return adecc::Transform<account_source_ty, account_display_ty>(tplRow,
-            adecc::BindMapping<0, account_source_ty, account_display_ty>(mpAccountNames));
+            adecc::BindMapping<1, account_source_ty, account_display_ty>(mpAccountNames));
          });
 
    // The grid is the sink; name lookup and numeric string conversion belong to Transform.
