@@ -6,14 +6,14 @@
 ## Processing
 
 1. The built-in `adecc::FromCsvFileTyped<false, true, csv_file_types>`
-   reads the semicolon-delimited CSV as a typed generator; no custom parser is required.
+   reads the semicolon-delimited CSV as a typed generator of domain values (`EuroAmount`, `InvoiceDate`); no custom parser or file-existence precheck is required.
 2. Salutations (**Herr**, **Frau**, **Firma**) and booking kinds
    (**Rechnung**, **Gutschrift**, **Storno**) are stored as lookup tables using
    `MakeOutputRange`; generated `IDENTITY` keys are collected in maps.
 3. The account master data (bank, receivables, payables, revenues and expenses)
    uses `PersistentSystemData` for insert SQL and parameters.
-4. A `std::views::transform` pipeline converts CSV tuples using
-   `adecc::Transform` and `BindMapping` for four foreign keys:
+4. `ImportCsvBookings` contains the compact CSV source → transformation → SQL sink flow. A `std::views::transform` pipeline converts CSV tuples using
+   `adecc::Transform` and `BindMapping` for four foreign keys only; the domain amount and date values use the existing `ConvertTo` machinery without additional `BindMapping` entries:
    salutation, booking kind, debit account, credit account.
 5. The bookings use `PersistentSystemData` and `MakeOutputSink`.
 6. The amount is parsed by `cpp_domain` policies (`TrimStringConversionPolicy`, `GermanDecimalToFloatConversionPolicy`, `PositiveNumberPolicy`) and passed through `ConvertTo` into `adecc::money_ty`. The invoice date uses `CaseConversionPolicy` to choose ISO, European or US `ConvertToConversionPolicy`, followed by `ValidYearMonthDayPolicy`, producing `adecc::date_ty`. The build retains `CHRONO_WORK_AROUND` and `CHRONO_MISSED_ZONEDB`; no timezone database is used.
@@ -54,3 +54,5 @@ test database, not in production.
 The parser uses the existing `file_as_tuple.h` adapter. Its delimited-file
 format is deliberately simple and does not implement all RFC 4180 quoting
 rules.
+
+The four demo tables are prepared through a `std::vector<std::string>` of SQL commands executed via `std::for_each`. All code-to-ID mappings share the `mapping_ids_ty` alias.
