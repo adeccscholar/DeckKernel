@@ -15,6 +15,8 @@
 #include "system_data_persistent.h"
 #include <optional>
 #include <print>
+#include <algorithm>
+#include <cmath>
 
 #include <array>
 #include <cstdlib>
@@ -39,13 +41,13 @@ using domain_types = adecc::defined_type_list<long long, std::string>;
 using account_types = adecc::defined_type_list<long long, std::string, std::string>;
 using csv_file_types = adecc::defined_type_list<
    std::string, std::string, std::string, std::string,
-   std::string, std::string, long long>;
+   std::string, std::string, std::string, std::string>;
 using csv_types = adecc::defined_type_list<
    long long, std::string, std::string, std::string,
-   std::string, std::string, std::string, long long>;
+   std::string, std::string, std::string, std::string, std::string>;
 using booking_types = adecc::defined_type_list<
    long long, std::string, std::string, long long,
-   long long, long long, long long, long long>;
+   long long, long long, long long, adecc::money_ty, adecc::date_ty>;
 
 struct AccountMetaData {
    static constexpr std::string_view svTableName = "dbo.AdeccCsvAccount";
@@ -56,9 +58,9 @@ struct AccountMetaData {
    };
 struct BookingMetaData {
    static constexpr std::string_view svTableName = "dbo.AdeccCsvBooking";
-   static constexpr std::array<std::string_view, 8> arrAttributeNames{
+   static constexpr std::array<std::string_view, 9> arrAttributeNames{
       "id", "reference", "name", "salutation_id", "kind_id",
-      "debit_account_id", "credit_account_id", "amount_cents"};
+      "debit_account_id", "credit_account_id", "amount_eur", "invoice_date"};
    static constexpr std::array<std::size_t, 1> arrKeyIndices{0};
    static constexpr std::optional<std::size_t> optIdentityIndex{0};
    static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
@@ -117,7 +119,8 @@ void CreateDemoTables(database_ty& aDb) {
       "kind_id bigint NOT NULL REFERENCES dbo.AdeccCsvKind(id),"
       "debit_account_id bigint NOT NULL REFERENCES dbo.AdeccCsvAccount(id),"
       "credit_account_id bigint NOT NULL REFERENCES dbo.AdeccCsvAccount(id),"
-      "amount_cents bigint NOT NULL CHECK(amount_cents > 0),"
+      "amount_eur decimal(18,2) NOT NULL CHECK(amount_eur > 0),"
+      "invoice_date date NOT NULL,"
       "CONSTRAINT CK_AdeccCsvDistinctAccounts CHECK(debit_account_id <> credit_account_id))");
    }
 
@@ -169,38 +172,59 @@ std::map<std::string, long long> StoreAccounts(database_ty& aDb) {
    }
 
 void PrintReport(database_ty& aDb) {
-   auto aTotals = aDb.ExecuteOne<long long, long long>(
-      "SELECT COUNT_BIG(*), COALESCE(SUM(amount_cents), CONVERT(bigint,0)) "
+   auto aTotals = aDb.ExecuteOne<long long, adecc::money_ty>(
+      "SELECT COUNT_BIG(*), COALESCE(SUM(amount_eur), CONVERT(decimal(18,2),0)) "
       "FROM dbo.AdeccCsvBooking");
    if (!aTotals) { throw std::runtime_error("Cannot read booking totals"); }
-   std::println("Bookings: {}, debit total = credit total = {} cents",
-      std::get<0>(*aTotals), std::get<1>(*aTotals));
-   auto aBalance = aDb.ExecuteOne<long long>(
-      "SELECT COALESCE(SUM(amount),CONVERT(bigint,0)) FROM ("
-      "SELECT amount_cents AS amount FROM dbo.AdeccCsvBooking "
-      "UNION ALL SELECT -amount_cents FROM dbo.AdeccCsvBooking) AS entries");
-   if (!aBalance || std::get<0>(*aBalance) != 0LL) {
+   std::println("Bookings: {}, debit total = credit total = {:.2f} EUR",
+      std::get<0>(*aTotals), std::get<1>(*aTotals).Get());
+   auto aBalance = aDb.ExecuteOne<adecc::money_ty>(
+      "SELECT COALESCE(SUM(amount),CONVERT(decimal(18,2),0)) FROM ("
+      "SELECT amount_eur AS amount FROM dbo.AdeccCsvBooking "
+      "UNION ALL SELECT -amount_eur FROM dbo.AdeccCsvBooking) AS entries");
+   if (!aBalance || std::abs(std::get<0>(*aBalance).Get()) > 0.001) {
       throw std::runtime_error("Unbalanced bookings");
       }
-   std::println("[PASS] debit/credit control: difference = 0");
-   // Per-account analysis, evaluated by SQL Server.
-   std::println("Account balances (debit - credit, cents):");
+   std::println("[PASS] debit/credit control: difference = 0 EUR");
+   std::println("Account balances (debit - credit, EUR):");
    for (std::string const strCode : {"1000", "1200", "1400", "1600", "1776", "4000", "4900"}) {
-      auto aAccount = aDb.ExecuteOne<long long, long long>(
+      auto aAccount = aDb.ExecuteOne<adecc::money_ty, adecc::money_ty>(
          "SELECT COALESCE(SUM(CASE WHEN b.debit_account_id=a.id "
-         "THEN b.amount_cents ELSE CONVERT(bigint,0) END), CONVERT(bigint,0)), "
+         "THEN b.amount_eur ELSE CONVERT(decimal(18,2),0) END), CONVERT(decimal(18,2),0)), "
          "COALESCE(SUM(CASE WHEN b.credit_account_id=a.id "
-         "THEN b.amount_cents ELSE CONVERT(bigint,0) END), CONVERT(bigint,0)) "
+         "THEN b.amount_eur ELSE CONVERT(decimal(18,2),0) END), CONVERT(decimal(18,2),0)) "
          "FROM dbo.AdeccCsvAccount a "
          "LEFT JOIN dbo.AdeccCsvBooking b "
          "ON b.debit_account_id=a.id OR b.credit_account_id=a.id "
          "WHERE a.code=:Code",
          database_ty::Params(database_ty::Param("Code", strCode)));
       if (!aAccount) { throw std::runtime_error("Cannot evaluate account " + strCode); }
-      auto const [iDebit, iCredit] = *aAccount;
-      std::println("  {}: debit={} credit={} balance={}", strCode, iDebit, iCredit,
-         iDebit - iCredit);
+      double const iDebit = std::get<0>(*aAccount).Get();
+      double const iCredit = std::get<1>(*aAccount).Get();
+      std::println("  {}: debit={:.2f} credit={:.2f} balance={:.2f}",
+         strCode, iDebit, iCredit, iDebit - iCredit);
       }
+   }
+
+adecc::money_ty ParseEuro(std::string const& strText) {
+   std::string strValue = strText;
+   std::replace(strValue.begin(), strValue.end(), ',', '.');
+   std::size_t uRead = 0;
+   double const dValue = std::stod(strValue, &uRead);
+   if (uRead != strValue.size() || !std::isfinite(dValue) || dValue <= 0.0) {
+      throw std::runtime_error("Invalid positive euro amount: " + strText);
+      }
+   return adecc::money_ty{dValue};
+   }
+
+adecc::date_ty ParseInvoiceDate(std::string const& strText) {
+   // Reuse the existing chrono workaround's format-aware parser; no zonedb.
+   for (adecc::DateFmt const aFormat :
+      {adecc::DateFmt::ISO, adecc::DateFmt::EUROPE, adecc::DateFmt::US}) {
+      auto optDate = adecc::parseDate(strText, aFormat);
+      if (optDate && optDate->ok()) { return *optDate; }
+      }
+   throw std::runtime_error("Unsupported invoice date: " + strText);
    }
 
 std::size_t StoreBookings(database_ty& aDb, std::filesystem::path const& aPath,
@@ -216,7 +240,9 @@ std::size_t StoreBookings(database_ty& aDb, std::filesystem::path const& aPath,
             adecc::BindMapping<3, csv_types, booking_types>(mpSalutations),
             adecc::BindMapping<4, csv_types, booking_types>(mpKinds),
             adecc::BindMapping<5, csv_types, booking_types>(mpAccounts),
-            adecc::BindMapping<6, csv_types, booking_types>(mpAccounts));
+            adecc::BindMapping<6, csv_types, booking_types>(mpAccounts),
+            adecc::BindMapping<7, csv_types, booking_types>(ParseEuro),
+            adecc::BindMapping<8, csv_types, booking_types>(ParseInvoiceDate));
          });
    auto aSink = booking_types::invoke([&]<typename... types_ty>() {
       return aDb.template MakeOutputSink<types_ty...>(
