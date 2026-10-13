@@ -73,13 +73,15 @@ target_compile_definitions(adecc_mssql_csv_pipeline PRIVATE
    CHRONO_WORK_AROUND CHRONO_MISSED_ZONEDB)
 target_include_directories(adecc_mssql_csv_pipeline PRIVATE
    "${DECKKERNEL_ROOT}/adecc/cpp_core"
-   "${DECKKERNEL_ROOT}/adecc/mssql")
+   "${DECKKERNEL_ROOT}/adecc/mssql"
+   "${DECKKERNEL_ROOT}/adecc/cpp_domain")
 if(WIN32)
    target_link_libraries(adecc_mssql_csv_pipeline PRIVATE odbc32)
 else()
    target_link_libraries(adecc_mssql_csv_pipeline PRIVATE ODBC::ODBC)
 endif()
 install(TARGETS adecc_mssql_csv_pipeline RUNTIME DESTINATION .)
+install(FILES "${CMAKE_CURRENT_LIST_DIR}/bookings.csv" DESTINATION .)
 
 target_compile_definitions(
    adecc_mssql_odbc_test
