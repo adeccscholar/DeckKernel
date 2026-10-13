@@ -16,7 +16,7 @@
    `adecc::Transform` and `BindMapping` for four foreign keys:
    salutation, booking kind, debit account, credit account.
 5. The bookings use `PersistentSystemData` and `MakeOutputSink`.
-6. The amount is converted into `adecc::money_ty`, and the invoice date into `adecc::date_ty` using the format-aware `parseDate` provided by the chrono workaround (`CHRONO_WORK_AROUND`, without timezone database support).
+6. The amount is parsed by `cpp_domain` policies (`TrimStringConversionPolicy`, `GermanDecimalToFloatConversionPolicy`, `PositiveNumberPolicy`) and passed through `ConvertTo` into `adecc::money_ty`. The invoice date uses `CaseConversionPolicy` to choose ISO, European or US `ConvertToConversionPolicy`, followed by `ValidYearMonthDayPolicy`, producing `adecc::date_ty`. The build retains `CHRONO_WORK_AROUND` and `CHRONO_MISSED_ZONEDB`; no timezone database is used.
 7. SQL Server evaluates the total turnover, verifies debit/credit equality
    and calculates debit, credit, and debit-minus-credit balances for each account.
 
