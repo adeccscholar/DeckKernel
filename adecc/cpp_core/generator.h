@@ -117,12 +117,12 @@ namespace adecc {
          friend bool operator==(iterator const& it, std::default_sentinel_t) noexcept { return !it.h_; }
 
          // Dereference returns a reference to the buffered value
-         value_type const& operator*() const {
+         value_type& operator*() const {
             rethrow_if_failed_();
             return *(h_.promise().current_);
          }
 
-         value_type const* operator->() const {
+         value_type* operator->() const {
             rethrow_if_failed_();
             return std::addressof(*(h_.promise().current_));
          }
