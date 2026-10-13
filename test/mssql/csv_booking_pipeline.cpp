@@ -284,11 +284,13 @@ int main(int iArgc, char** argv) {
       auto aTransaction = aDb.Transaction();
       CreateDemoTables(aDb);
       auto mpSalutations = StoreDomain(aDb, "dbo.AdeccCsvSalutation",
-         {"Herr", "Frau", "Firma"});
+         {"Herr", "Frau", "Firma", "Divers"});
       auto mpKinds = StoreDomain(aDb, "dbo.AdeccCsvKind",
-         {"Rechnung", "Gutschrift", "Storno"});
+         {"Rechnung", "Gutschrift", "Storno", "Lastschrift"});
       auto mpAccounts = StoreAccounts(aDb);
-      auto uCount = ImportCsvBookings(aDb, iArgc > 1 ? argv[1] : "bookings.csv",
+      auto const aCsvPath = iArgc > 1 ? std::filesystem::path{argv[1]}
+         : std::filesystem::absolute(argv[0]).parent_path() / "bookings.csv";
+      auto uCount = ImportCsvBookings(aDb, aCsvPath,
          mpSalutations, mpKinds, mpAccounts);
       PrintReport(aDb);
       aTransaction.CommitAndClose();
