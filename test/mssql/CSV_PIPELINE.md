@@ -16,7 +16,8 @@
    `adecc::Transform` and `BindMapping` for four foreign keys:
    salutation, booking kind, debit account, credit account.
 5. The bookings use `PersistentSystemData` and `MakeOutputSink`.
-6. SQL Server evaluates the total turnover, verifies debit/credit equality
+6. The amount is converted into `adecc::money_ty`, and the invoice date into `adecc::date_ty` using the format-aware `parseDate` provided by the chrono workaround (`CHRONO_WORK_AROUND`, without timezone database support).
+7. SQL Server evaluates the total turnover, verifies debit/credit equality
    and calculates debit, credit, and debit-minus-credit balances for each account.
 
 ## Example
@@ -24,11 +25,11 @@
 `bookings.csv` contains **600 deterministic data rows** with this schema:
 
 ```csv
-reference;name;salutation;kind;debit_account;credit_account;amount_cents
-BU-000001;Anna Weber;Frau;Rechnung;1200;4000;1137
+reference;name;salutation;kind;debit_account;credit_account;amount_eur;invoice_date
+BU-000001;Anna Weber;Frau;Rechnung;1200;4000;11,37;01.01.2026
 ```
 
-Amounts are positive integer cents; debit/credit direction is defined by
+Amounts are positive euro values with comma decimals. Dates demonstrate European, US and ISO formats. Debit/credit direction is defined by
 the two separate account columns. This avoids introducing locale-dependent
 decimal parsing or double-entry ambiguity into the lesson.
 
