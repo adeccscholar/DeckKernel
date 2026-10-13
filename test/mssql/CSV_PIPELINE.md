@@ -19,6 +19,10 @@
 6. The amount is parsed by `cpp_domain` policies (`TrimStringConversionPolicy`, `GermanDecimalToFloatConversionPolicy`, `PositiveNumberPolicy`) and passed through `ConvertTo` into `adecc::money_ty`. The invoice date uses `CaseConversionPolicy` to choose ISO, European or US `ConvertToConversionPolicy`, followed by `ValidYearMonthDayPolicy`, producing `adecc::date_ty`. The build retains `CHRONO_WORK_AROUND` and `CHRONO_MISSED_ZONEDB`; no timezone database is used.
 7. SQL Server evaluates the total turnover, verifies debit/credit equality
    and calculates debit, credit, and debit-minus-credit balances for each account.
+8. A second `WriteGridModel<OStreamGridBackend<>>` renders twelve sample booking/person rows.
+   A reverse `std::map<int, std::string>` maps salutation identities back to display labels.
+   `adecc::Iban`, `adecc::VatId_DE` and `InvoiceDate` use their domain `str()`/stringify
+   policies; invoice dates appear in European format.
 
 ## Example
 
