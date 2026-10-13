@@ -13,9 +13,10 @@
 #include "type_transformations.h"
 #include "file_as_tuple.h"
 #include "system_data_persistent.h"
+#include "policy_common.h"
+#include "policies_hawkers_tray.h"
 #include <optional>
 #include <print>
-#include <algorithm>
 #include <cmath>
 
 #include <array>
@@ -206,26 +207,35 @@ void PrintReport(database_ty& aDb) {
       }
    }
 
-adecc::money_ty ParseEuro(std::string const& strText) {
-   std::string strValue = strText;
-   std::replace(strValue.begin(), strValue.end(), ',', '.');
-   std::size_t uRead = 0;
-   double const dValue = std::stod(strValue, &uRead);
-   if (uRead != strValue.size() || !std::isfinite(dValue) || dValue <= 0.0) {
-      throw std::runtime_error("Invalid positive euro amount: " + strText);
-      }
-   return adecc::money_ty{dValue};
-   }
+// cpp_domain building blocks: each conversion/validation is a compile-time policy.
+using IsoDateCase = adecc::CaseConversion<
+   adecc::RegexStringPolicy<R"(^[0-9]{4}-[0-9]{2}-[0-9]{2}$)">,
+   adecc::ConvertToConversionPolicy<std::string, adecc::date_ty>>;
+using EuropeanDateCase = adecc::CaseConversion<
+   adecc::RegexStringPolicy<R"(^[0-9]{2}\\.[0-9]{2}\\.[0-9]{4}$)">,
+   adecc::ConvertToConversionPolicy<std::string, adecc::date_ty, adecc::DateFmt::EUROPE>>;
+using UsDateCase = adecc::CaseConversion<
+   adecc::RegexStringPolicy<R"(^[0-9]{2}/[0-9]{2}/[0-9]{4}$)">,
+   adecc::ConvertToConversionPolicy<std::string, adecc::date_ty, adecc::DateFmt::US>>;
+using InvoiceDateConversion = adecc::ConversionChainPolicy<
+   adecc::TrimStringConversionPolicy,
+   adecc::CaseConversionPolicy<IsoDateCase, EuropeanDateCase, UsDateCase>>;
+using InvoiceDate = adecc::ConvertedPolicyValue<"InvoiceDate",
+   InvoiceDateConversion, adecc::ValidYearMonthDayPolicy>;
 
-adecc::date_ty ParseInvoiceDate(std::string const& strText) {
-   // Reuse the existing chrono workaround's format-aware parser; no zonedb.
-   for (adecc::DateFmt const aFormat :
-      {adecc::DateFmt::ISO, adecc::DateFmt::EUROPE, adecc::DateFmt::US}) {
-      auto optDate = adecc::parseDate(strText, aFormat);
-      if (optDate && optDate->ok()) { return *optDate; }
-      }
-   throw std::runtime_error("Unsupported invoice date: " + strText);
-   }
+using EuroConversion = adecc::ConversionChainPolicy<
+   adecc::TrimStringConversionPolicy,
+   adecc::GermanDecimalToFloatConversionPolicy<double>>;
+using EuroAmount = adecc::ConvertedPolicyValue<"EuroAmount",
+   EuroConversion, adecc::PositiveNumberPolicy<double>>;
+
+// PolicyValue -> ConvertTo -> persistent database type. No local string parser.
+constexpr auto ToEuro = [](std::string const& strSource) -> adecc::money_ty {
+   return adecc::ConvertTo<adecc::money_ty>(EuroAmount{strSource}.Value());
+   };
+constexpr auto ToInvoiceDate = [](std::string const& strSource) -> adecc::date_ty {
+   return adecc::ConvertTo<adecc::date_ty>(InvoiceDate{strSource});
+   };
 
 std::size_t StoreBookings(database_ty& aDb, std::filesystem::path const& aPath,
    std::map<std::string, long long> const& mpSalutations,
@@ -241,8 +251,8 @@ std::size_t StoreBookings(database_ty& aDb, std::filesystem::path const& aPath,
             adecc::BindMapping<4, csv_types, booking_types>(mpKinds),
             adecc::BindMapping<5, csv_types, booking_types>(mpAccounts),
             adecc::BindMapping<6, csv_types, booking_types>(mpAccounts),
-            adecc::BindMapping<7, csv_types, booking_types>(ParseEuro),
-            adecc::BindMapping<8, csv_types, booking_types>(ParseInvoiceDate));
+            adecc::BindMapping<7, csv_types, booking_types>(ToEuro),
+            adecc::BindMapping<8, csv_types, booking_types>(ToInvoiceDate));
          });
    auto aSink = booking_types::invoke([&]<typename... types_ty>() {
       return aDb.template MakeOutputSink<types_ty...>(
