@@ -18,6 +18,7 @@
 #include <optional>
 #include <print>
 #include <cmath>
+#include <algorithm>
 
 #include <array>
 #include <cstdlib>
@@ -38,14 +39,39 @@ namespace {
 using database_ty = adecc::db::logical_database<
    adecc::db::mssql::mssql_database, adecc::db::mssql::query>;
 
+// cpp_domain building blocks: each conversion/validation is a compile-time policy.
+using IsoDateCase = adecc::CaseConversion<
+   adecc::RegexStringPolicy<R"(^[0-9]{4}-[0-9]{2}-[0-9]{2}$)">,
+   adecc::ConvertToConversionPolicy<std::string, adecc::date_ty>>;
+using EuropeanDateCase = adecc::CaseConversion<
+   adecc::RegexStringPolicy<R"(^[0-9]{2}\.[0-9]{2}\.[0-9]{4}$)">,
+   adecc::ConvertToConversionPolicy<std::string, adecc::date_ty, adecc::DateFmt::EUROPE>>;
+using UsDateCase = adecc::CaseConversion<
+   adecc::RegexStringPolicy<R"(^[0-9]{2}/[0-9]{2}/[0-9]{4}$)">,
+   adecc::ConvertToConversionPolicy<std::string, adecc::date_ty, adecc::DateFmt::US>>;
+using InvoiceDateConversion = adecc::ConversionChainPolicy<
+   adecc::TrimStringConversionPolicy,
+   adecc::CaseConversionPolicy<IsoDateCase, EuropeanDateCase, UsDateCase>>;
+using InvoiceDate = adecc::ConvertedPolicyValue<"InvoiceDate",
+   InvoiceDateConversion, adecc::ValidYearMonthDayPolicy>;
+
+using EuroConversion = adecc::ConversionChainPolicy<
+   adecc::TrimStringConversionPolicy,
+   adecc::GermanDecimalToFloatConversionPolicy<double>>;
+using EuroAmount = adecc::ConvertedPolicyValue<"EuroAmount",
+   EuroConversion, adecc::PositiveNumberPolicy<double>>;
+
+
+using mapping_ids_ty = std::map<std::string, long long>;
+
 using domain_types = adecc::defined_type_list<long long, std::string>;
 using account_types = adecc::defined_type_list<long long, std::string, std::string>;
 using csv_file_types = adecc::defined_type_list<
    std::string, std::string, std::string, std::string,
-   std::string, std::string, std::string, std::string>;
+   std::string, std::string, EuroAmount, InvoiceDate>;
 using csv_types = adecc::defined_type_list<
    long long, std::string, std::string, std::string,
-   std::string, std::string, std::string, std::string, std::string>;
+   std::string, std::string, std::string, EuroAmount, InvoiceDate>;
 using booking_types = adecc::defined_type_list<
    long long, std::string, std::string, long long,
    long long, long long, long long, adecc::money_ty, adecc::date_ty>;
@@ -88,44 +114,41 @@ database_ty Connect() {
 
 // The adecc CSV source is a typed generator; no custom CSV parser.
 auto ReadCsv(std::filesystem::path const& aPath) {
-   if (!std::filesystem::exists(aPath)) {
-      throw std::runtime_error("Cannot open CSV: " + aPath.string());
-      }
    return adecc::FromCsvFileTyped<false, true, csv_file_types>(aPath, ";", true);
    }
 
 void CreateDemoTables(database_ty& aDb) {
-   // Dedicated disposable teaching tables; never touch production tables.
-   aDb.ExecuteCommand("DROP TABLE IF EXISTS dbo.AdeccCsvBooking");
-   aDb.ExecuteCommand("DROP TABLE IF EXISTS dbo.AdeccCsvSalutation");
-   aDb.ExecuteCommand("DROP TABLE IF EXISTS dbo.AdeccCsvKind");
-   aDb.ExecuteCommand("DROP TABLE IF EXISTS dbo.AdeccCsvAccount");
-   aDb.ExecuteCommand(
+   // Disposable teaching tables, created in dependency order.
+   std::vector<std::string> const vecCommands{
+      "DROP TABLE IF EXISTS dbo.AdeccCsvBooking",
+      "DROP TABLE IF EXISTS dbo.AdeccCsvSalutation",
+      "DROP TABLE IF EXISTS dbo.AdeccCsvKind",
+      "DROP TABLE IF EXISTS dbo.AdeccCsvAccount",
       "CREATE TABLE dbo.AdeccCsvSalutation ("
-      "id bigint IDENTITY(1,1) PRIMARY KEY, code nvarchar(40) NOT NULL UNIQUE)");
-   aDb.ExecuteCommand(
+         "id bigint IDENTITY(1,1) PRIMARY KEY, code nvarchar(40) NOT NULL UNIQUE)",
       "CREATE TABLE dbo.AdeccCsvKind ("
-      "id bigint IDENTITY(1,1) PRIMARY KEY, code nvarchar(40) NOT NULL UNIQUE)");
-   aDb.ExecuteCommand(
+         "id bigint IDENTITY(1,1) PRIMARY KEY, code nvarchar(40) NOT NULL UNIQUE)",
       "CREATE TABLE dbo.AdeccCsvAccount ("
-      "id bigint IDENTITY(1,1) PRIMARY KEY,"
-      "code nvarchar(20) NOT NULL UNIQUE,"
-      "name nvarchar(100) NOT NULL)");
-   aDb.ExecuteCommand(
+         "id bigint IDENTITY(1,1) PRIMARY KEY,"
+         "code nvarchar(20) NOT NULL UNIQUE,"
+         "name nvarchar(100) NOT NULL)",
       "CREATE TABLE dbo.AdeccCsvBooking ("
-      "id bigint IDENTITY(1,1) PRIMARY KEY,"
-      "reference nvarchar(40) NOT NULL UNIQUE,"
-      "name nvarchar(200) NOT NULL,"
-      "salutation_id bigint NOT NULL REFERENCES dbo.AdeccCsvSalutation(id),"
-      "kind_id bigint NOT NULL REFERENCES dbo.AdeccCsvKind(id),"
-      "debit_account_id bigint NOT NULL REFERENCES dbo.AdeccCsvAccount(id),"
-      "credit_account_id bigint NOT NULL REFERENCES dbo.AdeccCsvAccount(id),"
-      "amount_eur decimal(18,2) NOT NULL CHECK(amount_eur > 0),"
-      "invoice_date date NOT NULL,"
-      "CONSTRAINT CK_AdeccCsvDistinctAccounts CHECK(debit_account_id <> credit_account_id))");
+         "id bigint IDENTITY(1,1) PRIMARY KEY,"
+         "reference nvarchar(40) NOT NULL UNIQUE,"
+         "name nvarchar(200) NOT NULL,"
+         "salutation_id bigint NOT NULL REFERENCES dbo.AdeccCsvSalutation(id),"
+         "kind_id bigint NOT NULL REFERENCES dbo.AdeccCsvKind(id),"
+         "debit_account_id bigint NOT NULL REFERENCES dbo.AdeccCsvAccount(id),"
+         "credit_account_id bigint NOT NULL REFERENCES dbo.AdeccCsvAccount(id),"
+         "amount_eur decimal(18,2) NOT NULL CHECK(amount_eur > 0),"
+         "invoice_date date NOT NULL,"
+         "CONSTRAINT CK_AdeccCsvDistinctAccounts CHECK(debit_account_id <> credit_account_id))"
+      };
+   std::for_each(vecCommands.begin(), vecCommands.end(),
+      [&](std::string const& strSql) { aDb.ExecuteCommand(strSql); });
    }
 
-std::map<std::string, long long> StoreDomain(
+mapping_ids_ty StoreDomain(
    database_ty& aDb, std::string_view svTable, std::vector<std::string> const& vecCodes) {
    auto aOutput = domain_types::invoke([&]<typename... types_ty>() {
       return aDb.template MakeOutputRange<types_ty...>(
@@ -138,7 +161,7 @@ std::map<std::string, long long> StoreDomain(
    auto aSource = vecCodes | std::views::transform([](std::string const& strCode) {
       return domain_types::type_list{0LL, strCode};
       });
-   std::map<std::string, long long> mpIds;
+   mapping_ids_ty mpIds;
    for (auto const& tplRow : aOutput(aSource)) {
       mpIds.emplace(std::get<1>(tplRow), std::get<0>(tplRow));
       }
@@ -148,7 +171,7 @@ std::map<std::string, long long> StoreDomain(
    return mpIds;
    }
 
-std::map<std::string, long long> StoreAccounts(database_ty& aDb) {
+mapping_ids_ty StoreAccounts(database_ty& aDb) {
    std::vector<account_types::type_list> vecAccounts{
       {0LL, "1000", "Bank"},
       {0LL, "1200", "Forderungen"},
@@ -162,7 +185,7 @@ std::map<std::string, long long> StoreAccounts(database_ty& aDb) {
       return aDb.template MakeOutputRange<types_ty...>(
          TAccount::CreateInsertSql(), TAccount::CreateInsertOutputParameters());
       });
-   std::map<std::string, long long> mpIds;
+   mapping_ids_ty mpIds;
    for (auto const& tplAccount : aOutput(vecAccounts)) {
       mpIds.emplace(std::get<1>(tplAccount), std::get<0>(tplAccount));
       }
@@ -207,40 +230,10 @@ void PrintReport(database_ty& aDb) {
       }
    }
 
-// cpp_domain building blocks: each conversion/validation is a compile-time policy.
-using IsoDateCase = adecc::CaseConversion<
-   adecc::RegexStringPolicy<R"(^[0-9]{4}-[0-9]{2}-[0-9]{2}$)">,
-   adecc::ConvertToConversionPolicy<std::string, adecc::date_ty>>;
-using EuropeanDateCase = adecc::CaseConversion<
-   adecc::RegexStringPolicy<R"(^[0-9]{2}\.[0-9]{2}\.[0-9]{4}$)">,
-   adecc::ConvertToConversionPolicy<std::string, adecc::date_ty, adecc::DateFmt::EUROPE>>;
-using UsDateCase = adecc::CaseConversion<
-   adecc::RegexStringPolicy<R"(^[0-9]{2}/[0-9]{2}/[0-9]{4}$)">,
-   adecc::ConvertToConversionPolicy<std::string, adecc::date_ty, adecc::DateFmt::US>>;
-using InvoiceDateConversion = adecc::ConversionChainPolicy<
-   adecc::TrimStringConversionPolicy,
-   adecc::CaseConversionPolicy<IsoDateCase, EuropeanDateCase, UsDateCase>>;
-using InvoiceDate = adecc::ConvertedPolicyValue<"InvoiceDate",
-   InvoiceDateConversion, adecc::ValidYearMonthDayPolicy>;
-
-using EuroConversion = adecc::ConversionChainPolicy<
-   adecc::TrimStringConversionPolicy,
-   adecc::GermanDecimalToFloatConversionPolicy<double>>;
-using EuroAmount = adecc::ConvertedPolicyValue<"EuroAmount",
-   EuroConversion, adecc::PositiveNumberPolicy<double>>;
-
-// PolicyValue -> ConvertTo -> persistent database type. No local string parser.
-constexpr auto ToEuro = [](std::string const& strSource) -> adecc::money_ty {
-   return adecc::ConvertTo<adecc::money_ty>(EuroAmount{strSource}.Value());
-   };
-constexpr auto ToInvoiceDate = [](std::string const& strSource) -> adecc::date_ty {
-   return adecc::ConvertTo<adecc::date_ty>(InvoiceDate{strSource});
-   };
-
-std::size_t StoreBookings(database_ty& aDb, std::filesystem::path const& aPath,
-   std::map<std::string, long long> const& mpSalutations,
-   std::map<std::string, long long> const& mpKinds,
-   std::map<std::string, long long> const& mpAccounts) {
+std::size_t ImportCsvBookings(database_ty& aDb, std::filesystem::path const& aPath,
+   mapping_ids_ty const& mpSalutations,
+   mapping_ids_ty const& mpKinds,
+   mapping_ids_ty const& mpAccounts) {
    auto aSource = ReadCsv(aPath)
       | std::views::transform([](csv_file_types::type_list const& tplRow) {
          return std::tuple_cat(std::tuple{0LL}, tplRow);
@@ -250,9 +243,7 @@ std::size_t StoreBookings(database_ty& aDb, std::filesystem::path const& aPath,
             adecc::BindMapping<3, csv_types, booking_types>(mpSalutations),
             adecc::BindMapping<4, csv_types, booking_types>(mpKinds),
             adecc::BindMapping<5, csv_types, booking_types>(mpAccounts),
-            adecc::BindMapping<6, csv_types, booking_types>(mpAccounts),
-            adecc::BindMapping<7, csv_types, booking_types>(ToEuro),
-            adecc::BindMapping<8, csv_types, booking_types>(ToInvoiceDate));
+            adecc::BindMapping<6, csv_types, booking_types>(mpAccounts));
          });
    auto aSink = booking_types::invoke([&]<typename... types_ty>() {
       return aDb.template MakeOutputSink<types_ty...>(
@@ -280,7 +271,7 @@ int main(int iArgc, char** argv) {
       auto mpKinds = StoreDomain(aDb, "dbo.AdeccCsvKind",
          {"Rechnung", "Gutschrift", "Storno"});
       auto mpAccounts = StoreAccounts(aDb);
-      auto uCount = StoreBookings(aDb, iArgc > 1 ? argv[1] : "bookings.csv",
+      auto uCount = ImportCsvBookings(aDb, iArgc > 1 ? argv[1] : "bookings.csv",
          mpSalutations, mpKinds, mpAccounts);
       PrintReport(aDb);
       aTransaction.CommitAndClose();
