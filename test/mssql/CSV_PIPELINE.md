@@ -7,8 +7,8 @@
 
 1. The built-in `adecc::FromCsvFileTyped<false, true, csv_file_types>`
    reads the semicolon-delimited CSV as a typed generator of domain values (`EuroAmount`, `InvoiceDate`); no custom parser or file-existence precheck is required.
-2. Salutations (**Herr**, **Frau**, **Firma**) and booking kinds
-   (**Rechnung**, **Gutschrift**, **Storno**) are stored as lookup tables using
+2. Salutations (**Herr**, **Frau**, **Firma**, **Divers**) and booking kinds
+   (**Rechnung**, **Gutschrift**, **Storno**, **Lastschrift**) are stored as lookup tables using
    `MakeOutputRange`; generated `IDENTITY` keys are collected in maps.
 3. The account master data (bank, receivables, payables, revenues and expenses)
    uses `PersistentSystemData` for insert SQL and parameters.
@@ -22,11 +22,11 @@
 
 ## Example
 
-`bookings.csv` contains **600 deterministic data rows** with this schema:
+`bookings.csv` contains **850 deterministic data rows** with this schema:
 
 ```csv
-reference;name;salutation;kind;debit_account;credit_account;amount_eur;invoice_date
-BU-000001;Anna Weber;Frau;Rechnung;1200;4000;11,37;01.01.2026
+reference;name;salutation;kind;debit_account;credit_account;amount_eur;invoice_date;iban;vat_id_de
+BU-000001;Anna Weber;Frau;Rechnung;1200;4000;13,73;01.01.2026;DE34370400440000001000;DE123456000
 ```
 
 Amounts are positive euro values with comma decimals. Dates demonstrate European, US and ISO formats. Debit/credit direction is defined by
@@ -40,7 +40,8 @@ cmake -S test/mssql -B test/mssql/build/Release -G Ninja -DCMAKE_BUILD_TYPE=Rele
 cmake --build test/mssql/build/Release --target adecc_mssql_csv_pipeline
 set ADECC_MSSQL_SERVER=localhost
 set ADECC_MSSQL_DATABASE=Person_Test
-test\mssql\build\Release\adecc_mssql_csv_pipeline.exe test\mssql\bookings.csv
+cmake --install test/mssql/build/Release
+apps\Release\adecc_mssql_csv_pipeline.exe
 ```
 
 Windows integrated authentication is used. C++Builder, Ninja and the existing
@@ -56,3 +57,5 @@ format is deliberately simple and does not implement all RFC 4180 quoting
 rules.
 
 The four demo tables are prepared through a `std::vector<std::string>` of SQL commands executed via `std::for_each`. All code-to-ID mappings share the `mapping_ids_ty` alias.
+
+The demo installs `bookings.csv` next to `adecc_mssql_csv_pipeline.exe` and resolves it relative to the executable directory when no CSV argument is provided. The IBAN field is normalized and validated by `adecc::Iban` (modulo 97); `vat_id_de` is normalized and checksum-validated by `adecc::VatId_DE` from `sepa_policies_hawkers_tray.h`. These are illustrative test identifiers, not real payee identifiers. **The field `vat_id_de` is a German VAT identification number (USt-IdNr.), not a domestic tax number (Steuernummer).**
