@@ -303,13 +303,10 @@ void PrintReport(database_ty& aDb, id_names_ty const& mpAccountNames) {
    auto aAccounts = account_source_ty::invoke([&]<typename... types_ty>() {
       return aDb.template Execute<types_ty...>(
          "SELECT a.code AS AccountCode, CAST(a.id AS int) AS AccountId, "
-         "COALESCE(SUM(CASE WHEN b.debit_account_id=a.id THEN b.amount_eur "
-         "ELSE CONVERT(decimal(18,2),0) END), CONVERT(decimal(18,2),0)) AS DebitAmount, "
-         "COALESCE(SUM(CASE WHEN b.credit_account_id=a.id THEN b.amount_eur "
-         "ELSE CONVERT(decimal(18,2),0) END), CONVERT(decimal(18,2),0)) AS CreditAmount, "
-         "COALESCE(SUM(CASE WHEN b.debit_account_id=a.id THEN b.amount_eur "
-         "WHEN b.credit_account_id=a.id THEN -b.amount_eur "
-         "ELSE CONVERT(decimal(18,2),0) END), CONVERT(decimal(18,2),0)) AS BalanceAmount "
+         "SUM(IIF(b.debit_account_id=a.id, b.amount_eur, 0)) AS DebitAmount, "
+         "SUM(IIF(b.credit_account_id=a.id, b.amount_eur, 0)) AS CreditAmount, "
+         "SUM(IIF(b.debit_account_id=a.id, b.amount_eur, 0) "
+         "- IIF(b.credit_account_id=a.id, b.amount_eur, 0)) AS BalanceAmount "
          "FROM dbo.AdeccCsvAccount a LEFT JOIN dbo.AdeccCsvBooking b "
          "ON b.debit_account_id=a.id OR b.credit_account_id=a.id "
          "GROUP BY a.id, a.code ORDER BY a.code");
