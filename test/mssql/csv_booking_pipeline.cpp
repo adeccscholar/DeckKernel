@@ -70,6 +70,7 @@ using booking_iban_ty = adecc::Iban;
 using booking_vat_ty = adecc::VatId_DE;
 
 using mapping_ids_ty = std::map<std::string, long long>;
+using id_names_ty = std::map<int, std::string>;
 
 using domain_types = adecc::defined_type_list<long long, std::string>;
 using account_types = adecc::defined_type_list<long long, std::string, std::string>;
@@ -183,7 +184,7 @@ mapping_ids_ty StoreDomain(
    return mpIds;
    }
 
-mapping_ids_ty StoreAccounts(database_ty& aDb) {
+mapping_ids_ty StoreAccounts(database_ty& aDb, id_names_ty& mpAccountNames) {
    std::vector<account_types::type_list> vecAccounts{
       {0LL, "1000", "Bank"},
       {0LL, "1200", "Forderungen"},
@@ -206,6 +207,7 @@ mapping_ids_ty StoreAccounts(database_ty& aDb) {
    mapping_ids_ty mpIds;
    for (auto const& tplAccount : aOutput(vecAccounts)) {
       mpIds.emplace(std::get<1>(tplAccount), std::get<0>(tplAccount));
+      mpAccountNames.emplace(static_cast<int>(std::get<0>(tplAccount)), std::get<2>(tplAccount));
       }
    if (mpIds.size() != vecAccounts.size()) {
       throw std::runtime_error("Account IDs incomplete");
@@ -263,7 +265,7 @@ void PrintPeople(database_ty& aDb, mapping_ids_ty const& mpSalutations) {
    aGrid += aDisplay;
    }
 
-void PrintReport(database_ty& aDb) {
+void PrintReport(database_ty& aDb, id_names_ty const& mpAccountNames) {
    auto aTotals = aDb.ExecuteOne<long long, adecc::money_ty>(
       "SELECT COUNT_BIG(*) AS BookingCount, "
       "COALESCE(SUM(amount_eur), CONVERT(decimal(18,2),0)) AS TotalAmount "
@@ -282,36 +284,45 @@ void PrintReport(database_ty& aDb) {
    using backend_ty = adecc::grid::OStreamGridBackend<>;
    using grid_ty = adecc::grid::WriteGridModel<backend_ty>;
    using align_ty = adecc::EAlignmentType;
+   using account_source_ty = adecc::defined_type_list<
+      int, std::string, adecc::money_ty, adecc::money_ty, adecc::money_ty>;
+   using account_display_ty = adecc::defined_type_list<
+      std::string, std::string, std::string, std::string, std::string>;
+
    grid_ty aGrid{
       backend_ty{std::cout, backend_ty::TableSeparators()},
       std::vector<std::tuple<std::string, int, align_ty>>{
          {"Konto", 8, align_ty::left},
+         {"Kontoname", 26, align_ty::left},
          {"Soll EUR", 14, align_ty::right},
          {"Haben EUR", 14, align_ty::right},
          {"Saldo EUR", 14, align_ty::right}
          }
       };
-   for (std::string const strCode : {"1000", "1200", "1300", "1400", "1600", "1776", "1800",
-      "3000", "4000", "4200", "4900", "5000", "6300"}) {
-      auto aAccount = aDb.ExecuteOne<adecc::money_ty, adecc::money_ty>(
-         "SELECT COALESCE(SUM(CASE WHEN b.debit_account_id=a.id "
-         "THEN b.amount_eur ELSE CONVERT(decimal(18,2),0) END), CONVERT(decimal(18,2),0)) AS DebitAmount, "
-         "COALESCE(SUM(CASE WHEN b.credit_account_id=a.id "
-         "THEN b.amount_eur ELSE CONVERT(decimal(18,2),0) END), CONVERT(decimal(18,2),0)) AS CreditAmount "
-         "FROM dbo.AdeccCsvAccount a "
-         "LEFT JOIN dbo.AdeccCsvBooking b "
+
+   auto aAccounts = account_source_ty::invoke([&]<typename... types_ty>() {
+      return aDb.template Execute<types_ty...>(
+         "SELECT CAST(a.id AS int) AS AccountId, a.code AS AccountCode, "
+         "COALESCE(SUM(CASE WHEN b.debit_account_id=a.id THEN b.amount_eur "
+         "ELSE CONVERT(decimal(18,2),0) END), CONVERT(decimal(18,2),0)) AS DebitAmount, "
+         "COALESCE(SUM(CASE WHEN b.credit_account_id=a.id THEN b.amount_eur "
+         "ELSE CONVERT(decimal(18,2),0) END), CONVERT(decimal(18,2),0)) AS CreditAmount, "
+         "COALESCE(SUM(CASE WHEN b.debit_account_id=a.id THEN b.amount_eur "
+         "WHEN b.credit_account_id=a.id THEN -b.amount_eur "
+         "ELSE CONVERT(decimal(18,2),0) END), CONVERT(decimal(18,2),0)) AS BalanceAmount "
+         "FROM dbo.AdeccCsvAccount a LEFT JOIN dbo.AdeccCsvBooking b "
          "ON b.debit_account_id=a.id OR b.credit_account_id=a.id "
-         "WHERE a.code=:Code",
-         database_ty::Params(database_ty::Param("Code", strCode)));
-      if (!aAccount) { throw std::runtime_error("Cannot evaluate account " + strCode); }
-      auto const& [aDebit, aCredit] = *aAccount;
-      aGrid += std::tuple{
-         strCode,
-         std::format("{:.2f}", aDebit.Get()),
-         std::format("{:.2f}", aCredit.Get()),
-         std::format("{:.2f}", aDebit.Get() - aCredit.Get())
-         };
-      }
+         "GROUP BY a.id, a.code ORDER BY a.code");
+      });
+
+   auto aDisplay = aAccounts | std::views::transform(
+      [&](account_source_ty::type_list const& tplRow) {
+         return adecc::Transform<account_source_ty, account_display_ty>(tplRow,
+            adecc::BindMapping<0, account_source_ty, account_display_ty>(mpAccountNames));
+         });
+
+   // The grid is the sink; name lookup and numeric string conversion belong to Transform.
+   aGrid += aDisplay;
    }
 
 std::size_t ImportCsvBookings(database_ty& aDb, std::filesystem::path const& aPath,
@@ -327,7 +338,9 @@ std::size_t ImportCsvBookings(database_ty& aDb, std::filesystem::path const& aPa
             adecc::BindMapping<3, csv_types, booking_types>(mpSalutations),
             adecc::BindMapping<4, csv_types, booking_types>(mpKinds),
             adecc::BindMapping<5, csv_types, booking_types>(mpAccounts),
-            adecc::BindMapping<6, csv_types, booking_types>(mpAccounts));
+            adecc::BindMapping<6, csv_types, booking_types>(mpAccounts),
+            adecc::BindMapping<9, csv_types, booking_types>(
+               [](adecc::Iban const& aIban) { return aIban.Value(); }));
          });
    auto aSink = booking_types::invoke([&]<typename... types_ty>() {
       return aDb.template MakeOutputSink<types_ty...>(
@@ -354,12 +367,13 @@ int main(int iArgc, char** argv) {
          {"Herr", "Frau", "Firma", "Divers"});
       auto mpKinds = StoreDomain(aDb, "dbo.AdeccCsvKind",
          {"Rechnung", "Gutschrift", "Storno", "Lastschrift"});
-      auto mpAccounts = StoreAccounts(aDb);
+      id_names_ty mpAccountNames;
+      auto mpAccounts = StoreAccounts(aDb, mpAccountNames);
       auto const aCsvPath = iArgc > 1 ? std::filesystem::path{argv[1]}
          : std::filesystem::absolute(argv[0]).parent_path() / "bookings.csv";
       auto uCount = ImportCsvBookings(aDb, aCsvPath,
          mpSalutations, mpKinds, mpAccounts);
-      PrintReport(aDb);
+      PrintReport(aDb, mpAccountNames);
       PrintPeople(aDb, mpSalutations);
       aTransaction.CommitAndClose();
       std::cout << "[PASS] " << uCount << " bookings imported\n";
