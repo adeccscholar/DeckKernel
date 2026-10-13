@@ -55,7 +55,8 @@ using InvoiceDateConversion = adecc::ConversionChainPolicy<
    adecc::TrimStringConversionPolicy,
    adecc::CaseConversionPolicy<IsoDateCase, EuropeanDateCase, UsDateCase>>;
 using InvoiceDate = adecc::ConvertedPolicyValue<"InvoiceDate",
-   InvoiceDateConversion, adecc::ValidYearMonthDayPolicy>;
+   InvoiceDateConversion, adecc::ValidYearMonthDayPolicy,
+   adecc::ConvertToStringWithArgumentsPolicy<adecc::date_ty, adecc::DateFmt::EUROPE>>;
 
 using EuroConversion = adecc::ConversionChainPolicy<
    adecc::TrimStringConversionPolicy,
@@ -212,6 +213,46 @@ mapping_ids_ty StoreAccounts(database_ty& aDb) {
    return mpIds;
    }
 
+void PrintPeople(database_ty& aDb, mapping_ids_ty const& mpSalutations) {
+   // Reverse the domain lookup: database identity -> display text.
+   std::map<int, std::string> mpSalutationNames;
+   for (auto const& [strName, iId] : mpSalutations) {
+      mpSalutationNames.emplace(static_cast<int>(iId), strName);
+      }
+
+   using backend_ty = adecc::grid::OStreamGridBackend<>;
+   using grid_ty = adecc::grid::WriteGridModel<backend_ty>;
+   using alignment_ty = adecc::EAlignmentType;
+
+   std::println("Sample bookings and domain-formatted person data:");
+   grid_ty aGrid{
+      backend_ty{std::cout, backend_ty::TableSeparators()},
+      std::vector<std::tuple<std::string, int, alignment_ty>>{
+         {"Name", 20, alignment_ty::left},
+         {"Anrede", 9, alignment_ty::left},
+         {"IBAN", 29, alignment_ty::left},
+         {"USt-IdNr.", 13, alignment_ty::left},
+         {"Rechnungsdatum", 15, alignment_ty::left}
+         }
+      };
+
+   auto aRows = aDb.Execute<std::string, long long, std::string,
+      std::string, adecc::date_ty>(
+      "SELECT TOP (12) name AS PersonName, salutation_id AS SalutationId, "
+      "iban AS Iban, vat_id_de AS VatId, invoice_date AS InvoiceDate "
+      "FROM dbo.AdeccCsvBooking ORDER BY id");
+
+   for (auto const& [strName, iSalutationId, strIban, strVatId, aDate] : aRows) {
+      aGrid += std::tuple{
+         strName,
+         mpSalutationNames.at(static_cast<int>(iSalutationId)),
+         adecc::Iban{strIban}.str(),
+         adecc::VatId_DE{strVatId}.str(),
+         InvoiceDate{aDate}.str()
+         };
+      }
+   }
+
 void PrintReport(database_ty& aDb) {
    auto aTotals = aDb.ExecuteOne<long long, adecc::money_ty>(
       "SELECT COUNT_BIG(*) AS BookingCount, "
@@ -309,6 +350,7 @@ int main(int iArgc, char** argv) {
       auto uCount = ImportCsvBookings(aDb, aCsvPath,
          mpSalutations, mpKinds, mpAccounts);
       PrintReport(aDb);
+      PrintPeople(aDb, mpSalutations);
       aTransaction.CommitAndClose();
       std::cout << "[PASS] " << uCount << " bookings imported\n";
       return 0;
