@@ -15,6 +15,7 @@
 #include "system_data_persistent.h"
 #include "policy_common.h"
 #include "policies_hawkers_tray.h"
+#include "sepa_policies_hawkers_tray.h"
 #include <optional>
 #include <print>
 #include <cmath>
@@ -62,19 +63,26 @@ using EuroAmount = adecc::ConvertedPolicyValue<"EuroAmount",
    EuroConversion, adecc::PositiveNumberPolicy<double>>;
 
 
+// SEPA domain types validate and normalize directly while reading the CSV.
+using booking_iban_ty = adecc::Iban;
+using booking_vat_ty = adecc::VatId_DE;
+
 using mapping_ids_ty = std::map<std::string, long long>;
 
 using domain_types = adecc::defined_type_list<long long, std::string>;
 using account_types = adecc::defined_type_list<long long, std::string, std::string>;
 using csv_file_types = adecc::defined_type_list<
    std::string, std::string, std::string, std::string,
-   std::string, std::string, EuroAmount, InvoiceDate>;
+   std::string, std::string, EuroAmount, InvoiceDate,
+   booking_iban_ty, booking_vat_ty>;
 using csv_types = adecc::defined_type_list<
    long long, std::string, std::string, std::string,
-   std::string, std::string, std::string, EuroAmount, InvoiceDate>;
+   std::string, std::string, std::string, EuroAmount, InvoiceDate,
+   booking_iban_ty, booking_vat_ty>;
 using booking_types = adecc::defined_type_list<
    long long, std::string, std::string, long long,
-   long long, long long, long long, adecc::money_ty, adecc::date_ty>;
+   long long, long long, long long, adecc::money_ty, adecc::date_ty,
+   std::string, std::string>;
 
 struct AccountMetaData {
    static constexpr std::string_view svTableName = "dbo.AdeccCsvAccount";
@@ -85,9 +93,9 @@ struct AccountMetaData {
    };
 struct BookingMetaData {
    static constexpr std::string_view svTableName = "dbo.AdeccCsvBooking";
-   static constexpr std::array<std::string_view, 9> arrAttributeNames{
+   static constexpr std::array<std::string_view, 11> arrAttributeNames{
       "id", "reference", "name", "salutation_id", "kind_id",
-      "debit_account_id", "credit_account_id", "amount_eur", "invoice_date"};
+      "debit_account_id", "credit_account_id", "amount_eur", "invoice_date", "iban", "vat_id_de"};
    static constexpr std::array<std::size_t, 1> arrKeyIndices{0};
    static constexpr std::optional<std::size_t> optIdentityIndex{0};
    static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
@@ -142,6 +150,8 @@ void CreateDemoTables(database_ty& aDb) {
          "credit_account_id bigint NOT NULL REFERENCES dbo.AdeccCsvAccount(id),"
          "amount_eur decimal(18,2) NOT NULL CHECK(amount_eur > 0),"
          "invoice_date date NOT NULL,"
+         "iban nvarchar(34) NOT NULL,"
+         "vat_id_de nvarchar(11) NOT NULL,"
          "CONSTRAINT CK_AdeccCsvDistinctAccounts CHECK(debit_account_id <> credit_account_id))"
       };
    std::for_each(vecCommands.begin(), vecCommands.end(),
@@ -179,7 +189,13 @@ mapping_ids_ty StoreAccounts(database_ty& aDb) {
       {0LL, "1600", "Verbindlichkeiten"},
       {0LL, "1776", "Umsatzsteuer"},
       {0LL, "4000", "Umsatzerloese"},
-      {0LL, "4900", "Sonstige Aufwendungen"}
+      {0LL, "4900", "Sonstige Aufwendungen"},
+      {0LL, "1300", "Sonstige Forderungen"},
+      {0LL, "1800", "Kasse"},
+      {0LL, "3000", "Eigenkapital"},
+      {0LL, "4200", "Nebenerloese"},
+      {0LL, "5000", "Wareneinkauf"},
+      {0LL, "6300", "Bankgebuehren"}
       };
    auto aOutput = account_types::invoke([&]<typename... types_ty>() {
       return aDb.template MakeOutputRange<types_ty...>(
@@ -211,7 +227,8 @@ void PrintReport(database_ty& aDb) {
       }
    std::println("[PASS] debit/credit control: difference = 0 EUR");
    std::println("Account balances (debit - credit, EUR):");
-   for (std::string const strCode : {"1000", "1200", "1400", "1600", "1776", "4000", "4900"}) {
+   for (std::string const strCode : {"1000", "1200", "1300", "1400", "1600", "1776", "1800",
+      "3000", "4000", "4200", "4900", "5000", "6300"}) {
       auto aAccount = aDb.ExecuteOne<adecc::money_ty, adecc::money_ty>(
          "SELECT COALESCE(SUM(CASE WHEN b.debit_account_id=a.id "
          "THEN b.amount_eur ELSE CONVERT(decimal(18,2),0) END), CONVERT(decimal(18,2),0)), "
