@@ -213,13 +213,14 @@ mapping_ids_ty StoreAccounts(database_ty& aDb) {
 
 void PrintReport(database_ty& aDb) {
    auto aTotals = aDb.ExecuteOne<long long, adecc::money_ty>(
-      "SELECT COUNT_BIG(*), COALESCE(SUM(amount_eur), CONVERT(decimal(18,2),0)) "
+      "SELECT COUNT_BIG(*) AS BookingCount, "
+      "COALESCE(SUM(amount_eur), CONVERT(decimal(18,2),0)) AS TotalAmount "
       "FROM dbo.AdeccCsvBooking");
    if (!aTotals) { throw std::runtime_error("Cannot read booking totals"); }
    std::println("Bookings: {}, debit total = credit total = {:.2f} EUR",
       std::get<0>(*aTotals), std::get<1>(*aTotals).Get());
    auto aBalance = aDb.ExecuteOne<adecc::money_ty>(
-      "SELECT COALESCE(SUM(amount),CONVERT(decimal(18,2),0)) FROM ("
+      "SELECT COALESCE(SUM(amount),CONVERT(decimal(18,2),0)) AS Balance FROM ("
       "SELECT amount_eur AS amount FROM dbo.AdeccCsvBooking "
       "UNION ALL SELECT -amount_eur FROM dbo.AdeccCsvBooking) AS entries");
    if (!aBalance || std::abs(std::get<0>(*aBalance).Get()) > 0.001) {
@@ -231,9 +232,9 @@ void PrintReport(database_ty& aDb) {
       "3000", "4000", "4200", "4900", "5000", "6300"}) {
       auto aAccount = aDb.ExecuteOne<adecc::money_ty, adecc::money_ty>(
          "SELECT COALESCE(SUM(CASE WHEN b.debit_account_id=a.id "
-         "THEN b.amount_eur ELSE CONVERT(decimal(18,2),0) END), CONVERT(decimal(18,2),0)), "
+         "THEN b.amount_eur ELSE CONVERT(decimal(18,2),0) END), CONVERT(decimal(18,2),0)) AS DebitAmount, "
          "COALESCE(SUM(CASE WHEN b.credit_account_id=a.id "
-         "THEN b.amount_eur ELSE CONVERT(decimal(18,2),0) END), CONVERT(decimal(18,2),0)) "
+         "THEN b.amount_eur ELSE CONVERT(decimal(18,2),0) END), CONVERT(decimal(18,2),0)) AS CreditAmount "
          "FROM dbo.AdeccCsvAccount a "
          "LEFT JOIN dbo.AdeccCsvBooking b "
          "ON b.debit_account_id=a.id OR b.credit_account_id=a.id "
