@@ -215,9 +215,22 @@ namespace adecc {
             }
          }
 
+      // Accept only tuples whose elements are valid indexed mappings.
+      template<typename from_list_ty, typename to_list_ty, typename tuple_ty>
+      struct valid_binding_tuple : std::false_type { };
+
+      template<typename from_list_ty, typename to_list_ty, typename... binding_ty>
+      struct valid_binding_tuple<from_list_ty, to_list_ty, std::tuple<binding_ty...>>
+         : std::bool_constant<ValidTransformation<from_list_ty, to_list_ty, binding_ty...>()> { };
+
+      template<typename from_list_ty, typename to_list_ty, typename tuple_ty>
+      concept binding_tuple_for =
+         valid_binding_tuple<from_list_ty, to_list_ty, std::remove_cvref_t<tuple_ty>>::value;
+
       template<typename from_list_ty, typename to_list_ty, typename source_ty,
-         typename... binding_ty, std::size_t... I>
-      constexpr auto TransformImpl(source_ty&& theSource, std::tuple<binding_ty...>& theBindings,
+         typename bindings_ty, std::size_t... I>
+         requires binding_tuple_for<from_list_ty, to_list_ty, bindings_ty>
+      constexpr auto TransformImpl(source_ty&& theSource, bindings_ty& theBindings,
          std::index_sequence<I...>) -> typename to_list_ty::type_list {
          using result_ty = typename to_list_ty::type_list;
          return result_ty{ TransformPosition<I, from_list_ty, to_list_ty>(
