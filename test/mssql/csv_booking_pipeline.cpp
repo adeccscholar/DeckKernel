@@ -327,11 +327,11 @@ std::size_t ImportCsvBookings(database_ty& aDb, std::filesystem::path const& aPa
    mapping_ids_ty const& mpKinds,
    mapping_ids_ty const& mpAccounts) {
    auto aSource = ReadCsv(aPath)
-      | std::views::transform([](csv_file_types::type_list const& tplRow) {
-         return std::tuple_cat(std::tuple{0LL}, tplRow);
+      | std::views::transform([](auto&& tplRow) {
+         return std::tuple_cat(std::tuple{0LL}, std::move(tplRow));
          })
-      | std::views::transform([&](csv_types::type_list const& tplRow) {
-         return adecc::Transform<csv_types, booking_types>(tplRow,
+      | std::views::transform([&](auto&& tplRow) {
+         return adecc::Transform<csv_types, booking_types>(std::move(tplRow),
             adecc::BindMapping<3, csv_types, booking_types>(mpSalutations),
             adecc::BindMapping<4, csv_types, booking_types>(mpKinds),
             adecc::BindMapping<5, csv_types, booking_types>(mpAccounts),
