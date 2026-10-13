@@ -214,7 +214,14 @@ mapping_ids_ty StoreAccounts(database_ty& aDb) {
    }
 
 void PrintPeople(database_ty& aDb, mapping_ids_ty const& mpSalutations) {
-   // Reverse the domain lookup: database identity -> display text.
+   using database_row_ty = adecc::defined_type_list<
+      std::string, int, std::string, std::string, adecc::date_ty>;
+   using domain_row_ty = adecc::defined_type_list<
+      std::string, int, adecc::Iban, adecc::VatId_DE, InvoiceDate>;
+   using display_row_ty = adecc::defined_type_list<
+      std::string, std::string, std::string, std::string, std::string>;
+
+   // The only explicit display mapping is the salutation identity.
    std::map<int, std::string> mpSalutationNames;
    for (auto const& [strName, iId] : mpSalutations) {
       mpSalutationNames.emplace(static_cast<int>(iId), strName);
@@ -236,21 +243,24 @@ void PrintPeople(database_ty& aDb, mapping_ids_ty const& mpSalutations) {
          }
       };
 
-   auto aRows = aDb.Execute<std::string, long long, std::string,
-      std::string, adecc::date_ty>(
-      "SELECT TOP (12) name AS PersonName, salutation_id AS SalutationId, "
-      "iban AS Iban, vat_id_de AS VatId, invoice_date AS InvoiceDate "
-      "FROM dbo.AdeccCsvBooking ORDER BY id");
+   auto aRows = database_row_ty::invoke([&]<typename... types_ty>() {
+      return aDb.template Execute<types_ty...>(
+         "SELECT TOP (12) name AS PersonName, "
+         "CAST(salutation_id AS int) AS SalutationId, "
+         "iban AS Iban, vat_id_de AS VatId, invoice_date AS InvoiceDate "
+         "FROM dbo.AdeccCsvBooking ORDER BY id");
+      });
 
-   for (auto const& [strName, iSalutationId, strIban, strVatId, aDate] : aRows) {
-      aGrid += std::tuple{
-         strName,
-         mpSalutationNames.at(static_cast<int>(iSalutationId)),
-         adecc::Iban{strIban}.str(),
-         adecc::VatId_DE{strVatId}.str(),
-         InvoiceDate{aDate}.str()
-         };
-      }
+   auto aDisplay = aRows
+      | std::views::transform([](database_row_ty::type_list const& tplRow) {
+         return adecc::Transform<database_row_ty, domain_row_ty>(tplRow);
+         })
+      | std::views::transform([&](domain_row_ty::type_list const& tplRow) {
+         return adecc::Transform<domain_row_ty, display_row_ty>(tplRow,
+            adecc::BindMapping<1, domain_row_ty, display_row_ty>(mpSalutationNames));
+         });
+
+   aGrid += aDisplay;
    }
 
 void PrintReport(database_ty& aDb) {
