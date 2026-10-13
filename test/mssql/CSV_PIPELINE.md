@@ -20,9 +20,10 @@
 7. SQL Server evaluates the total turnover, verifies debit/credit equality
    and calculates debit, credit, and debit-minus-credit balances for each account.
 8. A second `WriteGridModel<OStreamGridBackend<>>` renders twelve sample booking/person rows.
-   A reverse `std::map<int, std::string>` maps salutation identities back to display labels.
-   `adecc::Iban`, `adecc::VatId_DE` and `InvoiceDate` use their domain `str()`/stringify
-   policies; invoice dates appear in European format.
+   `adecc::Transform` projects the SQL tuples first into domain types (`Iban`, `VatId_DE`, `InvoiceDate`),
+   then into display strings through existing `ConvertTo`/stringify specializations. The only explicit
+   `BindMapping` resolves salutation IDs via a reverse `std::map<int, std::string>`. The grid consumes
+   the typed display range directly; invoice dates use European formatting.
 
 ## Example
 
