@@ -212,7 +212,7 @@ using IsoDateCase = adecc::CaseConversion<
    adecc::RegexStringPolicy<R"(^[0-9]{4}-[0-9]{2}-[0-9]{2}$)">,
    adecc::ConvertToConversionPolicy<std::string, adecc::date_ty>>;
 using EuropeanDateCase = adecc::CaseConversion<
-   adecc::RegexStringPolicy<R"(^[0-9]{2}\\.[0-9]{2}\\.[0-9]{4}$)">,
+   adecc::RegexStringPolicy<R"(^[0-9]{2}\.[0-9]{2}\.[0-9]{4}$)">,
    adecc::ConvertToConversionPolicy<std::string, adecc::date_ty, adecc::DateFmt::EUROPE>>;
 using UsDateCase = adecc::CaseConversion<
    adecc::RegexStringPolicy<R"(^[0-9]{2}/[0-9]{2}/[0-9]{4}$)">,
