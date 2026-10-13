@@ -1,0 +1,5 @@
+reference;name;salutation;kind;amount_cents
+RE-2026-001;Anna Weber;Frau;Rechnung;129900
+GS-2026-002;Max Mueller;Herr;Gutschrift;-4590
+RE-2026-003;Beispiel GmbH;Firma;Rechnung;67000
+ST-2026-004;Beispiel GmbH;Firma;Storno;-67000
