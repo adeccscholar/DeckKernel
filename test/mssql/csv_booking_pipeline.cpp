@@ -267,13 +267,13 @@ std::size_t ImportCsvBookings(database_ty& aDb, std::filesystem::path const& aPa
       return aDb.template MakeOutputSink<types_ty...>(
          TBooking::CreateInsertSql(), TBooking::CreateInsertOutputParameters());
       });
-   std::size_t uCount = 0;
-   auto aCounted = aSource | std::views::transform([&](auto const& tplRow) {
-      ++uCount;
-      return tplRow;
-      });
-   aSink(aCounted);
-   return uCount;
+   aSink(aSource);
+   auto const aCount = aDb.ExecuteOne<long long>(
+      "SELECT COUNT_BIG(*) AS BookingCount FROM dbo.AdeccCsvBooking");
+   if (!aCount) {
+      throw std::runtime_error("Cannot read imported booking count");
+      }
+   return static_cast<std::size_t>(std::get<0>(*aCount));
    }
 
 } // namespace
