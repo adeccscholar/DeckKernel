@@ -270,11 +270,14 @@ namespace adecc {
          using std::toupper;
          std::string strResult;
          strResult.reserve(svValue.size());
-         std::ranges::copy_if(svValue | std::views::transform([](char const cVal) {
-                                          return !std::isspace(static_cast<unsigned char>(cVal)) &&
-                                                 cVal != '-'; }),
-                              std::back_inserter(strResult),
-                              [](char cVal) { return static_cast<char>(toupper(static_cast<unsigned char>(cVal))); });
+         std::ranges::copy_if(
+            svValue | std::views::transform([](char const cVal) {
+               return static_cast<char>(std::toupper(static_cast<unsigned char>(cVal)));
+               }),
+            std::back_inserter(strResult),
+            [](char const cVal) {
+               return !std::isspace(static_cast<unsigned char>(cVal)) && cVal != '-';
+               });
          return strResult;
          }
    };
