@@ -64,3 +64,8 @@ rules.
 The four demo tables are prepared through a `std::vector<std::string>` of SQL commands executed via `std::for_each`. All code-to-ID mappings share the `mapping_ids_ty` alias.
 
 The demo installs `bookings.csv` next to `adecc_mssql_csv_pipeline.exe` and resolves it relative to the executable directory when no CSV argument is provided. The IBAN field is normalized and validated by `adecc::Iban` (modulo 97); `vat_id_de` is normalized and checksum-validated by `adecc::VatId_DE` from `sepa_policies_hawkers_tray.h`. These are illustrative test identifiers, not real payee identifiers. **The field `vat_id_de` is a German VAT identification number (USt-IdNr.), not a domestic tax number (Steuernummer).**
+
+IBAN storage deliberately uses `Iban::Value()` through a dedicated `BindMapping` for
+column 9 (canonical, ungrouped string). The read path constructs `adecc::Iban` again
+and then uses its stringify policy via `ConvertTo<std::string>` to display grouped
+IBANs. This keeps persisted values independent of presentation formatting.
