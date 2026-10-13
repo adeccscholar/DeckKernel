@@ -11,6 +11,10 @@
 #include "mssql_odbc_database.h"
 #include "type_lists.h"
 #include "type_transformations.h"
+#include "file_as_tuple.h"
+#include "system_data_persistent.h"
+#include <optional>
+#include <print>
 
 #include <array>
 #include <cstdlib>
@@ -32,10 +36,35 @@ using database_ty = adecc::db::logical_database<
    adecc::db::mssql::mssql_database, adecc::db::mssql::query>;
 
 using domain_types = adecc::defined_type_list<long long, std::string>;
+using account_types = adecc::defined_type_list<long long, std::string, std::string>;
+using csv_file_types = adecc::defined_type_list<
+   std::string, std::string, std::string, std::string,
+   std::string, std::string, long long>;
 using csv_types = adecc::defined_type_list<
-   long long, std::string, std::string, std::string, std::string, long long>;
+   long long, std::string, std::string, std::string,
+   std::string, std::string, std::string, long long>;
 using booking_types = adecc::defined_type_list<
-   long long, std::string, std::string, long long, long long, long long>;
+   long long, std::string, std::string, long long,
+   long long, long long, long long, long long>;
+
+struct AccountMetaData {
+   static constexpr std::string_view svTableName = "dbo.AdeccCsvAccount";
+   static constexpr std::array<std::string_view, 3> arrAttributeNames{"id", "code", "name"};
+   static constexpr std::array<std::size_t, 1> arrKeyIndices{0};
+   static constexpr std::optional<std::size_t> optIdentityIndex{0};
+   static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
+   };
+struct BookingMetaData {
+   static constexpr std::string_view svTableName = "dbo.AdeccCsvBooking";
+   static constexpr std::array<std::string_view, 8> arrAttributeNames{
+      "id", "reference", "name", "salutation_id", "kind_id",
+      "debit_account_id", "credit_account_id", "amount_cents"};
+   static constexpr std::array<std::size_t, 1> arrKeyIndices{0};
+   static constexpr std::optional<std::size_t> optIdentityIndex{0};
+   static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
+   };
+using TAccount = adecc::db::PersistentSystemData<account_types, AccountMetaData>;
+using TBooking = adecc::db::PersistentSystemData<booking_types, BookingMetaData>;
 
 std::string Environment(char const* szName, std::string_view svDefault = {}) {
    if (char const* szValue = std::getenv(szName); szValue && *szValue) {
@@ -54,42 +83,12 @@ database_ty Connect() {
       }};
    }
 
-// This example uses a deliberately simple semicolon CSV (without quoted fields).
-std::vector<csv_types::type_list> ReadCsv(std::filesystem::path const& aPath) {
-   std::ifstream aFile{aPath};
-   if (!aFile) { throw std::runtime_error("Cannot open CSV: " + aPath.string()); }
-
-   std::vector<csv_types::type_list> vecRows;
-   std::string strLine;
-   if (!std::getline(aFile, strLine) ||
-       strLine != "reference;name;salutation;kind;amount_cents") {
-      throw std::runtime_error("Invalid CSV header");
+// The adecc CSV source is a typed generator; no custom CSV parser.
+auto ReadCsv(std::filesystem::path const& aPath) {
+   if (!std::filesystem::exists(aPath)) {
+      throw std::runtime_error("Cannot open CSV: " + aPath.string());
       }
-   while (std::getline(aFile, strLine)) {
-      if (strLine.empty()) { continue; }
-      std::array<std::string, 5> arrFields;
-      std::size_t uBegin = 0;
-      for (std::size_t i = 0; i < arrFields.size(); ++i) {
-         auto const uEnd = strLine.find(';', uBegin);
-         if (i + 1 != arrFields.size() && uEnd == std::string::npos) {
-            throw std::runtime_error("Missing CSV column: " + strLine);
-            }
-         if (i + 1 == arrFields.size() && uEnd != std::string::npos) {
-            throw std::runtime_error("Extra CSV column: " + strLine);
-            }
-         arrFields[i] = strLine.substr(uBegin, uEnd == std::string::npos
-            ? std::string::npos : uEnd - uBegin);
-         uBegin = uEnd == std::string::npos ? strLine.size() : uEnd + 1;
-         }
-      std::size_t uParsed = 0;
-      long long const iCents = std::stoll(arrFields[4], &uParsed);
-      if (uParsed != arrFields[4].size()) {
-         throw std::runtime_error("Invalid amount in CSV: " + strLine);
-         }
-      vecRows.emplace_back(0LL, std::move(arrFields[0]), std::move(arrFields[1]),
-         std::move(arrFields[2]), std::move(arrFields[3]), iCents);
-      }
-   return vecRows;
+   return adecc::FromCsvFileTyped<false, true, csv_file_types>(aPath, ";", true);
    }
 
 void CreateDemoTables(database_ty& aDb) {
@@ -97,6 +96,7 @@ void CreateDemoTables(database_ty& aDb) {
    aDb.ExecuteCommand("DROP TABLE IF EXISTS dbo.AdeccCsvBooking");
    aDb.ExecuteCommand("DROP TABLE IF EXISTS dbo.AdeccCsvSalutation");
    aDb.ExecuteCommand("DROP TABLE IF EXISTS dbo.AdeccCsvKind");
+   aDb.ExecuteCommand("DROP TABLE IF EXISTS dbo.AdeccCsvAccount");
    aDb.ExecuteCommand(
       "CREATE TABLE dbo.AdeccCsvSalutation ("
       "id bigint IDENTITY(1,1) PRIMARY KEY, code nvarchar(40) NOT NULL UNIQUE)");
@@ -104,13 +104,21 @@ void CreateDemoTables(database_ty& aDb) {
       "CREATE TABLE dbo.AdeccCsvKind ("
       "id bigint IDENTITY(1,1) PRIMARY KEY, code nvarchar(40) NOT NULL UNIQUE)");
    aDb.ExecuteCommand(
+      "CREATE TABLE dbo.AdeccCsvAccount ("
+      "id bigint IDENTITY(1,1) PRIMARY KEY,"
+      "code nvarchar(20) NOT NULL UNIQUE,"
+      "name nvarchar(100) NOT NULL)");
+   aDb.ExecuteCommand(
       "CREATE TABLE dbo.AdeccCsvBooking ("
       "id bigint IDENTITY(1,1) PRIMARY KEY,"
       "reference nvarchar(40) NOT NULL UNIQUE,"
       "name nvarchar(200) NOT NULL,"
       "salutation_id bigint NOT NULL REFERENCES dbo.AdeccCsvSalutation(id),"
       "kind_id bigint NOT NULL REFERENCES dbo.AdeccCsvKind(id),"
-      "amount_cents bigint NOT NULL)");
+      "debit_account_id bigint NOT NULL REFERENCES dbo.AdeccCsvAccount(id),"
+      "credit_account_id bigint NOT NULL REFERENCES dbo.AdeccCsvAccount(id),"
+      "amount_cents bigint NOT NULL CHECK(amount_cents > 0),"
+      "CONSTRAINT CK_AdeccCsvDistinctAccounts CHECK(debit_account_id <> credit_account_id))");
    }
 
 std::map<std::string, long long> StoreDomain(
@@ -136,29 +144,80 @@ std::map<std::string, long long> StoreDomain(
    return mpIds;
    }
 
-void StoreBookings(database_ty& aDb, std::vector<csv_types::type_list> const& vecSource,
-   std::map<std::string, long long> const& mpSalutations,
-   std::map<std::string, long long> const& mpKinds) {
-   auto aSource = vecSource | std::views::transform([&](auto const& tplRow) {
-      return adecc::Transform<csv_types, booking_types>(tplRow,
-         adecc::BindMapping<3, csv_types, booking_types>(mpSalutations),
-         adecc::BindMapping<4, csv_types, booking_types>(mpKinds));
+std::map<std::string, long long> StoreAccounts(database_ty& aDb) {
+   std::vector<account_types::type_list> vecAccounts{
+      {0LL, "1000", "Bank"},
+      {0LL, "1200", "Forderungen"},
+      {0LL, "1400", "Vorsteuer"},
+      {0LL, "1600", "Verbindlichkeiten"},
+      {0LL, "1776", "Umsatzsteuer"},
+      {0LL, "4000", "Umsatzerloese"},
+      {0LL, "4900", "Sonstige Aufwendungen"}
+      };
+   auto aOutput = account_types::invoke([&]<typename... types_ty>() {
+      return aDb.template MakeOutputRange<types_ty...>(
+         TAccount::CreateInsertSql(), TAccount::CreateInsertOutputParameters());
       });
+   std::map<std::string, long long> mpIds;
+   for (auto const& tplAccount : aOutput(vecAccounts)) {
+      mpIds.emplace(std::get<1>(tplAccount), std::get<0>(tplAccount));
+      }
+   if (mpIds.size() != vecAccounts.size()) {
+      throw std::runtime_error("Account IDs incomplete");
+      }
+   return mpIds;
+   }
+
+void PrintReport(database_ty& aDb) {
+   auto aTotals = aDb.ExecuteOne<long long, long long>(
+      "SELECT COUNT_BIG(*), COALESCE(SUM(amount_cents), CONVERT(bigint,0)) "
+      "FROM dbo.AdeccCsvBooking");
+   if (!aTotals) { throw std::runtime_error("Cannot read booking totals"); }
+   std::println("Bookings: {}, debit total = credit total = {} cents",
+      std::get<0>(*aTotals), std::get<1>(*aTotals));
+   auto aBalance = aDb.ExecuteOne<long long>(
+      "SELECT COALESCE(SUM(amount),CONVERT(bigint,0)) FROM ("
+      "SELECT amount_cents AS amount FROM dbo.AdeccCsvBooking "
+      "UNION ALL SELECT -amount_cents FROM dbo.AdeccCsvBooking) AS entries");
+   if (!aBalance || std::get<0>(*aBalance) != 0LL) {
+      throw std::runtime_error("Unbalanced bookings");
+      }
+   std::println("[PASS] debit/credit control: difference = 0");
+   auto aBank = aDb.ExecuteOne<long long>(
+      "SELECT COALESCE(SUM(CASE WHEN debit_account_id=a.id THEN amount_cents "
+      "WHEN credit_account_id=a.id THEN -amount_cents ELSE 0 END),CONVERT(bigint,0)) "
+      "FROM dbo.AdeccCsvBooking b CROSS JOIN dbo.AdeccCsvAccount a "
+      "WHERE a.code='1000'");
+   if (!aBank) { throw std::runtime_error("Cannot evaluate bank account"); }
+   std::println("Account 1000 (Bank): {} cents debit minus credit", std::get<0>(*aBank));
+   }
+
+std::size_t StoreBookings(database_ty& aDb, std::filesystem::path const& aPath,
+   std::map<std::string, long long> const& mpSalutations,
+   std::map<std::string, long long> const& mpKinds,
+   std::map<std::string, long long> const& mpAccounts) {
+   auto aSource = ReadCsv(aPath)
+      | std::views::transform([](csv_file_types::type_list const& tplRow) {
+         return std::tuple_cat(std::tuple{0LL}, tplRow);
+         })
+      | std::views::transform([&](csv_types::type_list const& tplRow) {
+         return adecc::Transform<csv_types, booking_types>(tplRow,
+            adecc::BindMapping<3, csv_types, booking_types>(mpSalutations),
+            adecc::BindMapping<4, csv_types, booking_types>(mpKinds),
+            adecc::BindMapping<5, csv_types, booking_types>(mpAccounts),
+            adecc::BindMapping<6, csv_types, booking_types>(mpAccounts));
+         });
    auto aSink = booking_types::invoke([&]<typename... types_ty>() {
       return aDb.template MakeOutputSink<types_ty...>(
-         "INSERT INTO dbo.AdeccCsvBooking "
-         "(reference, name, salutation_id, kind_id, amount_cents) "
-         "VALUES (:reference, :name, :salutation_id, :kind_id, :amount_cents)",
-         {
-            {"id", adecc::db_output_param_role::identity},
-            {"reference", adecc::db_output_param_role::needed_value},
-            {"name", adecc::db_output_param_role::needed_value},
-            {"salutation_id", adecc::db_output_param_role::needed_value},
-            {"kind_id", adecc::db_output_param_role::needed_value},
-            {"amount_cents", adecc::db_output_param_role::needed_value}
-         });
+         TBooking::CreateInsertSql(), TBooking::CreateInsertOutputParameters());
       });
-   aSink(aSource);
+   std::size_t uCount = 0;
+   auto aCounted = aSource | std::views::transform([&](auto const& tplRow) {
+      ++uCount;
+      return tplRow;
+      });
+   aSink(aCounted);
+   return uCount;
    }
 
 } // namespace
@@ -173,8 +232,9 @@ int main(int iArgc, char** argv) {
          {"Herr", "Frau", "Firma"});
       auto mpKinds = StoreDomain(aDb, "dbo.AdeccCsvKind",
          {"Rechnung", "Gutschrift", "Storno"});
-      auto vecBookings = ReadCsv(iArgc > 1 ? argv[1] : "bookings.csv");
-      StoreBookings(aDb, vecBookings, mpSalutations, mpKinds);
+      auto mpAccounts = StoreAccounts(aDb);
+      auto uCount = StoreBookings(aDb, iArgc > 1 ? argv[1] : "bookings.csv",
+         mpSalutations, mpKinds, mpAccounts);
       aTransaction.CommitAndClose();
       std::cout << "[PASS] " << vecBookings.size() << " bookings imported\n";
       return 0;
