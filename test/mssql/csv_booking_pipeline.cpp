@@ -183,13 +183,24 @@ void PrintReport(database_ty& aDb) {
       throw std::runtime_error("Unbalanced bookings");
       }
    std::println("[PASS] debit/credit control: difference = 0");
-   auto aBank = aDb.ExecuteOne<long long>(
-      "SELECT COALESCE(SUM(CASE WHEN debit_account_id=a.id THEN amount_cents "
-      "WHEN credit_account_id=a.id THEN -amount_cents ELSE 0 END),CONVERT(bigint,0)) "
-      "FROM dbo.AdeccCsvBooking b CROSS JOIN dbo.AdeccCsvAccount a "
-      "WHERE a.code='1000'");
-   if (!aBank) { throw std::runtime_error("Cannot evaluate bank account"); }
-   std::println("Account 1000 (Bank): {} cents debit minus credit", std::get<0>(*aBank));
+   // Per-account analysis, evaluated by SQL Server.
+   std::println("Account balances (debit - credit, cents):");
+   for (std::string const strCode : {"1000", "1200", "1400", "1600", "1776", "4000", "4900"}) {
+      auto aAccount = aDb.ExecuteOne<long long, long long>(
+         "SELECT COALESCE(SUM(CASE WHEN b.debit_account_id=a.id "
+         "THEN b.amount_cents ELSE CONVERT(bigint,0) END), CONVERT(bigint,0)), "
+         "COALESCE(SUM(CASE WHEN b.credit_account_id=a.id "
+         "THEN b.amount_cents ELSE CONVERT(bigint,0) END), CONVERT(bigint,0)) "
+         "FROM dbo.AdeccCsvAccount a "
+         "LEFT JOIN dbo.AdeccCsvBooking b "
+         "ON b.debit_account_id=a.id OR b.credit_account_id=a.id "
+         "WHERE a.code=:Code",
+         database_ty::Params(database_ty::Param("Code", strCode)));
+      if (!aAccount) { throw std::runtime_error("Cannot evaluate account " + strCode); }
+      auto const [iDebit, iCredit] = *aAccount;
+      std::println("  {}: debit={} credit={} balance={}", strCode, iDebit, iCredit,
+         iDebit - iCredit);
+      }
    }
 
 std::size_t StoreBookings(database_ty& aDb, std::filesystem::path const& aPath,
@@ -235,8 +246,9 @@ int main(int iArgc, char** argv) {
       auto mpAccounts = StoreAccounts(aDb);
       auto uCount = StoreBookings(aDb, iArgc > 1 ? argv[1] : "bookings.csv",
          mpSalutations, mpKinds, mpAccounts);
+      PrintReport(aDb);
       aTransaction.CommitAndClose();
-      std::cout << "[PASS] " << vecBookings.size() << " bookings imported\n";
+      std::cout << "[PASS] " << uCount << " bookings imported\n";
       return 0;
       }
    catch (std::exception const& aError) {
