@@ -64,6 +64,23 @@ add_executable(
    "${DECKKERNEL_ROOT}/adecc/mssql/mssql_odbc_database.h"
 )
 
+# Independent teaching example: CSV -> typed policies -> SQL Server.
+add_executable(
+   adecc_mssql_csv_pipeline
+   csv_booking_pipeline.cpp
+)
+target_compile_definitions(adecc_mssql_csv_pipeline PRIVATE
+   CHRONO_WORK_AROUND CHRONO_MISSED_ZONEDB)
+target_include_directories(adecc_mssql_csv_pipeline PRIVATE
+   "${DECKKERNEL_ROOT}/adecc/cpp_core"
+   "${DECKKERNEL_ROOT}/adecc/mssql")
+if(WIN32)
+   target_link_libraries(adecc_mssql_csv_pipeline PRIVATE odbc32)
+else()
+   target_link_libraries(adecc_mssql_csv_pipeline PRIVATE ODBC::ODBC)
+endif()
+install(TARGETS adecc_mssql_csv_pipeline RUNTIME DESTINATION .)
+
 target_compile_definitions(
    adecc_mssql_odbc_test
    PRIVATE
