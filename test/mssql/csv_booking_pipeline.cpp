@@ -8,6 +8,7 @@
 */
 
 #include "database.h"
+#include "text_grid_wrapper.h"
 #include "mssql_odbc_database.h"
 #include "type_lists.h"
 #include "type_transformations.h"
@@ -227,7 +228,18 @@ void PrintReport(database_ty& aDb) {
       throw std::runtime_error("Unbalanced bookings");
       }
    std::println("[PASS] debit/credit control: difference = 0 EUR");
-   std::println("Account balances (debit - credit, EUR):");
+   using backend_ty = adecc::grid::OStreamGridBackend<>;
+   using grid_ty = adecc::grid::WriteGridModel<backend_ty>;
+   using align_ty = adecc::EAlignmentType;
+   grid_ty aGrid{
+      backend_ty{std::cout, backend_ty::TableSeparators()},
+      std::vector<std::tuple<std::string, int, align_ty>>{
+         {"Konto", 8, align_ty::left},
+         {"Soll EUR", 14, align_ty::right},
+         {"Haben EUR", 14, align_ty::right},
+         {"Saldo EUR", 14, align_ty::right}
+         }
+      };
    for (std::string const strCode : {"1000", "1200", "1300", "1400", "1600", "1776", "1800",
       "3000", "4000", "4200", "4900", "5000", "6300"}) {
       auto aAccount = aDb.ExecuteOne<adecc::money_ty, adecc::money_ty>(
@@ -241,10 +253,13 @@ void PrintReport(database_ty& aDb) {
          "WHERE a.code=:Code",
          database_ty::Params(database_ty::Param("Code", strCode)));
       if (!aAccount) { throw std::runtime_error("Cannot evaluate account " + strCode); }
-      double const iDebit = std::get<0>(*aAccount).Get();
-      double const iCredit = std::get<1>(*aAccount).Get();
-      std::println("  {}: debit={:.2f} credit={:.2f} balance={:.2f}",
-         strCode, iDebit, iCredit, iDebit - iCredit);
+      auto const& [aDebit, aCredit] = *aAccount;
+      aGrid += std::tuple{
+         strCode,
+         std::format("{:.2f}", aDebit.Get()),
+         std::format("{:.2f}", aCredit.Get()),
+         std::format("{:.2f}", aDebit.Get() - aCredit.Get())
+         };
       }
    }
 
