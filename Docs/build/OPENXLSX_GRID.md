@@ -117,10 +117,12 @@ The former DECKKERNEL_OPENXLSX_ROOT override is ignored.
 ## What install copies and how to check
 
 Install uses apps/Debug or apps/Release according to the current single-config
-Ninja build. It deploys the test executable, libOpenXLSXd.dll (Debug) or
-libOpenXLSX.dll (Release), plus matching runtime DLLs found in the pinned
-libzip, pugixml, Boost, zlib, compression and crypto package directories.
-Configuration-specific DLL folders are never mixed. No PowerShell is used.
+Ninja build. It installs the executable plus only its **actual recursive DLL
+imports**, determined with CMake file(GET_RUNTIME_DEPENDENCIES) from the built
+program. DLLs are resolved within the pinned Debug/Release ThirdParty stack;
+unused Boost components are not copied. Previously installed DLLs are not
+automatically deleted, because other tests may depend on them.
+No PowerShell is used.
 
 CTest runs the executable with the intended DLL search path. The executable
 creates **OpenXlsxGrid_Example.xlsx beside the executable**, verifies typed data
@@ -136,8 +138,9 @@ the final numeric Amount is 47.5 after the freeze-guard update.
 
 The executable prints a [PASS] line for each completed verification and
 a final [FILE] line with the absolute path. A nonzero exit indicates failure.
-Running it again intentionally recreates its example file at the same path,
-so close the workbook in Excel before rerunning the test.
+Repeated runs create OpenXlsxGrid_Example.xlsx, then
+OpenXlsxGrid_Example_1.xlsx, and so on. Older files remain untouched and
+may stay open in Excel.
 
 One passing OpenXlsxGridRoundtrip test indicates success.
 

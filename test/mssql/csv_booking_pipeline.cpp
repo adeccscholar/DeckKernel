@@ -11,6 +11,7 @@
 #include "text_grid_wrapper.h"
 #include "grid_wrapper.h"
 #include "openxlsx_workbook.h"
+#include "unused_workbook_path.h"
 #include "mssql_odbc_database.h"
 #include "type_lists.h"
 #include "type_transformations.h"
@@ -444,9 +445,8 @@ std::filesystem::path ExportExcel(SummaryData const& data,
                                   std::vector<PersonRow> const& people,
                                   std::filesystem::path const& directory) {
    namespace xlsx = adecc::openxlsx_grid;
-   auto const path = directory / "CsvBookingReport.xlsx";
-   if(std::filesystem::exists(path))
-      std::filesystem::remove(path);
+   auto const path = xlsx::UnusedWorkbookPath(directory, "CsvBookingReport");
+   // Keep previously exported workbooks, including ones open in Excel.
 
    xlsx::OpenXLSXWorkbook book{path};
    {

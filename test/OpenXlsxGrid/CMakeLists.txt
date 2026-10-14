@@ -22,6 +22,7 @@ set(CMAKE_INSTALL_PREFIX "${DECKKERNEL_ROOT}/apps/${CMAKE_BUILD_TYPE}"
     CACHE PATH "DeckKernel deployment directory" FORCE)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 include("${DECKKERNEL_ROOT}/Cache/cmake/ThirdParty.cmake")
+include("${DECKKERNEL_ROOT}/Cache/cmake/InstallPinnedRuntime.cmake")
 
 # Only the pinned DeckKernel bootstrap package is eligible for this build.
 if(NOT DEFINED ADECC_TP_OPENXLSX_ROOT OR
@@ -60,36 +61,7 @@ target_compile_definitions(adecc_openxlsx_grid_test PRIVATE
 target_compile_options(adecc_openxlsx_grid_test PRIVATE "-fborland-exec-code-page=65001")
 target_link_libraries(adecc_openxlsx_grid_test PRIVATE OpenXLSX::OpenXLSX)
 
-# Install the matching DLL and the complete known library runtime closure.
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-   set(_openxlsx_dll "libOpenXLSXd.dll")
-else()
-   set(_openxlsx_dll "libOpenXLSX.dll")
-endif()
-set(_openxlsx_dll_file
-   "${DECKKERNEL_OPENXLSX_ROOT}/bin/win64/${CMAKE_BUILD_TYPE}/${_openxlsx_dll}")
-if(NOT EXISTS "${_openxlsx_dll_file}")
-   message(FATAL_ERROR "Required OpenXLSX runtime DLL missing: ${_openxlsx_dll_file}")
-endif()
-set(_runtime_dirs "${DECKKERNEL_OPENXLSX_ROOT}/bin/win64/${CMAKE_BUILD_TYPE}")
-set(_package_roots
-   "${ADECC_TP_PUGIXML_ROOT}"
-   "${ADECC_TP_LIBZIP_ROOT}"
-   "${ADECC_TP_BOOST_ROOT}"
-   "${ADECC_TP_ZLIB_ROOT}"
-   "${ADECC_TP_ZSTD_ROOT}"
-   "${ADECC_TP_BZIP2_ROOT}"
-   "${ADECC_TP_XZ_ROOT}"
-   "${ADECC_TP_OPENSSL_ROOT}"
-   "${ADECC_TP_BROTLI_ROOT}"
-)
-foreach(_root IN LISTS _package_roots)
-   if(_root AND EXISTS "${_root}/bin/win64/${CMAKE_BUILD_TYPE}")
-      list(APPEND _runtime_dirs "${_root}/bin/win64/${CMAKE_BUILD_TYPE}")
-      install(DIRECTORY "${_root}/bin/win64/${CMAKE_BUILD_TYPE}/"
-              DESTINATION . FILES_MATCHING PATTERN "*.dll")
-   endif()
-endforeach()
+# Deploy only actual recursive DLL imports; no directory-wide Boost copy.
 enable_testing()
 list(JOIN _runtime_dirs ";" _test_path)
 add_test(NAME OpenXlsxGridRoundtrip
@@ -98,7 +70,7 @@ add_test(NAME OpenXlsxGridRoundtrip
       "$<TARGET_FILE:adecc_openxlsx_grid_test>")
 set_tests_properties(OpenXlsxGridRoundtrip PROPERTIES
    WORKING_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
-install(TARGETS adecc_openxlsx_grid_test RUNTIME DESTINATION .)
-install(FILES "${_openxlsx_dll_file}" DESTINATION .)
-message(STATUS "OpenXLSX selected DLL: ${_openxlsx_dll_file}")
+install(TARGETS adecc_openxlsx_grid_test RUNTIME DESTINATION .
+   COMPONENT openxlsx_grid)
+adecc_install_pinned_runtime(adecc_openxlsx_grid_test openxlsx_grid)
 message(STATUS "Deployment directory: ${CMAKE_INSTALL_PREFIX}")

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
 
 #include "adecc/openXlsxTools/openxlsx_workbook.h"
+#include "adecc/openXlsxTools/unused_workbook_path.h"
 
 #include <chrono>
 #include <cmath>
@@ -49,17 +50,14 @@ std::filesystem::path ExecutableDirectory(char const* argv0) {
 
 int main(int argc, char** argv) {
    namespace fs = std::filesystem;
-   auto const file = ExecutableDirectory(argc > 0 ? argv[0] : "")
-                     / "OpenXlsxGrid_Example.xlsx";
+   auto const file = adecc::openxlsx_grid::UnusedWorkbookPath(
+      ExecutableDirectory(argc > 0 ? argv[0] : ""), "OpenXlsxGrid_Example");
    auto const date = adecc::date_ty{std::chrono::year{2026}/10/14};
 
    std::cout << "[OpenXlsxGrid] Example workbook: " << file.string() << '\n';
    std::cout << "[OpenXlsxGrid] Creating Sheet 'Ledger' at C5, five columns.\n";
-   // This is a deterministic test fixture. Each invocation regenerates it;
-   // the completed file is intentionally retained for inspection in Excel.
-   if(fs::exists(file))
-      std::cout << "[OpenXlsxGrid] Replacing the previous example workbook.\n";
-   fs::remove(file);
+   // No prior workbook is modified or deleted, even if it is open in Excel.
+   std::cout << "[OpenXlsxGrid] Earlier workbooks remain untouched.\n";
    {
       OpenXLSXWorkbook book(file);
       auto model = book.grid("Ledger", GridRegion{5, 3, 0, 0, false});

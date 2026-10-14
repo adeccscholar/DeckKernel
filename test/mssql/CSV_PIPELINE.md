@@ -89,16 +89,18 @@ an Excel date cell, not a formatted string. The program verifies the unfiltered
 person count against the imported count before exporting, then reopens the
 saved workbook to validate its worksheet headers and last person.
 
-When repeating the example, close `CsvBookingReport.xlsx` in Excel first:
-the program recreates the workbook on every run. The export is performed
+When repeating the example, older reports remain intact. The next available
+filename is used (CsvBookingReport.xlsx, CsvBookingReport_1.xlsx, etc.), so
+existing workbooks may remain open in Excel. The export is performed
 **after the database transaction has committed**; an XLSX write failure cannot
 roll back the already completed SQL import. This sample still drops and
 recreates its dedicated demo SQL tables, so use only a disposable test database.
 
 The CMake project resolves OpenXLSX 0.5.1 exclusively through the pinned
 DeckKernel bootstrap package, links `OpenXLSX::OpenXLSX`, and installs the
-corresponding Debug/Release DLL plus known transitive DLLs with component
-`csv_pipeline`. To install just this executable and its runtime dependencies:
+actually imported Debug/Release DLLs from the recursive runtime dependency
+analysis, rather than copying entire Boost and other package folders,
+with component `csv_pipeline`. To install just this executable and its runtime dependencies:
 
 ```cmd
 cmake --install test/mssql/build/Release --component csv_pipeline

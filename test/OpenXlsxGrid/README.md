@@ -11,6 +11,7 @@ installation into apps/{configuration}, and validation of saved XLSX data.
 
 Run `apps/Release/adecc_openxlsx_grid_test.exe` or its Debug equivalent
 after installation. The test prints the full path to `OpenXlsxGrid_Example.xlsx`
-and **retains** the file beside the executable. Open it in Excel to inspect
+and **retains** the file beside the executable. New runs select free numbered
+filenames rather than overwriting existing Excel files. Open it in Excel to inspect
 sheet `Ledger`, C5:G6. CTest independently retains its workbook below
 `test/OpenXlsxGrid/build/<configuration>/bin`.
