@@ -138,9 +138,13 @@ public:
          style_cell_(cell, col);
       }
       // Also apply the column alignments to the previously selected data rows.
-      for(size_type row = 0; row < rows_; ++row)
-         for(size_type col = 0; col < columns_; ++col)
-            if(alignments_[col]) style_cell_(sheet.cell(excel_row_(row), excel_column_(col)), col);
+      for(size_type row = 0; row < rows_; ++row) {
+         for(size_type col = 0; col < columns_; ++col) {
+            if(!alignments_[col]) continue;
+            auto cell = sheet.cell(excel_row_(row), excel_column_(col));
+            style_cell_(cell, col);
+         }
+      }
    }
 
    [[nodiscard]] std::vector<std::string> read_captions() const {
@@ -244,7 +248,7 @@ private:
    }
 
    template<class Ty = void>
-   void style_cell_(OpenXLSX::XLCellAssignable cell, size_type col) {
+   void style_cell_(OpenXLSX::XLCellAssignable& cell, size_type col) {
       // Preserve the existing cell format, changing only explicit grid metadata.
       std::optional<std::uint32_t> number_format;
       using Value = std::remove_cvref_t<Ty>;

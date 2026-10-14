@@ -138,7 +138,7 @@ Ty FromCell(OpenXLSX::XLCellValue value) {
 }
 
 template<class Ty>
-void ToCell(OpenXLSX::XLCellAssignable cell, Ty const& value) {
+void ToCell(OpenXLSX::XLCellAssignable& cell, Ty const& value) {
    using Value = std::remove_cvref_t<Ty>;
    if constexpr (std::same_as<Value, std::string> || std::same_as<Value, std::string_view>) {
       cell.value() = std::string(value);
