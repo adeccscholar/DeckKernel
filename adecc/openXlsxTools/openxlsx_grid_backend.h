@@ -5,6 +5,7 @@
 #include "openxlsx_session.h"
 #include "openxlsx_cell_conversion.h"
 #include "openxlsx_column_format.h"
+#include "openxlsx_grid_style.h"
 #include "../cpp_core/grid_backend_concepts.h"
 
 #include <OpenXLSX.hpp>
@@ -100,6 +101,12 @@ public:
          alignments_.clear();
          number_formats_.clear();
          prepared_styles_.clear();
+         if(style_region_) {
+            style_region_->rows = 0;
+            style_region_->columns = 0;
+            style_region_->captions = false;
+            style_region_->header_applied = false;
+         }
       }
    }
 
@@ -117,6 +124,7 @@ public:
       alignments_.assign(columns_, std::nullopt);
       number_formats_.assign(columns_, std::nullopt);
       prepared_styles_.assign(columns_, std::nullopt);
+      sync_style_region_();
 
       auto sheet = sheet_();
       for(size_type col = 0; col < values.size(); ++col) {
@@ -171,6 +179,24 @@ public:
       }
    }
 
+   // Optional Excel-only customization. May be called before or after
+   // appending data; the final rectangular rule is installed at save().
+   void set_style(ExcelGridStyle style) {
+      if(!style_region_) {
+         style_region_ = std::make_shared<WorkbookSession::StyledRegion>();
+         style_region_->sheet = sheet_name_;
+         style_region_->first_row = region_.first_row;
+         style_region_->first_column = region_.first_column;
+         session_->styled_regions.push_back(style_region_);
+      }
+      else if(style_region_->conditional_format_index) {
+         throw std::logic_error("Cannot replace saved Excel grid style");
+      }
+      style_region_->style = std::move(style);
+      style_region_->header_applied = false;
+      sync_style_region_();
+   }
+
    [[nodiscard]] std::vector<std::string> read_captions() const {
       if(!captions_) throw std::logic_error("Selected region has no caption row");
       std::vector<std::string> result;
@@ -187,6 +213,7 @@ public:
       validate_(rows_ + 1, columns_, captions_);
       current_row_ = rows_++;
       current_column_ = 0;
+      sync_style_region_();
       return current_row_;
    }
 
@@ -228,6 +255,13 @@ public:
    }
 
 private:
+   void sync_style_region_() {
+      if(!style_region_) return;
+      style_region_->rows = rows_;
+      style_region_->columns = columns_;
+      style_region_->captions = captions_;
+   }
+
    void load_caption_alignments_() {
       auto sheet = sheet_();
       auto& formats = session_->document.styles().cellFormats();
@@ -300,6 +334,7 @@ private:
    }
 
    std::shared_ptr<WorkbookSession> session_;
+   std::shared_ptr<WorkbookSession::StyledRegion> style_region_;
    std::string sheet_name_;
    GridRegion region_;
    size_type rows_ = 0;

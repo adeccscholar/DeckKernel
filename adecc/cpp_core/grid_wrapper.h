@@ -183,6 +183,16 @@ namespace adecc {
                }
             }
 
+         // Optional presentation extensions never change the grid_concept.
+         // Only backends that implement set_style(style) expose this method.
+         template <class Style>
+            requires requires(backend_ty& backend, Style const& style) {
+               backend.set_style(style);
+            }
+         void set_style(Style const& style) {
+            backend_().set_style(style);
+         }
+
          // -----------------------------------------------------------------------------------------------
          // Alternative method for setting columns with bands, including cxGrid backends
          // The concept enables this alternative only if the backend supports it

@@ -48,6 +48,7 @@ public:
 
    void save() {
       session_->require_open();
+      session_->apply_grid_styles();
       session_->document.save();
    }
 
