@@ -231,6 +231,8 @@ using person_display_ty =
                             std::string, std::string, std::string>;
 using captions_ty =
    std::vector<std::tuple<std::string, int, adecc::EAlignmentType>>;
+using excel_captions_ty = std::vector<std::tuple<std::string, int,
+   adecc::EAlignmentType, adecc::openxlsx_grid::ExcelColumnFormat>>;
 
 struct AccountRow {
    std::string code;
@@ -288,6 +290,29 @@ captions_ty PersonCaptions() {
       {"USt-IdNr.", 15, Align::left},
       {"Rechnungsdatum", 19, Align::center},
       {"Betrag EUR", 17, Align::right}
+   };
+}
+
+excel_captions_ty AccountExcelCaptions() {
+   using Align = adecc::EAlignmentType;
+   return {
+      {"Konto", 10, Align::left, {}},
+      {"Kontoname", 29, Align::left, {}},
+      {"Soll EUR", 16, Align::right, {"#,##0.00 \"EUR\""}},
+      {"Haben EUR", 16, Align::right, {"#,##0.00 \"EUR\""}},
+      {"Saldo EUR", 16, Align::right, {"#,##0.00 \"EUR\""}}
+   };
+}
+
+excel_captions_ty PersonExcelCaptions() {
+   using Align = adecc::EAlignmentType;
+   return {
+      {"Name", 24, Align::left, {}},
+      {"Anrede", 12, Align::left, {}},
+      {"IBAN", 34, Align::left, {}},
+      {"USt-IdNr.", 15, Align::left, {}},
+      {"Rechnungsdatum", 19, Align::center, {"dd.mm.yyyy"}},
+      {"Betrag EUR", 17, Align::right, {"#,##0.00 \"EUR\""}}
    };
 }
 
@@ -451,7 +476,7 @@ std::filesystem::path ExportExcel(SummaryData const& data,
    xlsx::OpenXLSXWorkbook book{path};
    {
       auto grid = book.grid("Summenübersicht", xlsx::GridRegion{1, 1, 0, 0, false});
-      grid.set_captions(AccountCaptions());
+      grid.set_captions(AccountExcelCaptions());
       auto rows = data.accounts | std::views::transform([](AccountRow const& record) {
          return std::tuple{
             record.code, record.name, record.debit, record.credit, record.balance
@@ -462,8 +487,8 @@ std::filesystem::path ExportExcel(SummaryData const& data,
    {
       auto grid = book.grid("Summenübersicht", xlsx::GridRegion{1, 7, 0, 0, false});
       using Align = adecc::EAlignmentType;
-      grid.set_captions(captions_ty{
-         {"Kennzahl", 26, Align::left}, {"Wert", 19, Align::right}
+      grid.set_captions(excel_captions_ty{
+         {"Kennzahl", 26, Align::left, {}}, {"Wert", 19, Align::right, {"#,##0.00"}}
       });
       std::vector<std::tuple<std::string, double>> metrics{
          {"Buchungen", static_cast<double>(data.booking_count)},
@@ -474,7 +499,7 @@ std::filesystem::path ExportExcel(SummaryData const& data,
    }
    {
       auto grid = book.grid("Personen", xlsx::GridRegion{1, 1, 0, 0, false});
-      grid.set_captions(PersonCaptions());
+      grid.set_captions(PersonExcelCaptions());
       auto rows = people | std::views::transform([](PersonRow const& record) {
          // Native Excel numeric and calendar types rather than display strings.
          return std::tuple{
@@ -501,6 +526,20 @@ std::filesystem::path ExportExcel(SummaryData const& data,
       peopleSheet.findCell(
          static_cast<std::uint32_t>(people.size() + 1), 1).empty())
       throw std::runtime_error("Excel export is missing the last person");
+   auto& formatTable = check.styles().cellFormats();
+   if(!people.empty()) {
+      auto const dateFmt = formatTable.cellFormatByIndex(
+         peopleSheet.cell(2, 5).cellFormat());
+      auto const amountFmt = formatTable.cellFormatByIndex(
+         peopleSheet.cell(2, 6).cellFormat());
+      if(!dateFmt.applyNumberFormat() || !amountFmt.applyNumberFormat() ||
+         dateFmt.numberFormatId() == amountFmt.numberFormatId())
+         throw std::runtime_error("Excel date and amount formats are not independent");
+      auto const& numFormats = check.styles().numberFormats();
+      if(numFormats.numberFormatById(dateFmt.numberFormatId()).formatCode() != "dd.mm.yyyy" ||
+         numFormats.numberFormatById(amountFmt.numberFormatId()).formatCode() != "#,##0.00 \"EUR\"")
+         throw std::runtime_error("Excel caption formats were not persisted");
+   }
    check.close();
    return path;
 }

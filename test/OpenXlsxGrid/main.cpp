@@ -62,12 +62,13 @@ int main(int argc, char** argv) {
       OpenXLSXWorkbook book(file);
       auto model = book.grid("Ledger", GridRegion{5, 3, 0, 0, false});
       check(model.rows() == 0 && model.columns() == 0, "New grid initially empty");
-      std::vector<std::tuple<std::string, int, adecc::EAlignmentType>> captions{
-         {"Text", 16, adecc::EAlignmentType::left},
-         {"Amount", 16, adecc::EAlignmentType::right},
-         {"Count", 16, adecc::EAlignmentType::right},
-         {"Date", 16, adecc::EAlignmentType::center},
-         {"Empty", 16, adecc::EAlignmentType::left}
+      std::vector<std::tuple<std::string, int, adecc::EAlignmentType,
+                             adecc::openxlsx_grid::ExcelColumnFormat>> captions{
+         {"Text", 16, adecc::EAlignmentType::left, adecc::openxlsx_grid::ExcelColumnFormat{}},
+         {"Amount", 16, adecc::EAlignmentType::right, adecc::openxlsx_grid::ExcelColumnFormat{"#,##0.00"}},
+         {"Count", 16, adecc::EAlignmentType::right, adecc::openxlsx_grid::ExcelColumnFormat{}},
+         {"Date", 16, adecc::EAlignmentType::center, adecc::openxlsx_grid::ExcelColumnFormat{"dd.mm.yyyy"}},
+         {"Empty", 16, adecc::EAlignmentType::left, adecc::openxlsx_grid::ExcelColumnFormat{}}
       };
       model.set_captions(captions);
       check(model.rows() == 0 && model.columns() == 5, "Captions define only width");
@@ -119,7 +120,16 @@ int main(int argc, char** argv) {
             fmt.alignment().horizontal() == OpenXLSX::XLAlignRight,
             "Caption column alignment persisted");
       auto date_fmt = formats.cellFormatByIndex(sheet.cell(6, 6).cellFormat());
-      check(date_fmt.numberFormatId() == 14, "Date number format persisted");
+      auto amount_fmt = formats.cellFormatByIndex(sheet.cell(6, 4).cellFormat());
+      check(date_fmt.applyNumberFormat(), "Date format enabled");
+      check(amount_fmt.applyNumberFormat(), "Amount format enabled");
+      check(date_fmt.numberFormatId() != amount_fmt.numberFormatId(),
+            "Date and amount use different Excel formats");
+      auto& numbers = raw.styles().numberFormats();
+      check(numbers.numberFormatById(date_fmt.numberFormatId()).formatCode() == "dd.mm.yyyy",
+            "Caption date number format persisted");
+      check(numbers.numberFormatById(amount_fmt.numberFormatId()).formatCode() == "#,##0.00",
+            "Caption amount number format persisted");
       raw.close();
       std::cout << "[PASS] Excel formatting: column width, alignment, date number format.\n";
    }

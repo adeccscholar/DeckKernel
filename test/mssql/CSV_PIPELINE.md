@@ -107,3 +107,12 @@ Windows system DLLs are not copied. The install component is `csv_pipeline`. To 
 ```cmd
 cmake --install test/mssql/build/Release --component csv_pipeline
 ```
+
+## Declarative Excel cell formats
+
+Excel captions add an optional fourth `ExcelColumnFormat` value: invoice date
+`dd.mm.yyyy` and amount / account totals `#,##0.00 "EUR"`. Both columns keep
+their native typed values. `set_captions()` prepares styles, and the shared
+workbook session caches number formats and styles across both worksheets.
+The exported report is re-opened and validates that date and amount styles
+are distinct and that the requested format codes survived serialization.

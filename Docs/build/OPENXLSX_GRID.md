@@ -151,3 +151,15 @@ One passing OpenXlsxGridRoundtrip test indicates success.
 If OpenXLSXConfig.cmake or an imported .lib reference is missing, the
 BuildEngine package must first be installed correctly. Do not disguise
 a broken package with a global include or DLL path.
+
+## Variadic captions and reusable Excel styles
+
+The first three caption values remain title, width and horizontal alignment.
+OpenXLSX accepts an optional fourth value `ExcelColumnFormat` with an Excel
+number-format code (for example `dd.mm.yyyy` or `#,##0.00 "EUR"`).
+The text backend ignores this additional parameter. `set_captions()` registers
+number formats and caches column styles in the shared `WorkbookSession`, reused
+across worksheets. Existing XML cell styles are cloned before modification.
+Native numeric values therefore remain numbers: no date format may leak into
+a money column. The roundtrip test checks distinct persisted date and amount
+formats after re-opening the workbook.
