@@ -216,53 +216,29 @@ mapping_ids_ty StoreAccounts(database_ty& aDb, id_names_ty& mpAccountNames) {
    return mpIds;
    }
 
-// Query results are materialized before either grid sink consumes them.
-using account_source_ty =
-   adecc::defined_type_list<std::string, int, adecc::money_ty,
-                            adecc::money_ty, adecc::money_ty>;
-using person_database_ty =
-   adecc::defined_type_list<std::string, int, std::string, std::string,
-                            adecc::date_ty, double>;
-using person_domain_ty =
-   adecc::defined_type_list<std::string, int, adecc::Iban, adecc::VatId_DE,
-                            InvoiceDate, double>;
-using person_display_ty =
-   adecc::defined_type_list<std::string, std::string, std::string,
-                            std::string, std::string, std::string>;
+// The domain is described once by type lists. SQL yields tuple generators,
+// Transform maps them, and a GridModel / WriteGridModel consumes the range.
+// No intermediate DTOs or duplicated display fields are needed.
+using account_source_ty = adecc::defined_type_list<
+   std::string, int, adecc::money_ty, adecc::money_ty, adecc::money_ty>;
+using account_grid_ty = adecc::defined_type_list<
+   std::string, std::string, adecc::money_ty, adecc::money_ty, adecc::money_ty>;
+
+using person_database_ty = adecc::defined_type_list<
+   std::string, int, std::string, std::string, adecc::date_ty, double>;
+using person_domain_ty = adecc::defined_type_list<
+   std::string, int, adecc::Iban, adecc::VatId_DE, InvoiceDate, double>;
+using person_display_ty = adecc::defined_type_list<
+   std::string, std::string, std::string, std::string, std::string, std::string>;
+using person_excel_ty = adecc::defined_type_list<
+   std::string, std::string, std::string, std::string, adecc::date_ty, double>;
+
 using captions_ty =
    std::vector<std::tuple<std::string, int, adecc::EAlignmentType>>;
 using excel_captions_ty = std::vector<std::tuple<std::string, int,
    adecc::EAlignmentType, adecc::openxlsx_grid::ExcelColumnFormat>>;
 
-struct AccountRow {
-   std::string code;
-   std::string name;
-   double debit = 0;
-   double credit = 0;
-   double balance = 0;
-};
-
-struct SummaryData {
-   long long booking_count = 0;
-   double total_eur = 0;
-   double difference_eur = 0;
-   std::vector<AccountRow> accounts;
-};
-
-struct PersonRow {
-   std::string name;
-   std::string salutation;
-   std::string iban;
-   std::string vat_id;
-   adecc::date_ty invoice_date{};
-   double amount_eur = 0;
-   std::string display_date;
-   std::string display_amount;
-};
-
-// One source-to-sink algorithm for text and XLSX. Both GridModel (random
-// access) and WriteGridModel (sequential) implement append-range via cpp_core.
-// Each caller supplies already configured captions and a projected row range.
+// The exact same sink algorithm is used by the text and Excel grid models.
 template <class Grid, std::ranges::input_range Rows>
    requires (adecc::grid::write_grid_model_type<Grid> ||
              adecc::grid::grid_model_type<Grid>)
@@ -316,7 +292,9 @@ excel_captions_ty PersonExcelCaptions() {
    };
 }
 
-SummaryData ReadSummary(database_ty& db, id_names_ty const& accountNames) {
+using totals_ty = std::tuple<long long, adecc::money_ty, adecc::money_ty>;
+
+totals_ty ReadAndValidateTotals(database_ty& db) {
    auto totals = db.ExecuteOne<long long, adecc::money_ty>(
       "SELECT COUNT_BIG(*) AS BookingCount, "
       "COALESCE(SUM(amount_eur), CONVERT(decimal(18,2),0)) AS TotalAmount "
@@ -330,12 +308,25 @@ SummaryData ReadSummary(database_ty& db, id_names_ty const& accountNames) {
    if(!balance || std::abs(std::get<0>(*balance).Get()) > 0.001)
       throw std::runtime_error("Unbalanced bookings");
 
-   SummaryData result{
-      .booking_count = std::get<0>(*totals),
-      .total_eur = std::get<1>(*totals).Get(),
-      .difference_eur = std::get<0>(*balance).Get()
-   };
-   auto records = account_source_ty::invoke([&]<typename... Types>() {
+   return {std::get<0>(*totals), std::get<1>(*totals),
+           std::get<0>(*balance)};
+}
+
+void PrintTotals(totals_ty const& totals) {
+   std::println("Bookings: {}, debit total = credit total = {:.2f} EUR",
+      std::get<0>(totals), std::get<1>(totals).Get());
+   std::println("[PASS] debit/credit control: difference = {:.2f} EUR",
+      std::get<2>(totals).Get());
+}
+
+template <class Grid>
+   requires (adecc::grid::write_grid_model_type<Grid> ||
+             adecc::grid::grid_model_type<Grid>)
+void FillAccountGrid(database_ty& db, id_names_ty const& accountNames,
+                     Grid& grid) {
+   // Execute() is a single-pass generator. Its lifetime and transformations
+   // intentionally remain inside this function until the sink has consumed it.
+   auto sqlRows = account_source_ty::invoke([&]<typename... Types>() {
       return db.template Execute<Types...>(
          "SELECT a.code AS AccountCode, CAST(a.id AS int) AS AccountId, "
          "SUM(IIF(b.debit_account_id=a.id, b.amount_eur, 0)) AS DebitAmount, "
@@ -346,110 +337,95 @@ SummaryData ReadSummary(database_ty& db, id_names_ty const& accountNames) {
          "ON b.debit_account_id=a.id OR b.credit_account_id=a.id "
          "GROUP BY a.id, a.code ORDER BY a.code");
    });
-   for(auto const& record : records) {
-      result.accounts.push_back(AccountRow{
-         .code = std::get<0>(record),
-         .name = accountNames.at(std::get<1>(record)),
-         .debit = std::get<2>(record).Get(),
-         .credit = std::get<3>(record).Get(),
-         .balance = std::get<4>(record).Get()
+   auto rows = sqlRows | std::views::transform(
+      [&](account_source_ty::type_list const& row) {
+         return adecc::Transform<account_source_ty, account_grid_ty>(
+            row,
+            adecc::BindMapping<1, account_source_ty, account_grid_ty>(
+               accountNames));
       });
-   }
-   return result;
+   FillGrid(grid, rows);
 }
 
-std::vector<PersonRow> ReadPeople(database_ty& db,
-                                  mapping_ids_ty const& salutations,
-                                  bool const sampleOnly) {
+std::map<int, std::string> SalutationNames(mapping_ids_ty const& salutations) {
+   std::map<int, std::string> names;
+   for(auto const& [name, id] : salutations)
+      names.emplace(static_cast<int>(id), name);
+   return names;
+}
+
+template <class Grid>
+   requires (adecc::grid::write_grid_model_type<Grid> ||
+             adecc::grid::grid_model_type<Grid>)
+void FillPersonGrid(database_ty& db, std::map<int, std::string> const& names,
+                    Grid& grid, bool sampleOnly) {
+   // The console retains its pedagogical WHERE selection; Excel exports all.
    std::string sql =
       "SELECT name AS PersonName, CAST(salutation_id AS int) AS SalutationId, "
       "iban AS Iban, vat_id_de AS VatId, invoice_date AS InvoiceDate, "
       "amount_eur FROM dbo.AdeccCsvBooking";
-   // Preserve the historical console sample, but export all rows to Excel.
    if(sampleOnly)
       sql += " WHERE kind_id = :kind_id AND salutation_id = :salutation_id";
    sql += " ORDER BY id";
 
-   std::map<int, std::string> names;
-   for(auto const& [name, id] : salutations)
-      names.emplace(static_cast<int>(id), name);
-
-   std::vector<PersonRow> result;
-   auto consume = [&](auto&& rows) {
-      for(auto const& record : rows) {
-         auto domain = adecc::Transform<person_database_ty, person_domain_ty>(record);
-         auto display = adecc::Transform<person_domain_ty, person_display_ty>(
-            domain,
-            adecc::BindMapping<1, person_domain_ty, person_display_ty>(names),
-            adecc::BindMapping<2, person_domain_ty, person_display_ty>(
-               [](adecc::Iban const& value) { return value.Value(); }),
-            adecc::BindMapping<5, person_domain_ty, person_display_ty>(
-               [](double const& value) {
-                  return adecc::ConvertTo<std::string>(value);
-               }));
-         result.push_back(PersonRow{
-            .name = std::get<0>(display),
-            .salutation = std::get<1>(display),
-            .iban = std::get<2>(display),
-            .vat_id = std::get<3>(display),
-            .invoice_date = std::get<4>(record),
-            .amount_eur = std::get<5>(record),
-            .display_date = std::get<4>(display),
-            .display_amount = std::get<5>(display)
-         });
-      }
-   };
-
-   if(sampleOnly) {
-      auto rows = person_database_ty::invoke([&]<typename... Types>() {
+   auto sqlRows = person_database_ty::invoke([&]<typename... Types>() {
+      if(sampleOnly)
          return db.template Execute<Types...>(
             sql, {{"kind_id", 4, true}, {"salutation_id", 3, true}});
+      return db.template Execute<Types...>(sql);
+   });
+
+   auto domainRows = sqlRows | std::views::transform(
+      [](person_database_ty::type_list const& row) {
+         return adecc::Transform<person_database_ty, person_domain_ty>(row);
       });
-      consume(rows);
+
+   // Only the presentation projection differs. No alternate storage structure
+   // is introduced: both are direct typed ranges into the same grid sink.
+   if constexpr (adecc::grid::write_grid_model_type<Grid>) {
+      auto display = domainRows | std::views::transform(
+         [&](person_domain_ty::type_list const& row) {
+            return adecc::Transform<person_domain_ty, person_display_ty>(
+               row,
+               adecc::BindMapping<1, person_domain_ty, person_display_ty>(names),
+               adecc::BindMapping<2, person_domain_ty, person_display_ty>(
+                  [](adecc::Iban const& value) { return value.Value(); }),
+               adecc::BindMapping<5, person_domain_ty, person_display_ty>(
+                  [](double value) { return adecc::ConvertTo<std::string>(value); }));
+         });
+      FillGrid(grid, display);
    }
    else {
-      auto rows = person_database_ty::invoke([&]<typename... Types>() {
-         return db.template Execute<Types...>(sql);
-      });
-      consume(rows);
+      auto excel = domainRows | std::views::transform(
+         [&](person_domain_ty::type_list const& row) {
+            return adecc::Transform<person_domain_ty, person_excel_ty>(
+               row,
+               adecc::BindMapping<1, person_domain_ty, person_excel_ty>(names),
+               adecc::BindMapping<2, person_domain_ty, person_excel_ty>(
+                  [](adecc::Iban const& value) { return value.Value(); }));
+         });
+      FillGrid(grid, excel);
    }
-   return result;
 }
 
-void PrintSummary(SummaryData const& data) {
-   std::println("Bookings: {}, debit total = credit total = {:.2f} EUR",
-                data.booking_count, data.total_eur);
-   std::println("[PASS] debit/credit control: difference = {:.2f} EUR",
-                data.difference_eur);
-
+void PrintReport(database_ty& db, id_names_ty const& accounts,
+                 std::map<int, std::string> const& salutations,
+                 totals_ty const& totals) {
+   PrintTotals(totals);
    using Backend = adecc::grid::OStreamGridBackend<>;
-   adecc::grid::WriteGridModel<Backend> grid{
-      Backend{std::cout, Backend::TableSeparators()}, AccountCaptions()
-   };
-   auto rows = data.accounts | std::views::transform([](AccountRow const& record) {
-      return std::tuple{
-         record.code, record.name,
-         adecc::ConvertTo<std::string>(record.debit),
-         adecc::ConvertTo<std::string>(record.credit),
-         adecc::ConvertTo<std::string>(record.balance)
+   {
+      adecc::grid::WriteGridModel<Backend> grid{
+         Backend{std::cout, Backend::TableSeparators()}, AccountCaptions()
       };
-   });
-   FillGrid(grid, rows);
-}
-
-void PrintPeople(std::vector<PersonRow> const& people) {
+      FillAccountGrid(db, accounts, grid);
+   }
    std::println("Sample bookings and domain-formatted person data:");
-   using Backend = adecc::grid::OStreamGridBackend<>;
-   adecc::grid::WriteGridModel<Backend> grid{
-      Backend{std::cout, Backend::TableSeparators()}, PersonCaptions()
-   };
-   auto rows = people | std::views::transform([](PersonRow const& record) {
-      return std::tuple{
-         record.name, record.salutation, record.iban, record.vat_id,
-         record.display_date, record.display_amount
+   {
+      adecc::grid::WriteGridModel<Backend> grid{
+         Backend{std::cout, Backend::TableSeparators()}, PersonCaptions()
       };
-   });
-   FillGrid(grid, rows);
+      FillPersonGrid(db, salutations, grid, true);
+   }
 }
 
 std::filesystem::path ExecutableDirectory(char const* argv0) {
@@ -466,78 +442,64 @@ std::filesystem::path ExecutableDirectory(char const* argv0) {
 #endif
 }
 
-std::filesystem::path ExportExcel(SummaryData const& data,
-                                  std::vector<PersonRow> const& people,
+std::filesystem::path ExportExcel(database_ty& db,
+                                  id_names_ty const& accounts,
+                                  std::map<int, std::string> const& salutations,
+                                  totals_ty const& totals,
+                                  std::size_t imported,
                                   std::filesystem::path const& directory) {
    namespace xlsx = adecc::openxlsx_grid;
    auto const path = xlsx::UnusedWorkbookPath(directory, "CsvBookingReport");
-   // Keep previously exported workbooks, including ones open in Excel.
-
    xlsx::OpenXLSXWorkbook book{path};
    {
       auto grid = book.grid("Summenübersicht", xlsx::GridRegion{1, 1, 0, 0, false});
       grid.set_captions(AccountExcelCaptions());
-      auto rows = data.accounts | std::views::transform([](AccountRow const& record) {
-         return std::tuple{
-            record.code, record.name, record.debit, record.credit, record.balance
-         };
-      });
-      FillGrid(grid, rows);
+      FillAccountGrid(db, accounts, grid);
    }
    {
       auto grid = book.grid("Summenübersicht", xlsx::GridRegion{1, 7, 0, 0, false});
       using Align = adecc::EAlignmentType;
       grid.set_captions(excel_captions_ty{
-         {"Kennzahl", 26, Align::left, {}}, {"Wert", 19, Align::right, {"#,##0.00"}}
+         {"Kennzahl", 26, Align::left, {}},
+         {"Wert", 19, Align::right, {"#,##0.00"}}
       });
+      // Only three scalar aggregates, not another domain model.
       std::vector<std::tuple<std::string, double>> metrics{
-         {"Buchungen", static_cast<double>(data.booking_count)},
-         {"Soll/Haben EUR", data.total_eur},
-         {"Differenz EUR", data.difference_eur}
+         {"Buchungen", static_cast<double>(std::get<0>(totals))},
+         {"Soll/Haben EUR", std::get<1>(totals).Get()},
+         {"Differenz EUR", std::get<2>(totals).Get()}
       };
       FillGrid(grid, metrics);
    }
    {
       auto grid = book.grid("Personen", xlsx::GridRegion{1, 1, 0, 0, false});
       grid.set_captions(PersonExcelCaptions());
-      auto rows = people | std::views::transform([](PersonRow const& record) {
-         // Native Excel numeric and calendar types rather than display strings.
-         return std::tuple{
-            record.name, record.salutation, record.iban, record.vat_id,
-            record.invoice_date, record.amount_eur
-         };
-      });
-      FillGrid(grid, rows);
-      if(grid.rows() != people.size())
-         throw std::runtime_error("Excel person export row count mismatch");
+      FillPersonGrid(db, salutations, grid, false);
+      if(grid.rows() != imported)
+         throw std::runtime_error("Unfiltered Excel person selection is incomplete");
    }
    book.save();
    book.close();
 
-   // Confirm the persisted document contains both sheets and the last record.
+   // Inspect persisted values and styles, not just the in-memory grid.
    OpenXLSX::XLDocument check;
    check.open(path.string());
    auto summarySheet = check.workbook().worksheet("Summenübersicht");
    auto peopleSheet = check.workbook().worksheet("Personen");
-   if(summarySheet.findCell(1, 1).empty() ||
-      peopleSheet.findCell(1, 1).empty())
-      throw std::runtime_error("Excel export is missing worksheet headings");
-   if(!people.empty() &&
-      peopleSheet.findCell(
-         static_cast<std::uint32_t>(people.size() + 1), 1).empty())
-      throw std::runtime_error("Excel export is missing the last person");
-   auto& formatTable = check.styles().cellFormats();
-   if(!people.empty()) {
-      auto const dateFmt = formatTable.cellFormatByIndex(
-         peopleSheet.cell(2, 5).cellFormat());
-      auto const amountFmt = formatTable.cellFormatByIndex(
-         peopleSheet.cell(2, 6).cellFormat());
+   if(summarySheet.findCell(1, 1).empty() || peopleSheet.findCell(1, 1).empty())
+      throw std::runtime_error("Excel output is missing worksheet headings");
+   if(imported > 0) {
+      if(peopleSheet.findCell(static_cast<std::uint32_t>(imported + 1), 1).empty())
+         throw std::runtime_error("Excel output is missing the last person");
+      auto& styles = check.styles().cellFormats();
+      auto const dateFmt = styles.cellFormatByIndex(peopleSheet.cell(2, 5).cellFormat());
+      auto const amountFmt = styles.cellFormatByIndex(peopleSheet.cell(2, 6).cellFormat());
       if(!dateFmt.applyNumberFormat() || !amountFmt.applyNumberFormat() ||
          dateFmt.numberFormatId() == amountFmt.numberFormatId())
          throw std::runtime_error("Excel date and amount formats are not independent");
-      auto const& numFormats = check.styles().numberFormats();
-      if(numFormats.numberFormatById(dateFmt.numberFormatId()).formatCode() != "dd.mm.yyyy" ||
-         numFormats.numberFormatById(amountFmt.numberFormatId()).formatCode() != "#,##0.00 \"EUR\"")
+      auto& formats = check.styles().numberFormats();
+      if(formats.numberFormatById(dateFmt.numberFormatId()).formatCode() != "dd.mm.yyyy" ||
+         formats.numberFormatById(amountFmt.numberFormatId()).formatCode() != "#,##0.00 \"EUR\"")
          throw std::runtime_error("Excel caption formats were not persisted");
    }
    check.close();
@@ -575,11 +537,12 @@ std::size_t ImportCsvBookings(database_ty& aDb, std::filesystem::path const& aPa
 
 } // namespace
 
-int main(int iArgc, char** argv) {
+int main(int argc, char** argv) {
    try {
       auto db = Connect();
       auto transaction = db.Transaction();
       CreateDemoTables(db);
+
       auto const salutations = StoreDomain(
          db, "dbo.AdeccCsvSalutation", {"Herr", "Frau", "Firma", "Divers"});
       auto const kinds = StoreDomain(
@@ -587,28 +550,24 @@ int main(int iArgc, char** argv) {
       id_names_ty accountNames;
       auto const accounts = StoreAccounts(db, accountNames);
 
-      auto const directory = ExecutableDirectory(iArgc > 0 ? argv[0] : "");
-      auto const input = iArgc > 1
+      auto const directory = ExecutableDirectory(argc > 0 ? argv[0] : "");
+      auto const input = argc > 1
          ? std::filesystem::path{argv[1]}
          : directory / "bookings.csv";
-      auto const count = ImportCsvBookings(
-         db, input, salutations, kinds, accounts);
-      auto const summary = ReadSummary(db, accountNames);
-      auto const textPeople = ReadPeople(db, salutations, true);
-      auto const excelPeople = ReadPeople(db, salutations, false);
-      if(excelPeople.size() != count ||
-         summary.booking_count != static_cast<long long>(count))
-         throw std::runtime_error("Unfiltered Excel person selection is incomplete");
+      auto const count = ImportCsvBookings(db, input, salutations, kinds, accounts);
+      auto const totals = ReadAndValidateTotals(db);
+      if(std::get<0>(totals) != static_cast<long long>(count))
+         throw std::runtime_error("Booking count mismatch");
 
+      auto const salutationNames = SalutationNames(salutations);
+      PrintReport(db, accountNames, salutationNames, totals);
+      auto const report = ExportExcel(
+         db, accountNames, salutationNames, totals, count, directory);
       transaction.CommitAndClose();
-      PrintSummary(summary);
-      PrintPeople(textPeople);
-      auto const reportPath = ExportExcel(summary, excelPeople, directory);
+
       std::cout << "[PASS] " << count << " bookings imported\n";
-      std::cout << "[PASS] XLSX: " << summary.accounts.size()
-                << " accounts, " << excelPeople.size()
-                << " persons (without WHERE)\n";
-      std::cout << "[FILE] " << reportPath.string() << '\n';
+      std::cout << "[PASS] Excel contains all " << count << " persons (no WHERE)\n";
+      std::cout << "[FILE] " << report.string() << '\n';
       return 0;
    }
    catch(std::exception const& error) {
