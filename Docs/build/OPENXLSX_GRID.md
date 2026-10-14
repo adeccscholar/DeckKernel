@@ -44,26 +44,28 @@ timestamp and time, as well as optional values. Large integer identifiers
 are stored as text to avoid Excel's 15-digit precision loss. The numeric
 1900-date system has the historical Excel leap-year exception.
 
-## Requirements and package provenance
+## Requirements and pinned package provenance
 
-Use Windows, RAD Studio 13/C++Builder 13 BCC64X, CMake and project-managed
-Ninja. First install the OpenXLSX 0.5.1 Debug/Release DLL package in
-BuildEngine. The current DeckKernel thirdparty.lock (2026-09-26) does not
-contain OpenXLSX. Therefore the build explicitly accepts its *versioned*
-BuildEngine install root. Do not add invented archive hashes to the lock
-or silently use an unrelated system OpenXLSX package.
+Use Windows, RAD Studio 13 / C++Builder 13 BCC64X, CMake and project-managed
+Ninja. OpenXLSX 0.5.1 is pinned in the DeckKernel thirdparty.lock and its
+companion XML lock. The package belongs to GitHub release 2026.09.26-1.
+The original 16 package archives are unchanged.
 
-Run each of the following commands from the DeckKernel repository root in
-a C++Builder Developer Command Prompt. Replace the example OpenXLSX root
-if your BuildEngine installation is elsewhere.
+Cache/StackPackages.xml is the versioned StackBuilder selection (17 packages).
+Bootstrap verifies its SHA-256 and verifies package entries against both lock
+representations before downloading. The bootstrap also checks archive byte
+size and SHA-256 and installs OpenXLSX below ThirdParty/openxlsx/0.5.1.
+
+Run the following command in a C++Builder Developer Command Prompt from the
+DeckKernel repository root:
 
 ```cmd
 cmake -P bootstrap\Bootstrap.cmake
 ```
 
-```cmd
-set "DECKKERNEL_OPENXLSX_ROOT=D:\local\embarcadero\test_v3\install\packages\openxlsx\0.5.1"
-```
+No manual BuildEngine install path, global package fallback or environment
+variable is required. The generated ADECC_TP_OPENXLSX_ROOT is the only
+OpenXLSX root used by this test.
 
 ## Debug - configure, build, test, install, run
 
@@ -109,9 +111,8 @@ cmake --install test\OpenXlsxGrid\build\Release
 apps\Release\adecc_openxlsx_grid_test.exe
 ```
 
-You can alternatively pass -DDECKKERNEL_OPENXLSX_ROOT=... on the configure
-command line. When a future verified DeckKernel lock includes OpenXLSX,
-the generated ADECC_TP_OPENXLSX_ROOT will be recognized automatically.
+The test uses ADECC_TP_OPENXLSX_ROOT from the bootstrap-generated package map.
+The former DECKKERNEL_OPENXLSX_ROOT override is ignored.
 
 ## What install copies and how to check
 

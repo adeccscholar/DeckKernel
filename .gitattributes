@@ -1,0 +1,2 @@
+# Keep StackBuilder selection SHA-256 stable on Windows and Linux.
+Cache/StackPackages.xml text eol=lf

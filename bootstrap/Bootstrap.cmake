@@ -217,6 +217,7 @@ message(STATUS "Ninja version   : ${ADECC_NINJA_ACTUAL_VERSION}")
 
 set(ADECC_LOCK_FILE "${ADECC_CACHE_ROOT}/thirdparty.lock")
 set(ADECC_LOCK_XML  "${ADECC_CACHE_ROOT}/thirdparty.lock.xml")
+set(ADECC_SELECTION_FILE "${ADECC_CACHE_ROOT}/StackPackages.xml")
 
 if(NOT EXISTS "${ADECC_LOCK_FILE}")
    message(FATAL_ERROR "Missing ${ADECC_LOCK_FILE}")
@@ -255,6 +256,87 @@ if(NOT _adecc_lock_toolchain STREQUAL ADECC_REQUIRED_TOOLCHAIN)
       "required toolchain '${ADECC_REQUIRED_TOOLCHAIN}'."
    )
 endif()
+
+
+# ---------------------------------------------------------------------------
+# Validate the versioned StackBuilder selection and its two lock representations.
+# Stage 0 deliberately needs no additional XML parser or cryptography library.
+# ---------------------------------------------------------------------------
+
+if(NOT EXISTS "${ADECC_SELECTION_FILE}")
+   message(FATAL_ERROR "Missing versioned StackBuilder selection: ${ADECC_SELECTION_FILE}")
+endif()
+if(NOT EXISTS "${ADECC_LOCK_XML}")
+   message(FATAL_ERROR "Missing XML lock: ${ADECC_LOCK_XML}")
+endif()
+
+file(SHA256 "${ADECC_SELECTION_FILE}" _adecc_actual_selection_sha)
+set(_adecc_expected_selection_sha "")
+foreach(_line IN LISTS _adecc_lock_lines)
+   if(_line MATCHES "^selectionSha256\\|")
+      string(REPLACE "|" ";" _fields "${_line}")
+      list(GET _fields 1 _adecc_expected_selection_sha)
+   endif()
+endforeach()
+if(NOT _adecc_actual_selection_sha STREQUAL _adecc_expected_selection_sha)
+   message(FATAL_ERROR
+      "StackBuilder selection SHA-256 mismatch: expected "
+      "${_adecc_expected_selection_sha}, got ${_adecc_actual_selection_sha}. "
+      "Regenerate the two locks from Cache/StackPackages.xml.")
+endif()
+file(READ "${ADECC_LOCK_XML}" _adecc_lock_xml_content)
+string(FIND "${_adecc_lock_xml_content}"
+   "selectionSha256=\"${_adecc_expected_selection_sha}\"" _selection_xml_index)
+if(_selection_xml_index EQUAL -1)
+   message(FATAL_ERROR
+      "thirdparty.lock.xml and thirdparty.lock disagree on selection SHA-256.")
+endif()
+
+file(STRINGS "${ADECC_LOCK_XML}" _xml_packages REGEX "^[ \t]*<package ")
+file(STRINGS "${ADECC_SELECTION_FILE}" _selection_packages REGEX "^[ \t]*<package ")
+file(READ "${ADECC_SELECTION_FILE}" _selection_xml_content)
+set(_lock_package_count 0)
+foreach(_line IN LISTS _adecc_lock_lines)
+   if(NOT _line MATCHES "^package\\|")
+      continue()
+   endif()
+   string(REPLACE "|" ";" _fields "${_line}")
+   list(LENGTH _fields _field_count)
+   if(NOT _field_count EQUAL 7)
+      message(FATAL_ERROR "Malformed package line in thirdparty.lock: ${_line}")
+   endif()
+   list(GET _fields 1 _name)
+   list(GET _fields 2 _version)
+   list(GET _fields 3 _release)
+   list(GET _fields 4 _archive_rel)
+   list(GET _fields 5 _size)
+   list(GET _fields 6 _sha256)
+
+   string(CONCAT _expected_xml
+      "<package name=\"${_name}\" version=\"${_version}\" release=\"${_release}\" "
+      "archive=\"${_archive_rel}\" size=\"${_size}\" sha256=\"${_sha256}\" />")
+   string(FIND "${_adecc_lock_xml_content}" "${_expected_xml}" _found_xml)
+   if(_found_xml EQUAL -1)
+      message(FATAL_ERROR "XML lock does not match text lock for ${_name}/${_version}.")
+   endif()
+   string(FIND "${_selection_xml_content}"
+      "<package name=\"${_name}\" version=\"${_version}\" release=\"${_release}\""
+      _found_selection)
+   if(_found_selection EQUAL -1)
+      message(FATAL_ERROR "StackBuilder selection is missing ${_name}/${_version}.")
+   endif()
+   math(EXPR _lock_package_count "${_lock_package_count} + 1")
+endforeach()
+list(LENGTH _xml_packages _xml_package_count)
+list(LENGTH _selection_packages _selection_package_count)
+if(NOT _lock_package_count EQUAL _xml_package_count OR
+   NOT _lock_package_count EQUAL _selection_package_count)
+   message(FATAL_ERROR
+      "Package count mismatch: text=${_lock_package_count}, "
+      "XML=${_xml_package_count}, selection=${_selection_package_count}.")
+endif()
+message(STATUS "[LOCK] Verified ${_lock_package_count} packages and selection SHA-256")
+
 
 # ---------------------------------------------------------------------------
 # Generated package map used by Cache/cmake/ThirdParty.cmake

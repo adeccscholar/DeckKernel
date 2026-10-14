@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<stackPackages schemaVersion="2" toolchain="bcc64x">
+   <package name="boost" version="1.92.0" release="2026.09.26-1">
+      <additional path="bcc64x-native-clang"/>
+   </package>
+   <package name="brotli" version="1.2.0" release="2026.09.26-1"/>
+   <package name="bzip2" version="1.0.8" release="2026.09.26-1"/>
+   <package name="cmark-gfm" version="0.29.0.gfm.13" release="2026.09.26-1"/>
+   <package name="curl" version="8.21.0" release="2026.09.26-1"/>
+   <package name="libarchive" version="3.8.9" release="2026.09.26-1"/>
+   <package name="libpq" version="18.6" release="2026.09.26-1"/>
+   <package name="libpqxx" version="8.0.2" release="2026.09.26-1"/>
+   <package name="libzip" version="1.11.4" release="2026.09.26-1"/>
+   <package name="nlohmann-json" version="3.12.0" release="2026.09.26-1"/>
+   <package name="openssl" version="3.5.8" release="2026.09.26-1"/>
+   <package name="openxlsx" version="0.5.1" release="2026.09.26-1"/>
+   <package name="pugixml" version="1.16" release="2026.09.26-1"/>
+   <package name="sqlite" version="3.53.4" release="2026.09.26-1"/>
+   <package name="xz" version="5.8.3" release="2026.09.26-1"/>
+   <package name="zlib" version="1.3.2" release="2026.09.26-1"/>
+   <package name="zstd" version="1.5.7" release="2026.09.26-1"/>
+</stackPackages>
