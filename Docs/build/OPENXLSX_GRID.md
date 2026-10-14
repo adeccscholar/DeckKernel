@@ -163,3 +163,27 @@ across worksheets. Existing XML cell styles are cloned before modification.
 Native numeric values therefore remain numbers: no date format may leak into
 a money column. The roundtrip test checks distinct persisted date and amount
 formats after re-opening the workbook.
+
+## Dynamic Excel grid styling
+
+`ExcelGridStyle` is optional. Captions, typed values and `FillGrid()` stay unchanged.
+The header uses permanent cell formatting. A row pattern becomes Excel
+conditional formatting restricted to the actual written data rectangle.
+The style is evaluated by Excel after sorting, with no per-row colors stored.
+
+```cpp
+using namespace adecc::openxlsx_grid;
+ExcelGridStyle style;
+style.header({.background = RGB{34,79,119}, .foreground = RGB{255,255,255}, .bold = true})
+     .row_pattern({{.background = RGB{255,255,255}},
+                   {.background = RGB{235,242,249}}});
+grid.set_captions(captions);
+grid.set_style(style);
+FillGrid(grid, rows);
+book.save();
+```
+
+One pattern element colors all rows. Two alternate; four can represent A,A,B,B.
+An empty pattern adds no data styling. Rules are finalized at save(), when the
+actual row count is known. Excel rows inserted outside the saved rectangle are
+not automatically included; the result is not an auto-expanding Excel Table.

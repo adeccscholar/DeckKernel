@@ -454,6 +454,16 @@ std::filesystem::path ExportExcel(database_ty& db,
    {
       auto grid = book.grid("Summenübersicht", xlsx::GridRegion{1, 1, 0, 0, false});
       grid.set_captions(AccountExcelCaptions());
+      xlsx::ExcelGridStyle style;
+      style.header({
+         .background = xlsx::RGB{34, 79, 119},
+         .foreground = xlsx::RGB{255, 255, 255},
+         .bold = true
+      }).row_pattern({
+         {.background = xlsx::RGB{255, 255, 255}},
+         {.background = xlsx::RGB{235, 242, 249}}
+      });
+      grid.set_style(style);
       FillAccountGrid(db, accounts, grid);
    }
    {
@@ -474,6 +484,17 @@ std::filesystem::path ExportExcel(database_ty& db,
    {
       auto grid = book.grid("Personen", xlsx::GridRegion{1, 1, 0, 0, false});
       grid.set_captions(PersonExcelCaptions());
+      xlsx::ExcelGridStyle style;
+      style.header({
+         .background = xlsx::RGB{34, 79, 119},
+         .foreground = xlsx::RGB{255, 255, 255},
+         .bold = true
+      }).row_pattern({
+         {.background = xlsx::RGB{255, 255, 255}},
+         {.background = xlsx::RGB{235, 242, 249}},
+         {.background = xlsx::RGB{235, 242, 249}}
+      });
+      grid.set_style(style);
       FillPersonGrid(db, salutations, grid, false);
       if(grid.rows() != imported)
          throw std::runtime_error("Unfiltered Excel person selection is incomplete");
@@ -491,6 +512,13 @@ std::filesystem::path ExportExcel(database_ty& db,
    if(imported > 0) {
       if(peopleSheet.findCell(static_cast<std::uint32_t>(imported + 1), 1).empty())
          throw std::runtime_error("Excel output is missing the last person");
+      auto conditional = peopleSheet.conditionalFormats();
+      if(conditional.count() != 1 ||
+         conditional.conditionalFormatByIndex(0).cfRules().count() != 3)
+         throw std::runtime_error("Dynamic person row formatting was not persisted");
+      if(conditional.conditionalFormatByIndex(0).sqref() !=
+         "A2:F" + std::to_string(imported + 1))
+         throw std::runtime_error("Conditional format has incorrect data range");
       auto& styles = check.styles().cellFormats();
       auto const dateFmt = styles.cellFormatByIndex(peopleSheet.cell(2, 5).cellFormat());
       auto const amountFmt = styles.cellFormatByIndex(peopleSheet.cell(2, 6).cellFormat());

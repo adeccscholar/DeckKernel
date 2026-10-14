@@ -71,6 +71,17 @@ int main(int argc, char** argv) {
          {"Empty", 16, adecc::EAlignmentType::left, adecc::openxlsx_grid::ExcelColumnFormat{}}
       };
       model.set_captions(captions);
+      adecc::openxlsx_grid::ExcelGridStyle style;
+      style.header({
+         .background = adecc::openxlsx_grid::RGB{34, 79, 119},
+         .foreground = adecc::openxlsx_grid::RGB{255, 255, 255},
+         .bold = true
+      }).row_pattern({
+         {.background = adecc::openxlsx_grid::RGB{255, 255, 255}},
+         {.background = adecc::openxlsx_grid::RGB{225, 236, 247},
+          .italic = true}
+      });
+      model.set_style(style);
       check(model.rows() == 0 && model.columns() == 5, "Captions define only width");
       check(model.captions().at(0) == "Text", "Caption readback");
       model.appendRow(std::make_tuple(std::string("Hello"), 42.125, 12, date,
@@ -130,6 +141,17 @@ int main(int argc, char** argv) {
             "Caption date number format persisted");
       check(numbers.numberFormatById(amount_fmt.numberFormatId()).formatCode() == "#,##0.00",
             "Caption amount number format persisted");
+      auto cf = sheet.conditionalFormats();
+      check(cf.count() == 1, "One dynamic row-format region persisted");
+      auto ruleRegion = cf.conditionalFormatByIndex(0);
+      check(ruleRegion.sqref() == "C6:G6", "Conditional format covers data, not header");
+      auto rules = ruleRegion.cfRules();
+      check(rules.count() == 2, "Both pattern positions have Excel rules");
+      check(rules.cfRuleByIndex(1).formula() == "MOD(ROW()-6,2)=1",
+            "Alternating row formula persisted");
+      auto headerStyle = formats.cellFormatByIndex(sheet.cell(5, 3).cellFormat());
+      check(headerStyle.applyFont() && headerStyle.applyFill(),
+            "Fixed header font and fill persisted");
       raw.close();
       std::cout << "[PASS] Excel formatting: column width, alignment, date number format.\n";
    }

@@ -116,3 +116,10 @@ their native typed values. `set_captions()` prepares styles, and the shared
 workbook session caches number formats and styles across both worksheets.
 The exported report is re-opened and validates that date and amount styles
 are distinct and that the requested format codes survived serialization.
+
+## Dynamic Excel row styling
+
+The account and person Excel grids use `ExcelGridStyle` for a fixed bold,
+blue heading and dynamic conditional-format row patterns. Formats apply only
+to written data rectangles. The SQL generator, transformations and grid sink
+remain unchanged. The saved person-range rules are verified after reopening.
