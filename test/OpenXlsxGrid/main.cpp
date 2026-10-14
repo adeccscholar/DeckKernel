@@ -6,6 +6,12 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <iostream>
+#include <limits>
+
+#ifdef _WIN32
+#include <Windows.h>
+#endif
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -23,12 +29,37 @@ void check(bool condition, char const* message) {
    if(!condition) throw std::runtime_error(message);
 }
 
-int main() {
+// Place the example beside the executable, regardless of the calling directory.
+// Both the CTest binary and the installed apps/<configuration> binary therefore
+// keep independently inspectable XLSX files.
+std::filesystem::path ExecutableDirectory(char const* argv0) {
+#ifdef _WIN32
+   // Resolve the actual module location even when invoked through PATH or a shortcut.
+   std::wstring buffer(32768, L'\0');
+   auto const count = ::GetModuleFileNameW(
+      nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+   if(count == 0 || count >= buffer.size())
+      throw std::runtime_error("Cannot determine executable directory");
+   buffer.resize(count);
+   return std::filesystem::path{buffer}.parent_path();
+#else
+   return std::filesystem::absolute(argv0).parent_path();
+#endif
+}
+
+int main(int argc, char** argv) {
    namespace fs = std::filesystem;
-   auto const file = fs::current_path() / "openxlsx-grid-roundtrip.xlsx";
+   auto const file = ExecutableDirectory(argc > 0 ? argv[0] : "")
+                     / "OpenXlsxGrid_Example.xlsx";
    auto const date = adecc::date_ty{std::chrono::year{2026}/10/14};
 
-   fs::remove(file); // Ensure open_or_create really creates the workbook.
+   std::cout << "[OpenXlsxGrid] Example workbook: " << file.string() << '\n';
+   std::cout << "[OpenXlsxGrid] Creating Sheet 'Ledger' at C5, five columns.\n";
+   // This is a deterministic test fixture. Each invocation regenerates it;
+   // the completed file is intentionally retained for inspection in Excel.
+   if(fs::exists(file))
+      std::cout << "[OpenXlsxGrid] Replacing the previous example workbook.\n";
+   fs::remove(file);
    {
       OpenXLSXWorkbook book(file);
       auto model = book.grid("Ledger", GridRegion{5, 3, 0, 0, false});
@@ -59,6 +90,8 @@ int main() {
       }
       check(model.get<double>(0, 1) == 47.5, "Guarded cell update");
       book.save();
+      std::cout << "[PASS] Workbook created with captions in C5:G5 and data in C6:G6.\n";
+      std::cout << "[PASS] Typed write, empty optional, positioning and freeze guard.\n";
    }
    {
       OpenXLSXWorkbook book(file); // This time open existing without overwriting.
@@ -72,6 +105,7 @@ int main() {
       check(!model.get<std::optional<int>>(0, 4), "Optional roundtrip");
       check(!model.focus_row(1), "Reject position outside selected rectangle");
       book.save();
+      std::cout << "[PASS] Reopened workbook: captions, values and optional cells.\n";
    }
    // Verify that layout metadata has actually survived the XLSX roundtrip,
    // not merely the in-memory typed model.
@@ -89,6 +123,10 @@ int main() {
       auto date_fmt = formats.cellFormatByIndex(sheet.cell(6, 6).cellFormat());
       check(date_fmt.numberFormatId() == 14, "Date number format persisted");
       raw.close();
+      std::cout << "[PASS] Excel formatting: column width, alignment, date number format.\n";
    }
-   fs::remove(file);
+   check(fs::exists(file) && fs::file_size(file) > 0, "XLSX example file missing or empty");
+   std::cout << "[PASS] XLSX roundtrip completed successfully.\n";
+   std::cout << "[FILE] " << file.string() << '\n';
+   std::cout << "[INFO] Open the file in Excel to inspect Ledger!C5:G6.\n";
 }

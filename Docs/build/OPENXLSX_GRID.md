@@ -123,9 +123,22 @@ libzip, pugixml, Boost, zlib, compression and crypto package directories.
 Configuration-specific DLL folders are never mixed. No PowerShell is used.
 
 CTest runs the executable with the intended DLL search path. The executable
-creates an XLSX file in its build/bin directory, verifies typed data and
-optional cells, explicitly saves, reopens, verifies actual persisted caption
-width and alignment and date formatting, then removes the test file.
+creates **OpenXlsxGrid_Example.xlsx beside the executable**, verifies typed data
+and optional cells, explicitly saves, reopens, and verifies the actual persisted
+caption width, alignment and date formatting. The finished XLSX file is
+**retained**, not deleted. CTest writes to its own build/<configuration>/bin
+directory; invoking the installed program writes to apps/Debug or apps/Release.
+
+Open the workbook in Excel and inspect worksheet `Ledger`, cells C5:G6:
+captions in row 5 and the typed data in row 6. The date is stored using
+the Excel date number format, the Amount column is right aligned, and
+the final numeric Amount is 47.5 after the freeze-guard update.
+
+The executable prints a [PASS] line for each completed verification and
+a final [FILE] line with the absolute path. A nonzero exit indicates failure.
+Running it again intentionally recreates its example file at the same path,
+so close the workbook in Excel before rerunning the test.
+
 One passing OpenXlsxGridRoundtrip test indicates success.
 
 If OpenXLSXConfig.cmake or an imported .lib reference is missing, the
