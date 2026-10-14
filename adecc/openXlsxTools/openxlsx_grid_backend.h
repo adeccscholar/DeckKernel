@@ -4,6 +4,7 @@
 
 #include "openxlsx_session.h"
 #include "openxlsx_cell_conversion.h"
+#include "openxlsx_column_format.h"
 #include "../cpp_core/grid_backend_concepts.h"
 
 #include <OpenXLSX.hpp>
@@ -40,7 +41,8 @@ public:
                                std::string sheet_name, GridRegion region)
       : session_(std::move(session)), sheet_name_(std::move(sheet_name)),
         region_(region), rows_(region.data_rows), columns_(region.columns),
-        captions_(region.has_captions), alignments_(region.columns) {
+        captions_(region.has_captions), alignments_(region.columns),
+        number_formats_(region.columns), prepared_styles_(region.columns) {
       if(!session_) throw std::invalid_argument("OpenXLSX document is null");
       session_->require_open();
       if(sheet_name_.empty()) throw std::invalid_argument("Excel sheet name is empty");
@@ -96,6 +98,8 @@ public:
          columns_ = 0;
          captions_ = false;
          alignments_.clear();
+         number_formats_.clear();
+         prepared_styles_.clear();
       }
    }
 
@@ -111,6 +115,8 @@ public:
       captions_ = true;
       columns_ = values.size();
       alignments_.assign(columns_, std::nullopt);
+      number_formats_.assign(columns_, std::nullopt);
+      prepared_styles_.assign(columns_, std::nullopt);
 
       auto sheet = sheet_();
       for(size_type col = 0; col < values.size(); ++col) {
@@ -135,12 +141,30 @@ public:
                }
             }
          }
-         style_cell_(cell, col);
+         if constexpr (sizeof...(Hdr) >= 4) {
+            using Extra = std::remove_cvref_t<decltype(std::get<3>(values[col]))>;
+            if constexpr (std::same_as<Extra, ExcelColumnFormat>) {
+               auto const& format = std::get<3>(values[col]).number_format;
+               if(!format.empty())
+                  number_formats_[col] = session_->number_format(format);
+            }
+         }
+
+         // The header itself is a string, so only its alignment is applied.
+         if(alignments_[col])
+            cell.setCellFormat(session_->cell_style(
+               cell.cellFormat(), std::nullopt, alignments_[col]));
+
+         // Precompute the column style once. Data cells with the standard base
+         // format reuse this ID directly, independently of their row count.
+         if(number_formats_[col] || alignments_[col])
+            prepared_styles_[col] = session_->cell_style(
+               0, number_formats_[col], alignments_[col]);
       }
       // Also apply the column alignments to the previously selected data rows.
       for(size_type row = 0; row < rows_; ++row) {
          for(size_type col = 0; col < columns_; ++col) {
-            if(!alignments_[col]) continue;
+            if(!alignments_[col] && !number_formats_[col]) continue;
             auto cell = sheet.cell(excel_row_(row), excel_column_(col));
             style_cell_(cell, col);
          }
@@ -249,26 +273,30 @@ private:
 
    template<class Ty = void>
    void style_cell_(OpenXLSX::XLCellAssignable& cell, size_type col) {
-      // Preserve the existing cell format, changing only explicit grid metadata.
-      std::optional<std::uint32_t> number_format;
-      using Value = std::remove_cvref_t<Ty>;
-      if constexpr (std::same_as<Value, adecc::date_ty>) number_format = 14;
-      else if constexpr (std::same_as<Value, adecc::time_ty>) number_format = 21;
-      else if constexpr (std::same_as<Value, adecc::timestamp_ty>) number_format = 22;
-      else if constexpr (std::same_as<Value, adecc::money_ty>) number_format = 2;
+      // The explicit fourth caption value has priority over automatic
+      // C++ type formatting. A plain floating point value uses General (0),
+      // never a date format inherited from another column.
+      std::optional<std::uint32_t> number_format = number_formats_[col];
+      if(!number_format) {
+         using Value = std::remove_cvref_t<Ty>;
+         if constexpr (std::same_as<Value, adecc::date_ty>) number_format = 14;
+         else if constexpr (std::same_as<Value, adecc::time_ty>) number_format = 21;
+         else if constexpr (std::same_as<Value, adecc::timestamp_ty>) number_format = 22;
+         else if constexpr (std::same_as<Value, adecc::money_ty>) number_format = 2;
+         else if constexpr (std::is_integral_v<Value> || std::is_floating_point_v<Value>)
+            number_format = 0;
+      }
 
       if(!number_format && !alignments_[col]) return;
-      auto& formats = session_->document.styles().cellFormats();
-      auto fmt = formats.cellFormatByIndex(cell.cellFormat());
-      if(number_format) {
-         fmt.setNumberFormatId(*number_format);
-         fmt.setApplyNumberFormat(true);
+      auto const base = cell.cellFormat();
+      if(base == 0 && number_format == number_formats_[col] &&
+         prepared_styles_[col]) {
+         cell.setCellFormat(*prepared_styles_[col]);
       }
-      if(alignments_[col]) {
-         fmt.alignment(OpenXLSX::XLCreateIfMissing).setHorizontal(*alignments_[col]);
-         fmt.setApplyAlignment(true);
+      else {
+         cell.setCellFormat(session_->cell_style(
+            base, number_format, alignments_[col]));
       }
-      cell.setCellFormat(formats.create(fmt));
    }
 
    std::shared_ptr<WorkbookSession> session_;
@@ -281,6 +309,8 @@ private:
    bool captions_ = false;
    bool frozen_ = false;
    std::vector<std::optional<OpenXLSX::XLAlignmentStyle>> alignments_;
+   std::vector<std::optional<std::uint32_t>> number_formats_;
+   std::vector<std::optional<OpenXLSX::XLStyleIndex>> prepared_styles_;
 };
 
 static_assert(adecc::grid::grid_concept<OpenXLSXGridBackend>,

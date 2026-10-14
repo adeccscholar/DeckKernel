@@ -36,12 +36,14 @@ public:
       reinitialize_();
       session_->document.create(path.string(), overwrite);
       session_->opened = true;
+      session_->clear_style_caches();
    }
 
    void open(std::filesystem::path const& path) {
       reinitialize_();
       session_->document.open(path.string());
       session_->opened = true;
+      session_->clear_style_caches();
    }
 
    void save() {
