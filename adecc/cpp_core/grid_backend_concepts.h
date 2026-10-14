@@ -212,8 +212,13 @@ concept grid_table_backend_type =
    has_current_cell_for<backend_ty> &&
    has_focus_row_for<backend_ty>;
 
+// Full random-access grid contract for physical backends.
 template <class backend_ty>
-concept table_type = grid_table_backend_type<backend_ty>;
+concept grid_concept = grid_table_backend_type<backend_ty>;
+
+// Compatibility name for existing adapters.
+template <class backend_ty>
+concept table_type = grid_concept<backend_ty>;
 
 // ============================================================================
 // Sequential Write Grid: append_row / append_col

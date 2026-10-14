@@ -55,9 +55,9 @@ namespace grid {
  \details Uses insert_row() and set(row,col,value), but exposes append_row()
           and append_col(). This allows ordinary UI grids to work with
           used as a WriteGridModel.
- \tparam  Backend Regular grid backend satisfying grid_table_backend_type
+ \tparam  Backend Regular grid backend satisfying grid_concept
 */
-template <grid_table_backend_type Backend>
+template <grid_concept Backend>
 class TableToSequentialGridBackend {
 public:
    using backend_ty = Backend;
@@ -143,7 +143,7 @@ private:
 };
 
 template <class Backend>
-   requires grid_table_backend_type<std::remove_cvref_t<Backend>>
+   requires grid_concept<std::remove_cvref_t<Backend>>
 [[nodiscard]] auto MakeSequentialGridBackend(Backend&& theBackend) {
    return TableToSequentialGridBackend<std::remove_cvref_t<Backend>>{
       std::forward<Backend>(theBackend)

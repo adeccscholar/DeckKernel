@@ -87,12 +87,11 @@ namespace adecc {
       // ============================================================================
 
       /*!
-       \brief     Generic grid wrapper over a table_type backend
-       \tparam    Backend Concrete backend type satisfying table_type
-       \tparam    Owned    true: owned (unique_ptr), false: borrowed
+       \brief     Generic grid wrapper over a grid_concept backend
+       \tparam    Backend Concrete backend type satisfying grid_concept
        \details   Handles optional semantics, ranges, and the output sink.
       */
-      template <table_type Backend>
+      template <grid_concept Backend>
       class GridModel {
       public:
          using backend_ty = Backend;
@@ -102,7 +101,10 @@ namespace adecc {
 
          GridModel() = default;
 
-         explicit GridModel(backend_ty&& theBackend) : theBackend_{ std::move(theBackend) } {}
+         explicit GridModel(backend_ty&& theBackend) : theBackend_{ std::move(theBackend) } {
+            iCols_ = theBackend_->columns();
+            iRows_ = theBackend_->rows();
+            }
 
          /*!
          \brief   Constructor with variadic captions
@@ -139,6 +141,17 @@ namespace adecc {
 
          [[nodiscard]] size_type current_row() const {
             return backend_().current_row();
+            }
+
+         [[nodiscard]] size_type current_column() const {
+            return backend_().current_column();
+            }
+
+         [[nodiscard]] std::vector<std::string> captions() const
+            requires requires(backend_ty const& b) {
+               { b.read_captions() } -> std::same_as<std::vector<std::string>>;
+               } {
+            return backend_().read_captions();
             }
 
          // ------------------------------------------------------------------------
@@ -367,6 +380,13 @@ namespace adecc {
 
          bool focus_row(size_type iRow) {
             return backend_().focus_row(iRow);
+            }
+
+         [[nodiscard]] bool focus_cell(size_type iRow, size_type iCol)
+            requires requires(backend_ty& b) {
+               { b.focus_cell(iRow, iCol) } -> std::same_as<bool>;
+               } {
+            return backend_().focus_cell(iRow, iCol);
             }
          using FreezeGuard = adecc::wrapper::FreezeGuard<GridModel>;
 
@@ -827,7 +847,7 @@ namespace adecc {
       template <typename ty>
       struct GridModelTraits;
 
-      template <table_type Backend>
+      template <grid_concept Backend>
       struct GridModelTraits<GridModel<Backend>> {
          using grid_type = GridModel<Backend>;
          using backend_type = Backend;
@@ -852,7 +872,7 @@ namespace adecc {
       template <typename ty>
       struct is_GridModel : std::false_type {};
 
-      template <table_type Backend>
+      template <grid_concept Backend>
       struct is_GridModel<GridModel<Backend>> : std::true_type {};
 
       template <typename ty>

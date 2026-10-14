@@ -39,6 +39,7 @@ Executable learning projects and how to build, install, run and verify them:
 
 - [Documentation server](build/DOCU_SERVER.md)
 - [First connection test](build/FIRST_CONNECTION_TEST.md)
+- [OpenXLSX typed grid build and test](build/OPENXLSX_GRID.md)
 
 Future applications should receive their own build guide here. Each guide should begin
 with the motivation for the application and the concepts it is intended to teach.
