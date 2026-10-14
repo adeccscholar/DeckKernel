@@ -107,9 +107,10 @@ struct WorkbookSession final {
       }
       if(style.background) {
          auto fill = format.fill();
+         // Differential (conditional) fills use bgColor. In contrast, the
+         // regular cell styles above use a solid fgColor for fixed headers.
          fill.setFillType(OpenXLSX::XLPatternFill, true);
-         fill.setPatternType(OpenXLSX::XLPatternSolid);
-         fill.setColor(xl_color(*style.background));
+         fill.setBackgroundColor(xl_color(*style.background));
       }
       return index;
    }
