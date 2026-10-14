@@ -213,3 +213,17 @@ is prohibited by OpenXLSX; deleting while a grid is alive is prohibited by
 the adapter. Opening a path reads a saved XLSX file, not the in-memory Excel
 process or its unsaved changes. File sharing and write locks are controlled by
 Windows/Excel.
+
+## Existing grid with an offset
+
+`grid_existing(sheet, first_row, first_column, rows = 0, columns = 0,
+has_captions = true)` now accepts the same 1-based coordinates as `grid()`.
+A `GridRegion` overload is also available. When dimensions are zero, the
+adapter discovers consecutive nonempty cells of the starting row and reads
+until the first fully empty data row. Sparse tables should specify dimensions.
+The existing `grid_existing(sheet)` remains compatible and uses A1.
+
+```cpp
+auto ledger = workbook.grid_existing("Ledger", 5, 3); // C5:G6
+auto amount = ledger.get<double>(0, 1);             // D6
+```

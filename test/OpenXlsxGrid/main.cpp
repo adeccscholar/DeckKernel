@@ -121,8 +121,17 @@ int main(int argc, char** argv) {
       OpenXLSXWorkbook book(file);
       check(book.sheet_exists("Ledger"), "Existing worksheet lookup");
       check(book.worksheet_rows("Ledger") == 6, "Last used worksheet row");
-      check(book.grid_existing("Ledger").rows() == 5,
-            "A1-based convenience grid includes the layout above Ledger");
+      auto ledger = book.grid_existing("Ledger", 5, 3);
+      check(ledger.rows() == 1 && ledger.columns() == 5,
+            "Offset C5 discovers one data row and five columns");
+      check(ledger.captions().at(1) == "Amount",
+            "Offset caption is correctly read");
+      check(ledger.get<double>(0, 1) == 47.5,
+            "Offset amount is correctly read");
+      auto amount = book.grid_existing(
+         "Ledger", GridRegion{6, 4, 1, 1, false});
+      check(amount.get<double>(0, 0) == 47.5,
+            "Explicit off-origin selection is supported");
       // Remove sheet is deliberately tested with a disposable second sheet.
       book.add_sheet("Temporary");
       check(book.sheet_exists("Temporary"), "Create supplementary sheet");

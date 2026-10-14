@@ -5,6 +5,7 @@
 #include "openxlsx_grid_backend.h"
 #include "../cpp_core/grid_wrapper.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <vector>
@@ -103,23 +104,67 @@ public:
       return session_->document.workbook().worksheet(sheet_name).rowCount();
    }
 
-   // Reopen an A1-based data table. The first row is optionally the caption.
-   // Does not create a missing sheet or modify existing cell values.
+   // Read an existing table with the same 1-based origin as grid().
+   // Zero dimensions discover consecutive columns on the first row and
+   // consecutive data rows until the first completely empty row.
    [[nodiscard]] adecc::grid::GridModel<OpenXLSXGridBackend>
-   grid_existing(std::string sheet_name, bool has_captions = true) {
+   grid_existing(std::string name, GridRegion region) {
       session_->require_open();
-      if(!sheet_exists(sheet_name))
+      if(!sheet_exists(name))
          throw std::out_of_range("Excel worksheet does not exist");
-      auto sheet = session_->document.workbook().worksheet(sheet_name);
-      auto const last_row = sheet.rowCount();
-      auto const cols = sheet.columnCount();
-      if(last_row == 0 || cols == 0)
-         throw std::logic_error("Excel worksheet has no populated table");
-      if(has_captions && last_row < 1)
-         throw std::logic_error("Excel worksheet has no caption row");
-      return grid(std::move(sheet_name),
-         GridRegion{1, 1, last_row - (has_captions ? 1u : 0u),
-                    cols, has_captions});
+      if(region.first_row == 0 || region.first_row > 1048576 ||
+         region.first_column == 0 || region.first_column > 16384)
+         throw std::out_of_range("Excel grid origin outside sheet limits");
+      auto sheet = session_->document.workbook().worksheet(name);
+      auto occupied = [&](std::uint32_t row, std::uint16_t column) {
+         auto cell = sheet.findCell(row, column);
+         return !cell.empty() &&
+                cell.value().type() != OpenXLSX::XLValueType::Empty;
+      };
+      if(region.columns == 0) {
+         for(std::uint32_t col = region.first_column; col <= 16384; ++col) {
+            if(!occupied(region.first_row, static_cast<std::uint16_t>(col))) break;
+            ++region.columns;
+         }
+         if(region.columns == 0)
+            throw std::logic_error("No Excel table at requested origin");
+      }
+      if(std::uint64_t(region.first_column) + region.columns > 16385)
+         throw std::out_of_range("Excel grid extends beyond column XFD");
+      auto const first_data = std::uint64_t(region.first_row) +
+                              (region.has_captions ? 1u : 0u);
+      if(region.data_rows == 0 && first_data <= 1048576) {
+         auto const last = sheet.rowCount();
+         for(std::uint64_t row = first_data; row <= last; ++row) {
+            bool found = false;
+            for(std::size_t col = 0; col < region.columns; ++col) {
+               if(occupied(static_cast<std::uint32_t>(row),
+                           static_cast<std::uint16_t>(region.first_column + col))) {
+                  found = true;
+                  break;
+               }
+            }
+            if(!found) break;
+            ++region.data_rows;
+         }
+      }
+      return grid(std::move(name), region);
+   }
+
+   // Existing source-compatible call, with A1 as its default origin.
+   [[nodiscard]] adecc::grid::GridModel<OpenXLSXGridBackend>
+   grid_existing(std::string name, bool has_captions = true) {
+      return grid_existing(std::move(name), GridRegion{1, 1, 0, 0, has_captions});
+   }
+
+   // Offset and optional explicit dimensions, in the same order as grid().
+   [[nodiscard]] adecc::grid::GridModel<OpenXLSXGridBackend>
+   grid_existing(std::string name, std::uint32_t first_row,
+                 std::uint16_t first_column, std::size_t rows = 0,
+                 std::size_t columns = 0, bool has_captions = true) {
+      return grid_existing(std::move(name),
+                           GridRegion{first_row, first_column,
+                                      rows, columns, has_captions});
    }
 
    // The complete selected rectangle must be supplied when reading existing data.
