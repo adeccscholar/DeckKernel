@@ -120,8 +120,12 @@ Install uses apps/Debug or apps/Release according to the current single-config
 Ninja build. It installs the executable plus only its **actual recursive DLL
 imports**, determined with CMake file(GET_RUNTIME_DEPENDENCIES) from the built
 program. DLLs are resolved within the pinned Debug/Release ThirdParty stack;
-unused Boost components are not copied. Previously installed DLLs are not
-automatically deleted, because other tests may depend on them.
+unused Boost components are not copied. The resolver also searches the
+actual C++Builder compiler directory and the BDS bin64/bin directories;
+required compiler runtime DLLs (for example libc++-370.dll and
+libunwind-370.dll) are copied selectively. Windows system DLLs are not
+copied. Previously installed DLLs are not automatically deleted because
+other tests may depend on them. CTest uses the same search directories.
 No PowerShell is used.
 
 CTest runs the executable with the intended DLL search path. The executable

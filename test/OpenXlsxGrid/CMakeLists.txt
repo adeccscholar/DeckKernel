@@ -63,6 +63,8 @@ target_link_libraries(adecc_openxlsx_grid_test PRIVATE OpenXLSX::OpenXLSX)
 
 # Deploy only actual recursive DLL imports; no directory-wide Boost copy.
 enable_testing()
+# CTest needs the same pinned + C++Builder DLL search paths as installation.
+adecc_runtime_search_directories(_runtime_dirs _toolchain_dirs)
 list(JOIN _runtime_dirs ";" _test_path)
 add_test(NAME OpenXlsxGridRoundtrip
    COMMAND "${CMAKE_COMMAND}" -E env

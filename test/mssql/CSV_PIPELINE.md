@@ -99,8 +99,10 @@ recreates its dedicated demo SQL tables, so use only a disposable test database.
 The CMake project resolves OpenXLSX 0.5.1 exclusively through the pinned
 DeckKernel bootstrap package, links `OpenXLSX::OpenXLSX`, and installs the
 actually imported Debug/Release DLLs from the recursive runtime dependency
-analysis, rather than copying entire Boost and other package folders,
-with component `csv_pipeline`. To install just this executable and its runtime dependencies:
+analysis, rather than copying entire Boost and other package folders.
+The active C++Builder bin64/bin directories are also searched and only required
+compiler runtime DLLs such as libc++-370.dll and libunwind-370.dll are copied;
+Windows system DLLs are not copied. The install component is `csv_pipeline`. To install just this executable and its runtime dependencies:
 
 ```cmd
 cmake --install test/mssql/build/Release --component csv_pipeline
