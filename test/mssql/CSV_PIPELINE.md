@@ -19,11 +19,17 @@
 6. The amount is parsed by `cpp_domain` policies (`TrimStringConversionPolicy`, `GermanDecimalToFloatConversionPolicy`, `PositiveNumberPolicy`) and passed through `ConvertTo` into `adecc::money_ty`. The invoice date uses `CaseConversionPolicy` to choose ISO, European or US `ConvertToConversionPolicy`, followed by `ValidYearMonthDayPolicy`, producing `adecc::date_ty`. The build retains `CHRONO_WORK_AROUND` and `CHRONO_MISSED_ZONEDB`; no timezone database is used.
 7. SQL Server evaluates the total turnover, verifies debit/credit equality
    and calculates debit, credit, and debit-minus-credit balances for each account.
-8. A second `WriteGridModel<OStreamGridBackend<>>` renders twelve sample booking/person rows.
-   `adecc::Transform` projects the SQL tuples first into domain types (`Iban`, `VatId_DE`, `InvoiceDate`),
-   then into display strings through existing `ConvertTo`/stringify specializations. The only explicit
-   `BindMapping` resolves salutation IDs via a reverse `std::map<int, std::string>`. The grid consumes
-   the typed display range directly; invoice dates use European formatting.
+8. A second `WriteGridModel<OStreamGridBackend<>>` renders the historically filtered
+   person rows (`kind_id = 4`, `salutation_id = 3`). The SQL rows are transformed through
+   the existing domain policies, retaining the formatted date and amount for text output.
+9. An independent, **unfiltered** SQL query reads all persons for the Excel export.
+   The XLSX workbook is written beside the installed executable as
+   `CsvBookingReport.xlsx`. It contains exactly two worksheets:
+   `Summenübersicht` (account balances plus total/count/difference metrics) and
+   `Personen` (all imported rows with native Excel date and numeric amount).
+10. Both text and Excel share one constrained `FillGrid(Grid&, Rows)` algorithm.
+    Only the row projection differs: formatted strings for text, numeric and
+    calendar values for Excel. Ranges, iterators and sinks remain in `cpp_core`.
 
 ## Example
 
@@ -69,3 +75,31 @@ IBAN storage deliberately uses `Iban::Value()` through a dedicated `BindMapping`
 column 9 (canonical, ungrouped string). The read path constructs `adecc::Iban` again
 and then uses its stringify policy via `ConvertTo<std::string>` to display grouped
 IBANs. This keeps persisted values independent of presentation formatting.
+
+## XLSX result and verification
+
+After installation, running `apps\\Release\\adecc_mssql_csv_pipeline.exe`
+creates `apps/Release/CsvBookingReport.xlsx` and prints the absolute path.
+Open it in Excel to inspect the two worksheets. `Summenübersicht` contains
+all account debit, credit, and balance figures in columns A:E and the control
+metrics in G:H; `Personen` contains the complete booking population, with no
+WHERE restriction. The command-line text grid intentionally keeps the original
+filtered sample. The Excel Amount column is numeric and the invoice date uses
+an Excel date cell, not a formatted string. The program verifies the unfiltered
+person count against the imported count before exporting, then reopens the
+saved workbook to validate its worksheet headers and last person.
+
+When repeating the example, close `CsvBookingReport.xlsx` in Excel first:
+the program recreates the workbook on every run. The export is performed
+**after the database transaction has committed**; an XLSX write failure cannot
+roll back the already completed SQL import. This sample still drops and
+recreates its dedicated demo SQL tables, so use only a disposable test database.
+
+The CMake project resolves OpenXLSX 0.5.1 exclusively through the pinned
+DeckKernel bootstrap package, links `OpenXLSX::OpenXLSX`, and installs the
+corresponding Debug/Release DLL plus known transitive DLLs with component
+`csv_pipeline`. To install just this executable and its runtime dependencies:
+
+```cmd
+cmake --install test/mssql/build/Release --component csv_pipeline
+```

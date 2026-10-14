@@ -108,3 +108,13 @@ UTF-16 and uses the wide console API; redirected output remains UTF-8.
 
 This allows localized SQL Server messages, object names, and wide parameter values to be
 shown without depending on the active OEM or ANSI console code page.
+
+## XLSX export from the CSV pipeline
+
+The `adecc_mssql_csv_pipeline.exe` lesson now generates `CsvBookingReport.xlsx`
+next to the executable after the database import. It contains the two sheets
+`Summenübersicht` (balances and overall totals) and `Personen` (unfiltered
+bookings, including native date and numeric amount). The console retains the
+historical filtered person sample. The same constrained `FillGrid` function
+fills both the text and XLSX grids; their row projections differ only where
+required for presentation. See [CSV_PIPELINE.md](CSV_PIPELINE.md).

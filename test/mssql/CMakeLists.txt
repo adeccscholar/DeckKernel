@@ -58,6 +58,28 @@ set(
    FORCE
 )
 
+# OpenXLSX 0.5.1 is supplied exclusively by the pinned DeckKernel bootstrap.
+# The MSSQL teaching executable uses the same package as test/OpenXlsxGrid.
+set(ADECC_THIRDPARTY_CONFIGURATION "${CMAKE_BUILD_TYPE}")
+include("${DECKKERNEL_ROOT}/Cache/cmake/ThirdParty.cmake")
+if(NOT DEFINED ADECC_TP_OPENXLSX_ROOT OR
+   NOT ADECC_TP_OPENXLSX_VERSION STREQUAL "0.5.1")
+   message(FATAL_ERROR
+      "OpenXLSX 0.5.1 is missing from the pinned DeckKernel stack. "
+      "Run cmake -P bootstrap/Bootstrap.cmake.")
+endif()
+set(_openxlsx_cmake
+   "${ADECC_TP_OPENXLSX_ROOT}/lib/win64/${CMAKE_BUILD_TYPE}/cmake/OpenXLSX")
+if(NOT EXISTS "${_openxlsx_cmake}/OpenXLSXConfig.cmake")
+   message(FATAL_ERROR "Missing OpenXLSX package: ${_openxlsx_cmake}")
+endif()
+set(OpenXLSX_DIR "${_openxlsx_cmake}" CACHE PATH "Pinned OpenXLSX 0.5.1" FORCE)
+find_package(OpenXLSX 0.5.1 CONFIG REQUIRED
+   PATHS "${_openxlsx_cmake}" NO_DEFAULT_PATH)
+if(NOT TARGET OpenXLSX::OpenXLSX)
+   message(FATAL_ERROR "OpenXLSX::OpenXLSX imported target is missing")
+endif()
+
 add_executable(
    adecc_mssql_odbc_test
    test_mssql_odbc_database.cpp
@@ -74,7 +96,11 @@ target_compile_definitions(adecc_mssql_csv_pipeline PRIVATE
 target_include_directories(adecc_mssql_csv_pipeline PRIVATE
    "${DECKKERNEL_ROOT}/adecc/cpp_core"
    "${DECKKERNEL_ROOT}/adecc/mssql"
-   "${DECKKERNEL_ROOT}/adecc/cpp_domain")
+   "${DECKKERNEL_ROOT}/adecc/cpp_domain"
+   "${DECKKERNEL_ROOT}/adecc/openXlsxTools")
+target_compile_options(adecc_mssql_csv_pipeline PRIVATE
+   "-fborland-exec-code-page=65001")
+target_link_libraries(adecc_mssql_csv_pipeline PRIVATE OpenXLSX::OpenXLSX)
 if(WIN32)
    target_link_libraries(adecc_mssql_csv_pipeline PRIVATE odbc32)
 else()
@@ -82,6 +108,36 @@ else()
 endif()
 install(TARGETS adecc_mssql_csv_pipeline RUNTIME DESTINATION . COMPONENT csv_pipeline)
 install(FILES "${CMAKE_CURRENT_LIST_DIR}/bookings.csv" DESTINATION . COMPONENT csv_pipeline)
+
+# Install configuration-matched OpenXLSX and known transitive runtime DLLs.
+# The csv_pipeline component is independently deployable to apps/<config>.
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+   set(_openxlsx_dll "libOpenXLSXd.dll")
+else()
+   set(_openxlsx_dll "libOpenXLSX.dll")
+endif()
+set(_openxlsx_runtime
+   "${ADECC_TP_OPENXLSX_ROOT}/bin/win64/${CMAKE_BUILD_TYPE}/${_openxlsx_dll}")
+if(NOT EXISTS "${_openxlsx_runtime}")
+   message(FATAL_ERROR "Missing pinned OpenXLSX DLL: ${_openxlsx_runtime}")
+endif()
+install(FILES "${_openxlsx_runtime}" DESTINATION . COMPONENT csv_pipeline)
+foreach(_root IN ITEMS
+   "${ADECC_TP_PUGIXML_ROOT}"
+   "${ADECC_TP_LIBZIP_ROOT}"
+   "${ADECC_TP_BOOST_ROOT}"
+   "${ADECC_TP_ZLIB_ROOT}"
+   "${ADECC_TP_ZSTD_ROOT}"
+   "${ADECC_TP_BZIP2_ROOT}"
+   "${ADECC_TP_XZ_ROOT}"
+   "${ADECC_TP_OPENSSL_ROOT}"
+   "${ADECC_TP_BROTLI_ROOT}")
+   if(_root AND EXISTS "${_root}/bin/win64/${CMAKE_BUILD_TYPE}")
+      install(DIRECTORY "${_root}/bin/win64/${CMAKE_BUILD_TYPE}/"
+         DESTINATION . COMPONENT csv_pipeline FILES_MATCHING PATTERN "*.dll")
+   endif()
+endforeach()
+
 
 target_compile_definitions(
    adecc_mssql_odbc_test
