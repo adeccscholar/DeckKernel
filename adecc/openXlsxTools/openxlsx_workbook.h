@@ -7,6 +7,8 @@
 
 #include <filesystem>
 #include <memory>
+#include <vector>
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -59,6 +61,65 @@ public:
          session_->document.close();
          session_->opened = false;
       }
+   }
+
+   [[nodiscard]] bool sheet_exists(std::string const& sheet_name) const {
+      session_->require_open();
+      return session_->document.workbook().worksheetExists(sheet_name);
+   }
+
+   [[nodiscard]] std::vector<std::string> sheet_names() const {
+      session_->require_open();
+      return session_->document.workbook().worksheetNames();
+   }
+
+   void add_sheet(std::string const& sheet_name) {
+      session_->require_open();
+      if(sheet_name.empty() || sheet_exists(sheet_name))
+         throw std::invalid_argument("Excel worksheet name is empty or already exists");
+      session_->document.workbook().addWorksheet(sheet_name);
+   }
+
+   // XLWorkbook::deleteSheet refuses to remove the last worksheet.
+   // Prevent dangling GridModels by disallowing removal with active views.
+   void remove_sheet(std::string const& sheet_name) {
+      session_->require_open();
+      if(session_.use_count() > 1)
+         throw std::logic_error("Cannot delete a sheet while grid views are alive");
+      if(!sheet_exists(sheet_name))
+         throw std::out_of_range("Excel worksheet does not exist");
+      session_->document.workbook().deleteSheet(sheet_name);
+      session_->styled_regions.erase(
+         std::remove_if(session_->styled_regions.begin(), session_->styled_regions.end(),
+            [&](auto const& region) { return region->sheet == sheet_name; }),
+         session_->styled_regions.end());
+   }
+
+   // The last occupied worksheet row number, not a count of business records.
+   [[nodiscard]] std::size_t worksheet_rows(std::string const& sheet_name) const {
+      session_->require_open();
+      if(!sheet_exists(sheet_name))
+         throw std::out_of_range("Excel worksheet does not exist");
+      return session_->document.workbook().worksheet(sheet_name).rowCount();
+   }
+
+   // Reopen an A1-based data table. The first row is optionally the caption.
+   // Does not create a missing sheet or modify existing cell values.
+   [[nodiscard]] adecc::grid::GridModel<OpenXLSXGridBackend>
+   grid_existing(std::string sheet_name, bool has_captions = true) {
+      session_->require_open();
+      if(!sheet_exists(sheet_name))
+         throw std::out_of_range("Excel worksheet does not exist");
+      auto sheet = session_->document.workbook().worksheet(sheet_name);
+      auto const last_row = sheet.rowCount();
+      auto const cols = sheet.columnCount();
+      if(last_row == 0 || cols == 0)
+         throw std::logic_error("Excel worksheet has no populated table");
+      if(has_captions && last_row < 1)
+         throw std::logic_error("Excel worksheet has no caption row");
+      return grid(std::move(sheet_name),
+         GridRegion{1, 1, last_row - (has_captions ? 1u : 0u),
+                    cols, has_captions});
    }
 
    // The complete selected rectangle must be supplied when reading existing data.

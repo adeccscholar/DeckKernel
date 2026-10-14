@@ -36,6 +36,7 @@
 #endif
 #include <map>
 #include <ranges>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -442,6 +443,23 @@ std::filesystem::path ExecutableDirectory(char const* argv0) {
 #endif
 }
 
+double SumExportedPersonAmounts(std::filesystem::path const& file,
+                                std::size_t expected_rows) {
+   namespace xlsx = adecc::openxlsx_grid;
+   xlsx::OpenXLSXWorkbook workbook{file};
+   auto grid = workbook.grid_existing("Personen");
+   if(grid.rows() != expected_rows || grid.columns() != 6)
+      throw std::runtime_error("Person table dimensions do not match export");
+
+   // GridModel's column selection is zero-based. The sixth column is amount.
+   // No additional DTO, vector or conversion to a formatted string.
+   auto amounts = grid.makeRowView<double>({5})
+      | std::views::transform([](auto const& row) {
+           return std::get<0>(row);
+        });
+   return std::ranges::fold_left(amounts, 0.0, std::plus<>{});
+}
+
 std::filesystem::path ExportExcel(database_ty& db,
                                   id_names_ty const& accounts,
                                   std::map<int, std::string> const& salutations,
@@ -531,6 +549,12 @@ std::filesystem::path ExportExcel(database_ty& db,
          throw std::runtime_error("Excel caption formats were not persisted");
    }
    check.close();
+   // A separate read of the persisted workbook, using the existing Grid Range
+   // selector. The person table contains each booking amount once.
+   auto const sum = SumExportedPersonAmounts(path, imported);
+   if(std::abs(sum - std::get<1>(totals).Get()) > 0.01)
+      throw std::runtime_error("Excel amount fold does not match SQL total");
+   std::println("[PASS] Excel person amount fold = {:.2f} EUR", sum);
    return path;
 }
 

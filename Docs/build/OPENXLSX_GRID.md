@@ -187,3 +187,29 @@ One pattern element colors all rows. Two alternate; four can represent A,A,B,B.
 An empty pattern adds no data styling. Rules are finalized at save(), when the
 actual row count is known. Excel rows inserted outside the saved rectangle are
 not automatically included; the result is not an auto-expanding Excel Table.
+
+## Reading worksheet dimensions, typed selected columns and deleting sheets
+
+`OpenXLSXWorkbook::worksheet_rows(name)` returns the *last occupied worksheet
+row number*, not the count of business records. `grid_existing(name)`
+creates an A1-based read view, taking the first row as captions by default.
+For arbitrary offsets, continue to use `grid(name, GridRegion{...})`.
+The general `GridModel` already provides `rows()`, `columns()`,
+`get<T>(row,column)`, `focus_row`, `focus_cell`, and
+`makeRowView<Ts...>({selected_column_indices})`. Grid indices are zero-based.
+
+```cpp
+auto grid = book.grid_existing("Personen");
+auto amounts = grid.makeRowView<double>({5})
+   | std::views::transform([](auto const& row) { return std::get<0>(row); });
+double sum = std::ranges::fold_left(amounts, 0.0, std::plus<>{});
+```
+
+The MSSQL pipeline now reads back the actual generated file and compares the
+person amount fold with the SQL aggregate. It never materializes intermediary
+row DTOs. Worksheet management is provided by `sheet_exists`,
+`sheet_names`, `add_sheet` and `remove_sheet`. Deleting the final sheet
+is prohibited by OpenXLSX; deleting while a grid is alive is prohibited by
+the adapter. Opening a path reads a saved XLSX file, not the in-memory Excel
+process or its unsaved changes. File sharing and write locks are controlled by
+Windows/Excel.

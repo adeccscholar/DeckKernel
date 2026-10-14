@@ -117,6 +117,19 @@ int main(int argc, char** argv) {
       book.save();
       std::cout << "[PASS] Reopened workbook: captions, values and optional cells.\n";
    }
+   {
+      OpenXLSXWorkbook book(file);
+      check(book.sheet_exists("Ledger"), "Existing worksheet lookup");
+      check(book.worksheet_rows("Ledger") == 6, "Last used worksheet row");
+      check(book.grid_existing("Ledger").rows() == 5,
+            "A1-based convenience grid includes the layout above Ledger");
+      // Remove sheet is deliberately tested with a disposable second sheet.
+      book.add_sheet("Temporary");
+      check(book.sheet_exists("Temporary"), "Create supplementary sheet");
+      book.remove_sheet("Temporary");
+      check(!book.sheet_exists("Temporary"), "Delete supplementary sheet");
+      book.save();
+   }
    // Verify that layout metadata has actually survived the XLSX roundtrip,
    // not merely the in-memory typed model.
    {
