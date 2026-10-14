@@ -38,71 +38,61 @@
 
 namespace {
 
-using database_ty = adecc::db::logical_database<
-   adecc::db::mssql::mssql_database, adecc::db::mssql::query>;
+using database_ty = adecc::db::logical_database<adecc::db::mssql::mssql_database, adecc::db::mssql::query>;
 
 // cpp_domain building blocks: each conversion/validation is a compile-time policy.
-using IsoDateCase = adecc::CaseConversion<
-   adecc::RegexStringPolicy<R"(^[0-9]{4}-[0-9]{2}-[0-9]{2}$)">,
-   adecc::ConvertToConversionPolicy<std::string, adecc::date_ty>>;
-using EuropeanDateCase = adecc::CaseConversion<
-   adecc::RegexStringPolicy<R"(^[0-9]{2}\.[0-9]{2}\.[0-9]{4}$)">,
-   adecc::ConvertToConversionPolicy<std::string, adecc::date_ty, adecc::DateFmt::EUROPE>>;
-using UsDateCase = adecc::CaseConversion<
-   adecc::RegexStringPolicy<R"(^[0-9]{2}/[0-9]{2}/[0-9]{4}$)">,
-   adecc::ConvertToConversionPolicy<std::string, adecc::date_ty, adecc::DateFmt::US>>;
-using InvoiceDateConversion = adecc::ConversionChainPolicy<
-   adecc::TrimStringConversionPolicy,
-   adecc::CaseConversionPolicy<IsoDateCase, EuropeanDateCase, UsDateCase>>;
-using InvoiceDate = adecc::ConvertedPolicyValue<"InvoiceDate",
-   InvoiceDateConversion, adecc::ValidYearMonthDayPolicy,
-   adecc::ConvertToStringWithArgumentsPolicy<adecc::date_ty, adecc::DateFmt::EUROPE>>;
-
-using EuroConversion = adecc::ConversionChainPolicy<
-   adecc::TrimStringConversionPolicy,
-   adecc::GermanDecimalToFloatConversionPolicy<double>>;
-using EuroAmount = adecc::ConvertedPolicyValue<"EuroAmount",
-   EuroConversion, adecc::PositiveNumberPolicy<double>>;
+using IsoDateCase = adecc::CaseConversion< adecc::RegexStringPolicy<R"(^[0-9]{4}-[0-9]{2}-[0-9]{2}$)">,
+                                           adecc::ConvertToConversionPolicy<std::string, adecc::date_ty>>;
+using EuDateCase = adecc::CaseConversion<  adecc::RegexStringPolicy<R"(^[0-9]{2}\.[0-9]{2}\.[0-9]{4}$)">,
+                                           adecc::ConvertToConversionPolicy<std::string, adecc::date_ty, adecc::DateFmt::EUROPE>>;
+using UsDateCase = adecc::CaseConversion<  adecc::RegexStringPolicy<R"(^[0-9]{2}/[0-9]{2}/[0-9]{4}$)">,
+                                           adecc::ConvertToConversionPolicy<std::string, adecc::date_ty, adecc::DateFmt::US>>;
+using InvoiceDateConversion = adecc::ConversionChainPolicy< adecc::TrimStringConversionPolicy,
+                                                            adecc::CaseConversionPolicy<IsoDateCase, EuDateCase, UsDateCase>>;
+using InvoiceDate = adecc::ConvertedPolicyValue<"InvoiceDate", InvoiceDateConversion, adecc::ValidYearMonthDayPolicy,
+                                                adecc::ConvertToStringWithArgumentsPolicy<adecc::date_ty, adecc::DateFmt::EUROPE>>;
 
 
-// SEPA domain types validate and normalize directly while reading the CSV.
-using booking_iban_ty = adecc::Iban;
-using booking_vat_ty = adecc::VatId_DE;
+using EuroConversion = adecc::ConversionChainPolicy<adecc::TrimStringConversionPolicy, adecc::GermanDecimalToFloatConversionPolicy<double>>;
+using EuroAmount = adecc::ConvertedPolicyValue<"EuroAmount", EuroConversion, adecc::PositiveNumberPolicy<double>>;
+
 
 using mapping_ids_ty = std::map<std::string, long long>;
 using id_names_ty = std::map<int, std::string>;
 
 using domain_types = adecc::defined_type_list<long long, std::string>;
 using account_types = adecc::defined_type_list<long long, std::string, std::string>;
-using csv_file_types = adecc::defined_type_list<
-   std::string, std::string, std::string, std::string,
-   std::string, std::string, EuroAmount, InvoiceDate,
-   booking_iban_ty, booking_vat_ty>;
-using csv_types = adecc::defined_type_list<
-   long long, std::string, std::string, std::string,
-   std::string, std::string, std::string, EuroAmount, InvoiceDate,
-   booking_iban_ty, booking_vat_ty>;
-using booking_types = adecc::defined_type_list<
-   long long, std::string, std::string, long long,
-   long long, long long, long long, adecc::money_ty, adecc::date_ty,
-   std::string, std::string>;
+using csv_file_types = adecc::defined_type_list<std::string, std::string, std::string, std::string, std::string, std::string, 
+                                                EuroAmount, InvoiceDate, adecc::Iban, adecc::VatId_DE>;
+using csv_types = adecc::defined_type_list<long long, std::string, std::string, std::string, std::string, std::string, std::string, 
+                                           EuroAmount, InvoiceDate, adecc::Iban, adecc::VatId_DE>;
+
+using booking_types = adecc::defined_type_list<long long, std::string, std::string, long long, long long, long long, long long, 
+                                               adecc::money_ty, adecc::date_ty, std::string, std::string>;
 
 struct AccountMetaData {
    static constexpr std::string_view svTableName = "dbo.AdeccCsvAccount";
-   static constexpr std::array<std::string_view, 3> arrAttributeNames{"id", "code", "name"};
-   static constexpr std::array<std::size_t, 1> arrKeyIndices{0};
-   static constexpr std::optional<std::size_t> optIdentityIndex{0};
-   static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
+   static constexpr std::array<std::string_view, 3> arrAttributeNames {
+	   "id", "code", "name"
+	   };
+	   
+   static constexpr std::array<std::size_t, 1> arrKeyIndices { 0 };
+   static constexpr std::optional<std::size_t> optIdentityIndex { 0 };
+   static constexpr std::array<std::size_t, 0> arrReadOnlyIndices {};
    };
+   
 struct BookingMetaData {
    static constexpr std::string_view svTableName = "dbo.AdeccCsvBooking";
-   static constexpr std::array<std::string_view, 11> arrAttributeNames{
-      "id", "reference", "name", "salutation_id", "kind_id",
-      "debit_account_id", "credit_account_id", "amount_eur", "invoice_date", "iban", "vat_id_de"};
+   static constexpr std::array<std::string_view, 11> arrAttributeNames {
+      "id", "reference", "name", "salutation_id", "kind_id", "debit_account_id", "credit_account_id", 
+	  "amount_eur", "invoice_date", "iban", "vat_id_de"
+	  };
+	  
    static constexpr std::array<std::size_t, 1> arrKeyIndices{0};
    static constexpr std::optional<std::size_t> optIdentityIndex{0};
    static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
    };
+   
 using TAccount = adecc::db::PersistentSystemData<account_types, AccountMetaData>;
 using TBooking = adecc::db::PersistentSystemData<booking_types, BookingMetaData>;
 
@@ -123,27 +113,31 @@ database_ty Connect() {
       }};
    }
 
-// The adecc CSV source is a typed generator; no custom CSV parser.
-auto ReadCsv(std::filesystem::path const& aPath) {
-   return adecc::FromCsvFileTyped<false, true, csv_file_types>(aPath, ";", true);
-   }
 
 void CreateDemoTables(database_ty& aDb) {
    // Disposable teaching tables, created in dependency order.
-   std::vector<std::string> const vecCommands{
+   std::vector<std::string> const vecCommands {
       "DROP TABLE IF EXISTS dbo.AdeccCsvBooking",
       "DROP TABLE IF EXISTS dbo.AdeccCsvSalutation",
       "DROP TABLE IF EXISTS dbo.AdeccCsvKind",
       "DROP TABLE IF EXISTS dbo.AdeccCsvAccount",
+	  
       "CREATE TABLE dbo.AdeccCsvSalutation ("
-         "id bigint IDENTITY(1,1) PRIMARY KEY, code nvarchar(40) NOT NULL UNIQUE)",
+         "id bigint IDENTITY(1,1) PRIMARY KEY, "
+		 "code nvarchar(40) NOT NULL UNIQUE"
+		 ")",
+		 
       "CREATE TABLE dbo.AdeccCsvKind ("
-         "id bigint IDENTITY(1,1) PRIMARY KEY, code nvarchar(40) NOT NULL UNIQUE)",
+         "id bigint IDENTITY(1,1) PRIMARY KEY, "
+		 "code nvarchar(40) NOT NULL UNIQUE"
+		 ")",
+		 
       "CREATE TABLE dbo.AdeccCsvAccount ("
          "id bigint IDENTITY(1,1) PRIMARY KEY,"
          "code nvarchar(20) NOT NULL UNIQUE,"
          "name nvarchar(100) NOT NULL)",
-      "CREATE TABLE dbo.AdeccCsvBooking ("
+      
+	  "CREATE TABLE dbo.AdeccCsvBooking ("
          "id bigint IDENTITY(1,1) PRIMARY KEY,"
          "reference nvarchar(40) NOT NULL UNIQUE,"
          "name nvarchar(200) NOT NULL,"
@@ -155,25 +149,25 @@ void CreateDemoTables(database_ty& aDb) {
          "invoice_date date NOT NULL,"
          "iban nvarchar(34) NOT NULL,"
          "vat_id_de nvarchar(11) NOT NULL,"
-         "CONSTRAINT CK_AdeccCsvDistinctAccounts CHECK(debit_account_id <> credit_account_id))"
+         "CONSTRAINT CK_AdeccCsvDistinctAccounts CHECK(debit_account_id <> credit_account_id)"
+		 ")"
       };
-   std::for_each(vecCommands.begin(), vecCommands.end(),
-      [&](std::string const& strSql) { aDb.ExecuteCommand(strSql); });
+	  
+   std::for_each(vecCommands.begin(), vecCommands.end(), [&aDb](std::string const& strSql) { aDb.ExecuteCommand(strSql); });
    }
 
-mapping_ids_ty StoreDomain(
-   database_ty& aDb, std::string_view svTable, std::vector<std::string> const& vecCodes) {
+mapping_ids_ty StoreDomain(database_ty& aDb, std::string_view svTable, std::vector<std::string> const& vecCodes) {
    auto aOutput = domain_types::invoke([&]<typename... types_ty>() {
       return aDb.template MakeOutputRange<types_ty...>(
-         "INSERT INTO " + std::string{svTable} + " (code) VALUES (:code)",
-         {
-            {"id", adecc::db_output_param_role::identity},
+         std::format("INSERT INTO {} (code) VALUES (:code)", svTable),
+         {  {"id",   adecc::db_output_param_role::identity},
             {"code", adecc::db_output_param_role::needed_value}
          });
       });
+	  
    auto aSource = vecCodes | std::views::transform([](std::string const& strCode) {
-      return domain_types::type_list{0LL, strCode};
-      });
+                                 return domain_types::type_list {0LL, strCode };
+                                 });
    mapping_ids_ty mpIds;
    for (auto const& tplRow : aOutput(aSource)) {
       mpIds.emplace(std::get<1>(tplRow), std::get<0>(tplRow));
@@ -216,136 +210,147 @@ mapping_ids_ty StoreAccounts(database_ty& aDb, id_names_ty& mpAccountNames) {
    }
 
 void PrintPeople(database_ty& aDb, mapping_ids_ty const& mpSalutations) {
-   using database_row_ty = adecc::defined_type_list<
-      std::string, int, std::string, std::string, adecc::date_ty>;
-   using domain_row_ty = adecc::defined_type_list<
-      std::string, int, adecc::Iban, adecc::VatId_DE, InvoiceDate>;
-   using display_row_ty = adecc::defined_type_list<
-      std::string, std::string, std::string, std::string, std::string>;
+	
+   static std::string strSQLPeople = "SELECT name AS PersonName, CAST(salutation_id AS int) AS SalutationId, iban AS Iban, "
+                                            "vat_id_de AS VatId, invoice_date AS InvoiceDate, amount_eur "
+                                     "FROM dbo.AdeccCsvBooking "
+			                         "WHERE kind_id = :kind_id AND salutation_id = :salutation_id "
+		                             "ORDER BY id";
+									
+   std::vector<std::tuple<std::string, int, adecc::EAlignmentType>> vecPeopleCations = {
+                         { "Name",           20, adecc::EAlignmentType::left },
+                         { "Anrede",          9, adecc::EAlignmentType::left },
+                         { "IBAN",           29, adecc::EAlignmentType::left },
+                         { "USt-IdNr.",      13, adecc::EAlignmentType::left },
+                         { "Rechnungsdatum", 15, adecc::EAlignmentType::left },
+						 { "Betrag",         10, adecc::EAlignmentType::right }
+                       };
+
+	
+   using database_row_ty = adecc::defined_type_list<std::string, int, std::string, std::string, adecc::date_ty, double>;
+	  
+   using domain_row_ty = adecc::defined_type_list<std::string, int, adecc::Iban, adecc::VatId_DE, InvoiceDate, double>;
+   
+   using display_row_ty = adecc::defined_type_list<std::string, std::string, std::string, std::string, std::string, std::string>;
 
    // The only explicit display mapping is the salutation identity.
    std::map<int, std::string> mpSalutationNames;
-   for (auto const& [strName, iId] : mpSalutations) {
-      mpSalutationNames.emplace(static_cast<int>(iId), strName);
-      }
+   for (auto const& [strName, iId] : mpSalutations) { mpSalutationNames.emplace(static_cast<int>(iId), strName); }
 
    using backend_ty = adecc::grid::OStreamGridBackend<>;
    using grid_ty = adecc::grid::WriteGridModel<backend_ty>;
-   using alignment_ty = adecc::EAlignmentType;
-
+   
    std::println("Sample bookings and domain-formatted person data:");
-   grid_ty aGrid{
-      backend_ty{std::cout, backend_ty::TableSeparators()},
-      std::vector<std::tuple<std::string, int, alignment_ty>>{
-         {"Name", 20, alignment_ty::left},
-         {"Anrede", 9, alignment_ty::left},
-         {"IBAN", 29, alignment_ty::left},
-         {"USt-IdNr.", 13, alignment_ty::left},
-         {"Rechnungsdatum", 15, alignment_ty::left}
-         }
-      };
+  
+   grid_ty aGrid { backend_ty { std::cout, backend_ty::TableSeparators()}, vecPeopleCations };
 
    auto aRows = database_row_ty::invoke([&]<typename... types_ty>() {
-      return aDb.template Execute<types_ty...>(
-         "SELECT TOP (12) name AS PersonName, "
-         "CAST(salutation_id AS int) AS SalutationId, "
-         "iban AS Iban, vat_id_de AS VatId, invoice_date AS InvoiceDate "
-         "FROM dbo.AdeccCsvBooking ORDER BY id");
+      return aDb.template Execute<types_ty...>(strSQLPeople, { { "kind_id", 4, true }, { "salutation_id", 3, true } });
       });
 
-   auto aDisplay = aRows
-      | std::views::transform([](database_row_ty::type_list const& tplRow) {
-         return adecc::Transform<database_row_ty, domain_row_ty>(tplRow);
-         })
-      | std::views::transform([&](domain_row_ty::type_list const& tplRow) {
-         return adecc::Transform<domain_row_ty, display_row_ty>(tplRow,
-            adecc::BindMapping<1, domain_row_ty, display_row_ty>(mpSalutationNames));
-         });
+   
+   auto aDisplay = aRows | std::views::transform([](database_row_ty::type_list const& tplRow) {
+                               return adecc::Transform<database_row_ty, domain_row_ty>(tplRow);
+                               })
+                         | std::views::transform([&](domain_row_ty::type_list const& tplRow) {
+                               return adecc::Transform<domain_row_ty, display_row_ty>(tplRow,
+                                           adecc::BindMapping<1, domain_row_ty, display_row_ty>(mpSalutationNames),
+										   adecc::BindMapping<2, domain_row_ty, display_row_ty>([](adecc::Iban const& val) {
+											                             return val.Value();
+										                                 }), 																		 									   
+										   adecc::BindMapping<5, domain_row_ty, display_row_ty>([](double const& val) { 
+										                                  //return adecc::FloatToGermanDecimalStringPolicy<double, 2>::ToString(val);
+										                                  //return adecc::FloatToGermanDecimalWithThousandsStringPolicy<double, 2>::ToString(val);
+																		  return adecc::ConvertTo<std::string>(val); 
+																		  }));
+										   
+                               });
 
    aGrid += aDisplay;
    }
 
 void PrintReport(database_ty& aDb, id_names_ty const& mpAccountNames) {
    auto aTotals = aDb.ExecuteOne<long long, adecc::money_ty>(
-      "SELECT COUNT_BIG(*) AS BookingCount, "
-      "COALESCE(SUM(amount_eur), CONVERT(decimal(18,2),0)) AS TotalAmount "
-      "FROM dbo.AdeccCsvBooking");
-   if (!aTotals) { throw std::runtime_error("Cannot read booking totals"); }
-   std::println("Bookings: {}, debit total = credit total = {:.2f} EUR",
-      std::get<0>(*aTotals), std::get<1>(*aTotals).Get());
-   auto aBalance = aDb.ExecuteOne<adecc::money_ty>(
-      "SELECT COALESCE(SUM(amount),CONVERT(decimal(18,2),0)) AS Balance FROM ("
-      "SELECT amount_eur AS amount FROM dbo.AdeccCsvBooking "
-      "UNION ALL SELECT -amount_eur FROM dbo.AdeccCsvBooking) AS entries");
+                    "SELECT COUNT_BIG(*) AS BookingCount, COALESCE(SUM(amount_eur), CONVERT(decimal(18,2),0)) AS TotalAmount "
+                    "FROM dbo.AdeccCsvBooking");
+	  
+   if (!aTotals) { 
+      throw std::runtime_error("Cannot read booking totals"); 
+	  }
+	  
+   std::println("Bookings: {}, debit total = credit total = {:.2f} EUR", std::get<0>(*aTotals), std::get<1>(*aTotals).Get());
+   auto aBalance = aDb.ExecuteOne<adecc::money_ty>("SELECT COALESCE(SUM(amount),CONVERT(decimal(18,2),0)) AS Balance "
+                                                   "FROM (SELECT amount_eur AS amount "
+												         "FROM dbo.AdeccCsvBooking "
+                                                         "UNION ALL "
+														 "SELECT -amount_eur "
+														 "FROM dbo.AdeccCsvBooking ) AS entries");
    if (!aBalance || std::abs(std::get<0>(*aBalance).Get()) > 0.001) {
       throw std::runtime_error("Unbalanced bookings");
       }
+	  
    std::println("[PASS] debit/credit control: difference = 0 EUR");
+   
    using backend_ty = adecc::grid::OStreamGridBackend<>;
    using grid_ty = adecc::grid::WriteGridModel<backend_ty>;
    using align_ty = adecc::EAlignmentType;
-   using account_source_ty = adecc::defined_type_list<
-      std::string, int, adecc::money_ty, adecc::money_ty, adecc::money_ty>;
-   using account_display_ty = adecc::defined_type_list<
-      std::string, std::string, std::string, std::string, std::string>;
+   
+   using account_source_ty  = adecc::defined_type_list<std::string, int, adecc::money_ty, adecc::money_ty, adecc::money_ty>;
+   using account_display_ty = adecc::defined_type_list<std::string, std::string, std::string, std::string, std::string>;
 
-   grid_ty aGrid{
-      backend_ty{std::cout, backend_ty::TableSeparators()},
-      std::vector<std::tuple<std::string, int, align_ty>>{
-         {"Konto", 8, align_ty::left},
-         {"Kontoname", 26, align_ty::left},
-         {"Soll EUR", 14, align_ty::right},
-         {"Haben EUR", 14, align_ty::right},
-         {"Saldo EUR", 14, align_ty::right}
-         }
+   grid_ty aGrid { backend_ty{ std::cout, backend_ty::TableSeparators() },
+                   std::vector<std::tuple<std::string, int, align_ty>> {
+                         {"Konto", 8, align_ty::left},
+                         {"Kontoname", 26, align_ty::left},
+                         {"Soll EUR", 14, align_ty::right},
+                         {"Haben EUR", 14, align_ty::right},
+                         {"Saldo EUR", 14, align_ty::right}
+                      }
       };
 
    auto aAccounts = account_source_ty::invoke([&]<typename... types_ty>() {
       return aDb.template Execute<types_ty...>(
          "SELECT a.code AS AccountCode, CAST(a.id AS int) AS AccountId, "
-         "SUM(IIF(b.debit_account_id=a.id, b.amount_eur, 0)) AS DebitAmount, "
-         "SUM(IIF(b.credit_account_id=a.id, b.amount_eur, 0)) AS CreditAmount, "
-         "SUM(IIF(b.debit_account_id=a.id, b.amount_eur, 0) "
-         "- IIF(b.credit_account_id=a.id, b.amount_eur, 0)) AS BalanceAmount "
-         "FROM dbo.AdeccCsvAccount a LEFT JOIN dbo.AdeccCsvBooking b "
-         "ON b.debit_account_id=a.id OR b.credit_account_id=a.id "
-         "GROUP BY a.id, a.code ORDER BY a.code");
+                "SUM(IIF(b.debit_account_id=a.id, b.amount_eur, 0)) AS DebitAmount, "
+                "SUM(IIF(b.credit_account_id=a.id, b.amount_eur, 0)) AS CreditAmount, "
+         "SUM(IIF(b.debit_account_id=a.id, b.amount_eur, 0) - IIF(b.credit_account_id=a.id, b.amount_eur, 0)) AS BalanceAmount "
+         "FROM dbo.AdeccCsvAccount a LEFT JOIN dbo.AdeccCsvBooking b ON b.debit_account_id=a.id OR b.credit_account_id=a.id "
+         "GROUP BY a.id, a.code "
+		 "ORDER BY a.code");
       });
 
-   auto aDisplay = aAccounts | std::views::transform(
-      [&](account_source_ty::type_list const& tplRow) {
-         return adecc::Transform<account_source_ty, account_display_ty>(tplRow,
-            adecc::BindMapping<1, account_source_ty, account_display_ty>(mpAccountNames));
-         });
+   auto aDisplay = aAccounts | std::views::transform([&](account_source_ty::type_list const& tplRow) {
+                                    return adecc::Transform<account_source_ty, account_display_ty>(tplRow,
+                                                       adecc::BindMapping<1, account_source_ty, account_display_ty>(mpAccountNames));
+                                    });
 
    // The grid is the sink; name lookup and numeric string conversion belong to Transform.
    aGrid += aDisplay;
    }
 
-std::size_t ImportCsvBookings(database_ty& aDb, std::filesystem::path const& aPath,
-   mapping_ids_ty const& mpSalutations,
-   mapping_ids_ty const& mpKinds,
-   mapping_ids_ty const& mpAccounts) {
-   auto aSource = ReadCsv(aPath)
-      | std::views::transform([](auto&& tplRow) {
-         return std::tuple_cat(std::tuple{0LL}, std::move(tplRow));
-         })
-      | std::views::transform([&](auto&& tplRow) {
-         return adecc::Transform<csv_types, booking_types>(std::move(tplRow),
-            adecc::BindMapping<3, csv_types, booking_types>(mpSalutations),
-            adecc::BindMapping<4, csv_types, booking_types>(mpKinds),
-            adecc::BindMapping<5, csv_types, booking_types>(mpAccounts),
-            adecc::BindMapping<6, csv_types, booking_types>(mpAccounts),
-            adecc::BindMapping<9, csv_types, booking_types>(
-               [](adecc::Iban const& aIban) { return aIban.Value(); }));
-         });
+std::size_t ImportCsvBookings(database_ty& aDb, std::filesystem::path const& aPath, mapping_ids_ty const& mpSalutations,
+                              mapping_ids_ty const& mpKinds, mapping_ids_ty const& mpAccounts) {
+   auto aSource = adecc::FromCsvFileTyped<false, true, csv_file_types>(aPath, ";", true)
+                   | std::views::transform([](auto&& tplRow) { 
+				          return std::tuple_cat(std::tuple{0LL}, std::move(tplRow));
+						  })
+                   | std::views::transform([&](auto&& tplRow) {
+                          return adecc::Transform<csv_types, booking_types>(std::move(tplRow),
+                                              adecc::BindMapping<3, csv_types, booking_types>(mpSalutations),
+                                              adecc::BindMapping<4, csv_types, booking_types>(mpKinds),
+                                              adecc::BindMapping<5, csv_types, booking_types>(mpAccounts),
+                                              adecc::BindMapping<6, csv_types, booking_types>(mpAccounts),
+                                              adecc::BindMapping<9, csv_types, booking_types>(
+                                                        [](adecc::Iban const& aIban) { return aIban.Value(); }));
+                          });
+		 
    auto aSink = booking_types::invoke([&]<typename... types_ty>() {
-      return aDb.template MakeOutputSink<types_ty...>(
-         TBooking::CreateInsertSql(), TBooking::CreateInsertOutputParameters());
-      });
+         return aDb.template MakeOutputSink<types_ty...>(TBooking::CreateInsertSql(), TBooking::CreateInsertOutputParameters());
+         });
+		 
    aSink(aSource);
-   auto const aCount = aDb.ExecuteOne<long long>(
-      "SELECT COUNT_BIG(*) AS BookingCount FROM dbo.AdeccCsvBooking");
+   
+   auto const aCount = aDb.ExecuteOne<long long>("SELECT COUNT_BIG(*) AS BookingCount FROM dbo.AdeccCsvBooking");
    if (!aCount) {
       throw std::runtime_error("Cannot read imported booking count");
       }
@@ -360,19 +365,20 @@ int main(int iArgc, char** argv) {
       auto aDb = Connect();
       auto aTransaction = aDb.Transaction();
       CreateDemoTables(aDb);
-      auto mpSalutations = StoreDomain(aDb, "dbo.AdeccCsvSalutation",
-         {"Herr", "Frau", "Firma", "Divers"});
-      auto mpKinds = StoreDomain(aDb, "dbo.AdeccCsvKind",
-         {"Rechnung", "Gutschrift", "Storno", "Lastschrift"});
-      id_names_ty mpAccountNames;
+	  
+      auto mpSalutations = StoreDomain(aDb, "dbo.AdeccCsvSalutation", {"Herr", "Frau", "Firma", "Divers"});
+      auto mpKinds       = StoreDomain(aDb, "dbo.AdeccCsvKind", {"Rechnung", "Gutschrift", "Storno", "Lastschrift"});
+      
+	  id_names_ty mpAccountNames;
       auto mpAccounts = StoreAccounts(aDb, mpAccountNames);
-      auto const aCsvPath = iArgc > 1 ? std::filesystem::path{argv[1]}
-         : std::filesystem::absolute(argv[0]).parent_path() / "bookings.csv";
-      auto uCount = ImportCsvBookings(aDb, aCsvPath,
-         mpSalutations, mpKinds, mpAccounts);
-      PrintReport(aDb, mpAccountNames);
+      
+	  auto const aCsvPath = iArgc > 1 ? std::filesystem::path{argv[1]} : std::filesystem::absolute(argv[0]).parent_path() / "bookings.csv";
+      auto uCount = ImportCsvBookings(aDb, aCsvPath, mpSalutations, mpKinds, mpAccounts);
+      
+	  PrintReport(aDb, mpAccountNames);
       PrintPeople(aDb, mpSalutations);
-      aTransaction.CommitAndClose();
+      
+	  aTransaction.CommitAndClose();
       std::cout << "[PASS] " << uCount << " bookings imported\n";
       return 0;
       }
