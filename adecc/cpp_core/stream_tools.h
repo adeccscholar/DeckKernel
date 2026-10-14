@@ -45,6 +45,7 @@ license from adecc Systemhaus GmbH.
 #include <iostream>
 #include <string>
 #include <vector>
+#include <tuple>
 #include <sstream>
 #include <streambuf>
 #include <type_traits>
@@ -159,17 +160,20 @@ template <typename tup_ty>
 using StreamPolicyFromTuple_t = typename StreamPolicyFromTuple<std::remove_cvref_t<tup_ty>>::type;
 
 
+// Recognize caption tuples structurally. In libc++, attempting to name
+// tuple_element_t<2> for an ordinary two-column grid row is a hard error.
 template <typename ty>
-concept CaptionTuplePolicy = 
-   requires { typename std::tuple_element_t<0, std::remove_cvref_t<ty>>;
-              typename std::tuple_element_t<1, std::remove_cvref_t<ty>>;
-              typename std::tuple_element_t<2, std::remove_cvref_t<ty>>;
-              typename StreamPolicyFromTuple_t<ty>;
-            } && 
-             (std::tuple_size_v<std::remove_cvref_t<ty>> >= 3) &&
-             std::same_as<std::tuple_element_t<0, std::remove_cvref_t<ty>>, typename StreamPolicyFromTuple_t<ty>::string_type > &&
-             std::same_as<std::tuple_element_t<1, std::remove_cvref_t<ty>>, int> &&
-             std::same_as<std::tuple_element_t<2, std::remove_cvref_t<ty>>, EAlignmentType>;
+struct CaptionTupleTraits : std::false_type {};
+
+template <typename String, typename Width, typename Alignment, typename... Extra>
+struct CaptionTupleTraits<std::tuple<String, Width, Alignment, Extra...>>
+   : std::bool_constant<
+        (std::same_as<String, std::string> || std::same_as<String, std::wstring>) &&
+        std::same_as<Width, int> &&
+        std::same_as<Alignment, EAlignmentType>> {};
+
+template <typename ty>
+concept CaptionTuplePolicy = CaptionTupleTraits<std::remove_cvref_t<ty>>::value;
 
 template <typename ty>
 concept CaptionVector = vector_type <ty> &&
