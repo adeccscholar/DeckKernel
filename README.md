@@ -13,3 +13,4 @@ documentation server.
 
 Local executable deployments are written below `apps/Debug` or `apps/Release`.
 The `apps/` directory is intentionally not tracked by Git.
+- [PoDoFo booking PDF workshop](Docs/build/PODOFO_BOOKING.md)
