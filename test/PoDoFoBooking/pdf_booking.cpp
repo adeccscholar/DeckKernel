@@ -118,7 +118,8 @@ std::optional<std::int64_t> ParseEuroCents(std::string_view value) {
       auto const separator = whole.find('.', group_start);
       auto const group_length =
          (separator == std::string::npos ? whole.size() : separator) - group_start;
-      if(group_length == 0 || group_length > 3 ||
+      if(group_length == 0 ||
+         (grouped && group_length > 3) ||
          (grouped && group_start != 0 && group_length != 3))
          return std::nullopt;
       for(std::size_t k = group_start; k < group_start + group_length; ++k) {
