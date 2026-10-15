@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
 #include "pdf_booking.h"
 
-#include <cassert>
+#include <stdexcept>
+#define assert(condition) do { if(!(condition)) throw std::runtime_error("Test failed: " #condition); } while(false)
 #include <iostream>
 #include <vector>
 
