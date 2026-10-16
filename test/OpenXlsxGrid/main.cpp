@@ -26,7 +26,7 @@ using adecc::openxlsx_grid::GridRegion;
 static_assert(adecc::grid::grid_concept<OpenXLSXGridBackend>);
 static_assert(adecc::grid::table_type<OpenXLSXGridBackend>);
 
-void check(bool condition, char const* message) {
+void check(bool condition, std::string const& message) {
    if(!condition) throw std::runtime_error(message);
 }
 
@@ -37,8 +37,7 @@ std::filesystem::path ExecutableDirectory(char const* argv0) {
 #ifdef _WIN32
    // Resolve the actual module location even when invoked through PATH or a shortcut.
    std::wstring buffer(32768, L'\0');
-   auto const count = ::GetModuleFileNameW(
-      nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+   auto const count = ::GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
    if(count == 0 || count >= buffer.size())
       throw std::runtime_error("Cannot determine executable directory");
    buffer.resize(count);
@@ -50,9 +49,8 @@ std::filesystem::path ExecutableDirectory(char const* argv0) {
 
 int main(int argc, char** argv) {
    namespace fs = std::filesystem;
-   auto const file = adecc::openxlsx_grid::UnusedWorkbookPath(
-      ExecutableDirectory(argc > 0 ? argv[0] : ""), "OpenXlsxGrid_Example");
-   auto const date = adecc::date_ty{std::chrono::year{2026}/10/14};
+   auto const file = adecc::openxlsx_grid::UnusedWorkbookPath(ExecutableDirectory(argc > 0 ? argv[0] : ""), "OpenXlsxGrid_Example");
+   auto const date = adecc::date_ty{std::chrono::year{2026}/10/16};
 
    std::cout << "[OpenXlsxGrid] Example workbook: " << file.string() << '\n';
    std::cout << "[OpenXlsxGrid] Creating Sheet 'Ledger' at C5, five columns.\n";
@@ -62,8 +60,7 @@ int main(int argc, char** argv) {
       OpenXLSXWorkbook book(file);
       auto model = book.grid("Ledger", GridRegion{5, 3, 0, 0, false});
       check(model.rows() == 0 && model.columns() == 0, "New grid initially empty");
-      std::vector<std::tuple<std::string, int, adecc::EAlignmentType,
-                             adecc::openxlsx_grid::ExcelColumnFormat>> captions{
+      std::vector<std::tuple<std::string, int, adecc::EAlignmentType, adecc::openxlsx_grid::ExcelColumnFormat>> captions {
          {"Text", 16, adecc::EAlignmentType::left, adecc::openxlsx_grid::ExcelColumnFormat{}},
          {"Amount", 16, adecc::EAlignmentType::right, adecc::openxlsx_grid::ExcelColumnFormat{"#,##0.00"}},
          {"Count", 16, adecc::EAlignmentType::right, adecc::openxlsx_grid::ExcelColumnFormat{}},
@@ -122,16 +119,11 @@ int main(int argc, char** argv) {
       check(book.sheet_exists("Ledger"), "Existing worksheet lookup");
       check(book.worksheet_rows("Ledger") == 6, "Last used worksheet row");
       auto ledger = book.grid_existing("Ledger", 5, 3);
-      check(ledger.rows() == 1 && ledger.columns() == 5,
-            "Offset C5 discovers one data row and five columns");
-      check(ledger.captions().at(1) == "Amount",
-            "Offset caption is correctly read");
-      check(ledger.get<double>(0, 1) == 47.5,
-            "Offset amount is correctly read");
-      auto amount = book.grid_existing(
-         "Ledger", GridRegion{6, 4, 1, 1, false});
-      check(amount.get<double>(0, 0) == 47.5,
-            "Explicit off-origin selection is supported");
+      check(ledger.rows() == 1 && ledger.columns() == 5, "Offset C5 discovers one data row and five columns");
+      check(ledger.captions().at(1) == "Amount", "Offset caption is correctly read");
+      check(ledger.get<double>(0, 1) == 47.5, "Offset amount is correctly read");
+      auto amount = book.grid_existing("Ledger", GridRegion{6, 4, 1, 1, false});
+      check(amount.get<double>(0, 0) == 47.5, "Explicit off-origin selection is supported");
       // Remove sheet is deliberately tested with a disposable second sheet.
       book.add_sheet("Temporary");
       check(book.sheet_exists("Temporary"), "Create supplementary sheet");
@@ -145,35 +137,27 @@ int main(int argc, char** argv) {
       OpenXLSX::XLDocument raw;
       raw.open(file.string());
       auto sheet = raw.workbook().worksheet("Ledger");
-      check(std::abs(sheet.column(4).width() - 16.0F) < 0.1F,
-            "Caption column width persisted");
+      check(std::abs(sheet.column(4).width() - 16.0F) < 0.1F, "Caption column width persisted");
       auto& formats = raw.styles().cellFormats();
       auto fmt = formats.cellFormatByIndex(sheet.cell(5, 4).cellFormat());
-      check(fmt.applyAlignment() &&
-            fmt.alignment().horizontal() == OpenXLSX::XLAlignRight,
-            "Caption column alignment persisted");
+      check(fmt.applyAlignment() && fmt.alignment().horizontal() == OpenXLSX::XLAlignRight, "Caption column alignment persisted");
       auto date_fmt = formats.cellFormatByIndex(sheet.cell(6, 6).cellFormat());
       auto amount_fmt = formats.cellFormatByIndex(sheet.cell(6, 4).cellFormat());
       check(date_fmt.applyNumberFormat(), "Date format enabled");
       check(amount_fmt.applyNumberFormat(), "Amount format enabled");
-      check(date_fmt.numberFormatId() != amount_fmt.numberFormatId(),
-            "Date and amount use different Excel formats");
+      check(date_fmt.numberFormatId() != amount_fmt.numberFormatId(),"Date and amount use different Excel formats");
       auto& numbers = raw.styles().numberFormats();
-      check(numbers.numberFormatById(date_fmt.numberFormatId()).formatCode() == "dd.mm.yyyy",
-            "Caption date number format persisted");
-      check(numbers.numberFormatById(amount_fmt.numberFormatId()).formatCode() == "#,##0.00",
-            "Caption amount number format persisted");
+      check(numbers.numberFormatById(date_fmt.numberFormatId()).formatCode() == "dd.mm.yyyy", "Caption date number format persisted");
+      check(numbers.numberFormatById(amount_fmt.numberFormatId()).formatCode() == "#,##0.00", "Caption amount number format persisted");
       auto cf = sheet.conditionalFormats();
       check(cf.count() == 1, "One dynamic row-format region persisted");
       auto ruleRegion = cf.conditionalFormatByIndex(0);
       check(ruleRegion.sqref() == "C6:G6", "Conditional format covers data, not header");
       auto rules = ruleRegion.cfRules();
       check(rules.count() == 2, "Both pattern positions have Excel rules");
-      check(rules.cfRuleByIndex(1).formula() == "MOD(ROW()-6,2)=1",
-            "Alternating row formula persisted");
+      check(rules.cfRuleByIndex(1).formula() == "MOD(ROW()-6,2)=1", "Alternating row formula persisted");
       auto headerStyle = formats.cellFormatByIndex(sheet.cell(5, 3).cellFormat());
-      check(headerStyle.applyFont() && headerStyle.applyFill(),
-            "Fixed header font and fill persisted");
+      check(headerStyle.applyFont() && headerStyle.applyFill(), "Fixed header font and fill persisted");
       raw.close();
       std::cout << "[PASS] Excel formatting: column width, alignment, date number format.\n";
    }
