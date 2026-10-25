@@ -65,10 +65,16 @@ substantial portions of the covered source code. For binary-only
 distribution, they may be reproduced in accompanying license notices
 or product documentation.
 
-Recipients of source code must receive this license text and be informed
-that eligibility under this supplemental license is tied to a qualifying
-book acquisition or another separate permission. Distribution does not
-remove the independently available public noncommercial license.
+Recipients of covered source must receive this license text and the
+required copyright notices. A recipient may rely on rights validly
+sublicensed by an eligible developer under this Section; the recipient
+need not independently purchase the book for those sublicensed rights.
+A person wishing to obtain a new direct supplemental grant from adecc,
+rather than rights through a valid sublicense, must satisfy Section 3
+or obtain another applicable license.
+
+Distribution does not remove the independently available public
+noncommercial license.
 
 ## 5. Educational purpose — no production assurance
 
