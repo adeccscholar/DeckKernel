@@ -281,6 +281,16 @@ OpenCV descriptors and image-based matching. **No native BCC64X run has yet
 verified the new import or scanner paths.**
 
 
+### Permanent URL cache and resettable image model
+
+Two PostgreSQL schemas now have different lifecycles. The durable **`deckkernel_cache.scryfall_images`** table is keyed by the exact source URL and stores the untouched binary bytes, SHA-256, media type and cache time. It must **never be dropped** by FirstConnection. The old `scryfall_image_assets` records are migrated into it automatically before the legacy model table is reset. If the entire database is dropped, a separate backup of `deckkernel_cache` is required to preserve these bytes.
+
+The disposable **`deckkernel_test`** model tables are rebuilt: `scryfall_image_assets` contains per-URL model copies, `scryfall_card_image_variants` links each card/face/variant to an asset, and `scryfall_image_features` holds regenerable, algorithm-versioned OpenCV features. Variant keys include `small`, `normal`, `large`, `png`, `art_crop` and `border_crop`. A card may have multiple variants, and many printings may share an image URL.
+
+**Cache-first sequence:** FirstConnection imports all cards and their face variant URL references; it bulk-restores all locally available image bytes from `deckkernel_cache` into the model. Only model URLs still missing bytes become network candidates. New downloads are first written to the durable PostgreSQL URL cache and then to the model. The existing separate content-addressed disk cache serves as another offline recovery layer. `DECKKERNEL_IMAGE_LIMIT` limits only still-missing downloads, not DB-to-DB restoration.
+
+Avoid **`DROP DATABASE DeckKernel`** unless the durable schema has been backed up. The routine model reset is scoped to `deckkernel_test` tables and leaves `deckkernel_cache` untouched.
+
 ### Persistent disk image cache
 
 `src/scryfall/image_cache.{h,cpp}` stores original images in SHA-256 content-addressed blobs and maps source URLs to those blobs. Every hit verifies blob digest and image signature. The cache can repopulate PostgreSQL after rebuilding test tables or moving to a new database, and it is independent of OCR/ORB algorithm versions.
