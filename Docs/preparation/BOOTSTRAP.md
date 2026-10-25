@@ -289,3 +289,64 @@ contract:
 
 It does not invent generic library names or reopen/repack the generated ZIP
 files.
+
+## Legacy release extension for Scantest and OCR
+
+Until the new StackBuilder workflow replaces the old publishing path, use the
+**existing** GitHub Release `2026.09.26-1` and its 17 verified assets unchanged.
+
+`Cache/LegacyReleasePackages.xml` is a staging declaration for eight more
+BCC64X packages pinned against `BuildEngine-Admin/admin/build-libraries.xml`:
+
+| Package | Version | Direct package dependencies |
+| --- | --- | --- |
+| libpng | 1.6.59 | zlib 1.3.2 (already released) |
+| libjpeg-turbo | 3.2.0 | — |
+| libtiff | 4.7.2 | zlib, libjpeg-turbo |
+| onetbb | 2023.1.0 | — |
+| llvm-openmp | 20.1.7 | — |
+| opencv | 5.0.0 | onetbb, llvm-openmp, zlib |
+| leptonica | 1.87.0 | zlib, libpng, libjpeg-turbo, libtiff |
+| tesseract | 5.5.3 | leptonica |
+
+The existing release assets are **not regenerated or replaced**. The new
+archive metadata must reflect actual package binaries; this repository does
+not fabricate artifact sizes or SHA-256 hashes.
+
+### Maintainer: stage packages from BuildEngine installations
+
+Once all required BCC64X dynamic Release packages exist in the BuildEngine
+installation, run from the DeckKernel root in a CMake-enabled command prompt:
+
+```cmd
+cmake -DLEGACY_INSTALL_ROOT=D:\local\embarcadero\test_v3\install\packages -DLEGACY_OUTPUT_ROOT=D:\local\DeckKernelLegacyRelease -P bootstrap\PackageLegacyRelease.cmake
+```
+
+Adjust both roots to the real machine; these are examples, not embedded paths.
+The tool requires the pinned version directories, include trees and runtime DLLs.
+It creates eight version-rooted ZIPs and a **candidate**
+`legacy-release.lock` recording each archive's actual size and SHA-256.
+
+Publish these exact ZIP files to the existing GitHub Release
+[2026.09.26-1](https://github.com/adeccscholar/DeckKernel/releases/tag/2026.09.26-1).
+After confirming that *all eight* assets exist with matching byte size and
+SHA-256, copy the candidate lock to `Cache/legacy-release.lock` and commit it.
+**Do not activate a partial candidate lock.** The repository intentionally
+does not yet contain this lock while the assets are unpublished.
+
+### Consumer: old bootstrap remains the only entry point
+
+`bootstrap/Bootstrap.cmake` continues to verify the 17 original archives via
+`thirdparty.lock` and its XML/selection consistency check. If and only if
+`Cache/legacy-release.lock` exists, it additionally processes the eight
+extra ZIPs through the same on-disk archive cache, exact-size/SHA verification,
+version directories and generated `ADECC_TP_*_ROOT` package map.
+
+No StackBuilder binary or PowerShell is required for this legacy route. Until
+the extension assets are actually published, the old bootstrap keeps
+working with the original 17 packages. The new OpenCV Scantest intentionally
+fails to configure until its declared packages are installed; it must never
+fall back to a different compiler or static libraries.
+
+The ZIP packager and bootstrap integration are source changes and have not yet
+been run in the actual Windows BCC64X build environment.
