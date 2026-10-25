@@ -1,6 +1,6 @@
 # adecc libraries — licensing and reuse
 
-The reusable header-only adecc C++ library is being separated from DeckKernel
+The reusable header-only adecc C++ library has been separated from DeckKernel
 into **adecc-core-lib**. The license follows the **covered adecc-owned source**,
 not the directory name or the checkout location.
 
@@ -29,7 +29,7 @@ security, correctness and suitability themselves.
 ## Repository boundaries
 
 - `adecc-core-lib`: the independent, covered source distribution.
-- `DeckKernel/adecc`: expected Git submodule checkout of that repository.
+- `DeckKernel/adecc-core-lib`: expected Git submodule checkout of that repository.
 - Other DeckKernel source: governed by DeckKernel's own license.
 - Third-party headers/libraries: governed by their respective upstream terms.
 
