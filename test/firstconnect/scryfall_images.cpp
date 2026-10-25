@@ -135,6 +135,15 @@ void ImportImages(postgres_database_ty const& aDatabase) {
    std::size_t uHits{},uFetched{};
    auto aNextRequest=std::chrono::steady_clock::now();
    pg_connection_ty const aConn=Connect();
+   // Restore every available image into the newly created model before any HTTP.
+   pg_result_ty aRestored(PQexec(aConn.get(),
+      "UPDATE deckkernel_test.scryfall_image_assets a SET "
+      "image_data=c.image_data,sha256=c.sha256,media_type=c.media_type,downloaded_at=c.cached_at "
+      "FROM deckkernel_cache.scryfall_images c "
+      "WHERE a.image_url=c.url AND a.image_data IS NULL"));
+   if(!aRestored||PQresultStatus(aRestored.get())!=PGRES_COMMAND_OK)
+      throw std::runtime_error("image cache restore failed: "+std::string(PQerrorMessage(aConn.get())));
+   std::println("[IMAGE-CACHE] restored into model: {}",PQcmdTuples(aRestored.get()));
    std::string const strSql=
       "SELECT image_url FROM deckkernel_test.scryfall_image_assets "
       "WHERE image_data IS NULL ORDER BY id"
@@ -160,6 +169,21 @@ void ImportImages(postgres_database_ty const& aDatabase) {
          else ++uHits;
          auto const& vecBytes=optCached->vecBytes;
          std::string const& strSha=optCached->strSha256;
+         // Durable PostgreSQL cache is the authority, model tables are disposable.
+         std::array<char const*,4> arrCacheValues{
+            strUrl.c_str(),strSha.c_str(),
+            reinterpret_cast<char const*>(vecBytes.data()),optCached->strMediaType.c_str()};
+         std::array<int,4> arrCacheLengths{0,0,static_cast<int>(vecBytes.size()),0};
+         std::array<int,4> arrCacheFormats{0,0,1,0};
+         std::array<Oid,4> arrCacheTypes{25,25,17,25};
+         pg_result_ty aCacheWrite(PQexecParams(aConn.get(),
+            "INSERT INTO deckkernel_cache.scryfall_images(url,sha256,image_data,media_type) "
+            "VALUES($1,$2,$3,$4) ON CONFLICT(url) DO NOTHING",
+            4,arrCacheTypes.data(),arrCacheValues.data(),
+            arrCacheLengths.data(),arrCacheFormats.data(),0));
+         if(!aCacheWrite||PQresultStatus(aCacheWrite.get())!=PGRES_COMMAND_OK)
+            throw std::runtime_error("durable PostgreSQL cache write failed");
+
          // libpq binary parameter format 1 stores the original bytes directly.
          std::array<char const*,4> arrValues{
             strUrl.c_str(),strSha.c_str(),reinterpret_cast<char const*>(vecBytes.data()),optCached->strMediaType.c_str()};
