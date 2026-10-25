@@ -155,6 +155,9 @@ void AppendCard(json_ty const& aCard, ParsedBulkData& aParsed) {
       .strRarity = aCard.at("rarity").get<std::string>(),
       .optOracleId = OptionalText(aCard, "oracle_id"),
       .optVariationOf = OptionalText(aCard, "variation_of"),
+      .optIllustrationId = OptionalText(aCard, "illustration_id"),
+      .strCollectorNumber = aCard.at("collector_number").get<std::string>(),
+      .strLanguage = aCard.at("lang").get<std::string>(),
       .aReleasedAt = adecc::ConvertTo<adecc::date_ty>(aCard.at("released_at").get<std::string>())
       };
    auto fnAppendFace = [&](int iFaceId, json_ty const& aSource,
@@ -168,6 +171,13 @@ void AppendCard(json_ty const& aCard, ParsedBulkData& aParsed) {
          .optLoyalty = OptionalText(aSource, "loyalty"),
          .optPower = OptionalText(aSource, "power")
          };
+      aFace.optIllustrationId = OptionalText(aSource, "illustration_id");
+      if (!aFace.optIllustrationId) { aFace.optIllustrationId = OptionalText(aCard, "illustration_id"); }
+      if (auto const it = aSource.find("image_uris"); it != aSource.end() && it->is_object()) {
+         aFace.optImageNormalUrl = OptionalText(*it, "normal");
+         aFace.optImageArtCropUrl = OptionalText(*it, "art_crop");
+         aFace.optImagePngUrl = OptionalText(*it, "png");
+         }
       // A face normally has no layout field of its own; retain the parent layout if supplied.
       if (!aFace.optLayout) { aFace.optLayout = OptionalText(aCard, "layout"); }
       aFace.vecLandTypes = FindSubtypes(aFace.strTypeLine, aParsed.mpLandTypes, "Land");

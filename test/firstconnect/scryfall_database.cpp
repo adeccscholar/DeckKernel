@@ -75,6 +75,8 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_artifact_types");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_supertypes");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_main_types");
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_image_features");
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_image_assets");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_faces");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_cards");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_sets");
@@ -100,7 +102,9 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
       "name text NOT NULL, set_id integer NOT NULL REFERENCES deckkernel_test.scryfall_sets(id),"
       "released_at date NOT NULL,"
       "variation_of_id integer REFERENCES deckkernel_test.scryfall_cards(id),"
-      "rarity_id integer NOT NULL REFERENCES deckkernel_test.rarities(id))");
+      "rarity_id integer NOT NULL REFERENCES deckkernel_test.rarities(id),"
+      "collector_number text NOT NULL, lang text NOT NULL,"
+      "illustration_id text)");
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_card_faces ("
       "card_id integer NOT NULL REFERENCES deckkernel_test.scryfall_cards(id),"
@@ -108,6 +112,7 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
       "is_main boolean GENERATED ALWAYS AS (face_id = 0) STORED,"
       "name text NOT NULL, type_line text NOT NULL,"
       "layout text, loyalty text, mana_cost text NOT NULL, power text,"
+      "illustration_id text, image_url_normal text, image_url_art_crop text, image_url_png text,"
       "PRIMARY KEY (card_id, face_id))");
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_card_artifact_types ("
@@ -358,7 +363,7 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    aSetTransaction.CommitAndClose();
    std::println("[STORE] CardSets committed: {} rows (parents before children)", mpSetIds.size());
 
-   // The default_cards bulk may omit localized printings referenced by variation_of.
+   // Even all_cards may have incomplete historical variation references.
    // Keep the reference diagnostic, but do not manufacture an invalid foreign key.
    std::set<std::string> setAvailableCards;
    for (StagedCard const& aCard : aParsed.vecCards) {
@@ -427,11 +432,12 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       return aDatabase.template MakeOutputSink<types_ty...>(
          TCardMainType::CreateInsertSql(), TCardMainType::CreateInsertOutputParameters());
       });
-   // Mutable carrier: printing columns 0..7 plus the dependent face collection.
+   // Mutable carrier: printing columns 0..10 plus the dependent face collection.
    using import_types = adecc::defined_type_list<int, std::string,
       std::optional<std::string>, std::string, int, adecc::date_ty,
-      std::optional<int>, int, std::vector<StagedFace>>;
-   using printing_projection = std::make_index_sequence<8>;
+      std::optional<int>, int, std::string, std::string, std::optional<std::string>,
+      std::vector<StagedFace>>;
+   using printing_projection = std::make_index_sequence<11>;
    using id_projection = std::index_sequence<0>;
    std::vector<import_types::type_list> vecImport;
    vecImport.reserve(vecResolvedCards.size());
@@ -439,7 +445,8 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    for (StagedCard const& aCard : vecResolvedCards) {
       staged_card_types::type_list tplStaged{
          0, aCard.strUuid, aCard.optOracleId, aCard.strName,
-         aCard.strSetCode, aCard.aReleasedAt, std::nullopt, aCard.strRarity};
+         aCard.strSetCode, aCard.aReleasedAt, std::nullopt, aCard.strRarity,
+         aCard.strCollectorNumber, aCard.strLanguage, aCard.optIllustrationId};
       auto tplPrinting = adecc::Transform<staged_card_types, card_types>(
          std::move(tplStaged),
          adecc::BindMapping<4, staged_card_types, card_types>(mpSetIds),
@@ -467,11 +474,13 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       });
    auto aFaceRows = vecImport
       | std::views::transform([](import_types::type_list const& tplData) {
-         return std::get<8>(tplData)
+         return std::get<11>(tplData)
             | std::views::transform([&tplData](StagedFace const& aFace) {
                return card_face_types::type_list{
                   std::get<0>(tplData), aFace.iFaceId, aFace.strName, aFace.strTypeLine,
-                  aFace.optLayout, aFace.optLoyalty, aFace.strManaCost, aFace.optPower};
+                  aFace.optLayout, aFace.optLoyalty, aFace.strManaCost, aFace.optPower,
+                  aFace.optIllustrationId, aFace.optImageNormalUrl,
+                  aFace.optImageArtCropUrl, aFace.optImagePngUrl};
                });
          })
       | std::views::join;
@@ -482,7 +491,7 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       auto fnCodes, std::map<std::string, int> const& mpIds, sink_ty& aSink) {
       auto aRows = vecImport
          | std::views::transform([&](import_types::type_list const& tplData) {
-            return std::get<8>(tplData)
+            return std::get<11>(tplData)
                | std::views::transform([&](StagedFace const& aFace) {
                   auto const& vecCodes = std::invoke(fnCodes, aFace);
                   return std::views::iota(std::size_t{0}, vecCodes.size())
@@ -513,6 +522,22 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       [](StagedFace const& aFace) -> auto const& { return aFace.vecCreatureTypes; },
       mpCreatureIds, aCreatureLinkSink);
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_oracle_id ON deckkernel_test.scryfall_cards(oracle_id)");
+   aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_set_number_lang ON deckkernel_test.scryfall_cards(set_id, collector_number, lang)");
+   aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_illustration ON deckkernel_test.scryfall_cards(illustration_id)");
+   aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_faces_illustration ON deckkernel_test.scryfall_card_faces(illustration_id)");
+   aDatabase.ExecuteCommand(
+      "CREATE TABLE deckkernel_test.scryfall_image_assets ("
+      "id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, image_url text NOT NULL UNIQUE,"
+      "image_kind text NOT NULL DEFAULT 'art_crop', illustration_id text,"
+      "sha256 text, media_type text, image_data bytea, downloaded_at timestamptz,"
+      "CHECK (sha256 IS NULL OR length(sha256)=64))");
+   aDatabase.ExecuteCommand(
+      "CREATE TABLE deckkernel_test.scryfall_image_features ("
+      "asset_id bigint PRIMARY KEY REFERENCES deckkernel_test.scryfall_image_assets(id) ON DELETE CASCADE,"
+      "algorithm text NOT NULL, algorithm_version integer NOT NULL,"
+      "perceptual_hash bit(64), orb_descriptors bytea, orb_keypoint_count integer NOT NULL DEFAULT 0,"
+      "calculated_at timestamptz NOT NULL DEFAULT now())");
+   aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_image_assets_illustration ON deckkernel_test.scryfall_image_assets(illustration_id)");
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_released ON deckkernel_test.scryfall_cards(released_at DESC)");
    aDatabase.ExecuteCommand(
       "CREATE VIEW deckkernel_test.scryfall_cards_view AS "

@@ -286,7 +286,7 @@ BulkDescriptor ResolveBulkData() {
    json_ty const aRoot = json_ty::parse(strMetadata);
 
    for (json_ty const& aEntry : aRoot.at("data")) {
-      if (aEntry.at("type").get<std::string>() != "default_cards") {
+      if (aEntry.at("type").get<std::string>() != "all_cards") {
          continue;
          }
 
@@ -305,7 +305,7 @@ BulkDescriptor ResolveBulkData() {
       return aResult;
       }
 
-   throw std::runtime_error{ "Scryfall default_cards bulk data was not found" };
+   throw std::runtime_error{ "Scryfall all_cards bulk data was not found" };
    }
 
 
@@ -370,11 +370,11 @@ LoadedBulkData LoadProcess() {
 
    BulkDescriptor aBulk = ResolveBulkData();
 
-   std::println("Scryfall default_cards updated at: {}", aBulk.strUpdatedAt.empty() ? "<not supplied>" : aBulk.strUpdatedAt);
+   std::println("Scryfall all_cards updated at: {}", aBulk.strUpdatedAt.empty() ? "<not supplied>" : aBulk.strUpdatedAt);
 
    std::filesystem::path const aBulkPath = std::filesystem::temp_directory_path() /
-                                                   (aBulk.boGzipJsonLines ? "deckkernel-scryfall-default-cards.jsonl.gz"
-                                                                          : "deckkernel-scryfall-default-cards.json");
+                                                   (aBulk.boGzipJsonLines ? "deckkernel-scryfall-all-cards.jsonl.gz"
+                                                                          : "deckkernel-scryfall-all-cards.json");
 
    bool const boDownload = AskForBulkDownload(aBulkPath);
 

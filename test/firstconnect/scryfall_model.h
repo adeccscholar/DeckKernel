@@ -108,20 +108,24 @@ struct RarityMetaData {
 using TRarity = adecc::db::PersistentSystemData<catalog_types, RarityMetaData>;
 
 using staged_card_types = adecc::defined_type_list<int, std::string,
-   std::optional<std::string>, std::string, std::string, adecc::date_ty, std::optional<int>, std::string>;
+   std::optional<std::string>, std::string, std::string, adecc::date_ty, std::optional<int>, std::string,
+   std::string, std::string, std::optional<std::string>>;
 using card_types = adecc::defined_type_list<int, std::string,
-   std::optional<std::string>, std::string, int, adecc::date_ty, std::optional<int>, int>;
+   std::optional<std::string>, std::string, int, adecc::date_ty, std::optional<int>, int,
+   std::string, std::string, std::optional<std::string>>;
 
 using staged_card_type_link_types = adecc::defined_type_list<int, int, std::string, int>;
 using card_type_link_types = adecc::defined_type_list<int, int, int, int>;
 using card_face_types = adecc::defined_type_list<int, int, std::string, std::string,
    std::optional<std::string>, std::optional<std::string>, std::string,
-   std::optional<std::string>>;
+   std::optional<std::string>, std::optional<std::string>, std::optional<std::string>,
+   std::optional<std::string>, std::optional<std::string>>;
 
 struct CardFaceMetaData {
    static constexpr std::string_view svTableName = "deckkernel_test.scryfall_card_faces";
-   static constexpr std::array<std::string_view, 8> arrAttributeNames{
-      "card_id", "face_id", "name", "type_line", "layout", "loyalty", "mana_cost", "power"};
+   static constexpr std::array<std::string_view, 12> arrAttributeNames{
+      "card_id", "face_id", "name", "type_line", "layout", "loyalty", "mana_cost", "power",
+      "illustration_id", "image_url_normal", "image_url_art_crop", "image_url_png"};
    static constexpr std::array<std::size_t, 2> arrKeyIndices{0, 1};
    static constexpr std::optional<std::size_t> optIdentityIndex{};
    static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
@@ -178,9 +182,9 @@ using TCardCreatureType = adecc::db::PersistentSystemData<card_type_link_types, 
 
 struct CardMetaData {
    static constexpr std::string_view svTableName = "deckkernel_test.scryfall_cards";
-   static constexpr std::array<std::string_view, 8> arrAttributeNames{
+   static constexpr std::array<std::string_view, 11> arrAttributeNames{
       "id", "scryfall_id", "oracle_id", "name", "set_id", "released_at",
-      "variation_of_id", "rarity_id" };
+      "variation_of_id", "rarity_id", "collector_number", "lang", "illustration_id" };
    static constexpr std::array<std::size_t, 1> arrKeyIndices{0};
    static constexpr std::optional<std::size_t> optIdentityIndex{0};
    static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
@@ -198,5 +202,8 @@ public:
    element_ty<5> const& ReleasedAt() const { return Get<5>(); }
    element_ty<6> const& VariationOfId() const { return Get<6>(); }
    element_ty<7> const& RarityId() const { return Get<7>(); }
+   element_ty<8> const& CollectorNumber() const { return Get<8>(); }
+   element_ty<9> const& Language() const { return Get<9>(); }
+   element_ty<10> const& IllustrationId() const { return Get<10>(); }
    };
 } // namespace deckkernel::test
