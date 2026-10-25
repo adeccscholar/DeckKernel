@@ -532,9 +532,13 @@ if(EXISTS "${_adecc_legacy_lock}")
       list(GET _fields 6 _sha256)
       if(NOT _filename MATCHES "^[A-Za-z0-9_.-]+[.]zip$" OR
          NOT _sha256 MATCHES "^[0-9a-fA-F]+$" OR
-         NOT _sha256 MATCHES "^[0-9a-fA-F]{64}$" OR
+         NOT _sha256 MATCHES "^[0-9a-fA-F]+$" OR
          NOT _size MATCHES "^[0-9]+$")
          message(FATAL_ERROR "Invalid legacy package integrity metadata for ${_name}")
+      endif()
+      string(LENGTH "${_sha256}" _sha_len)
+      if(NOT _sha_len EQUAL 64)
+         message(FATAL_ERROR "Invalid SHA-256 length for ${_name}")
       endif()
       if(NOT _release STREQUAL "2026.09.26-1")
          message(FATAL_ERROR "Unexpected legacy release tag for ${_name}: ${_release}")
