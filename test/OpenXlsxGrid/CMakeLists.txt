@@ -54,7 +54,7 @@ endif()
 
 add_executable(adecc_openxlsx_grid_test main.cpp)
 set_property(TARGET adecc_openxlsx_grid_test PROPERTY CXX_SCAN_FOR_MODULES OFF)
-target_include_directories(adecc_openxlsx_grid_test PRIVATE "${DECKKERNEL_ROOT}")
+target_include_directories(adecc_openxlsx_grid_test PRIVATE "${DECKKERNEL_ROOT}/adecc-core-lib")
 target_compile_features(adecc_openxlsx_grid_test PRIVATE cxx_std_23)
 target_compile_definitions(adecc_openxlsx_grid_test PRIVATE
    CHRONO_WORK_AROUND CHRONO_MISSED_ZONEDB)
