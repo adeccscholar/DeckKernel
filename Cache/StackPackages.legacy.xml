@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+   Legacy StackBuilder schema 2 selection ONLY for the eight new packages.
+   Existing Cache/StackPackages.xml and its 17-package locks stay untouched.
+   Release assets must be published to the existing tag 2026.09.26-1
+   before Cache/legacy-release.lock is activated in Git.
+-->
+<stackPackages schemaVersion="2" toolchain="bcc64x">
+   <!-- Image codecs -->
+   <package name="libpng" version="1.6.59" release="2026.09.26-1"/>
+   <package name="libjpeg-turbo" version="3.2.0" release="2026.09.26-1"/>
+   <package name="libtiff" version="4.7.2" release="2026.09.26-1"/>
+
+   <!-- Concurrency used by OpenCV -->
+   <package name="onetbb" version="2023.1.0" release="2026.09.26-1"/>
+   <package name="llvm-openmp" version="20.1.7" release="2026.09.26-1"/>
+
+   <!-- Vision and OCR -->
+   <package name="opencv" version="5.0.0" release="2026.09.26-1"/>
+   <package name="leptonica" version="1.87.0" release="2026.09.26-1"/>
+   <package name="tesseract" version="5.5.3" release="2026.09.26-1"/>
+</stackPackages>
