@@ -29,8 +29,3 @@ Motivation, build, install, run and verification guide:
 Docs\build\FIRST_CONNECTION_TEST.md
 ```
 
-## OpenXLSX Grid
-
-Sources: test/OpenXlsxGrid; adapter: adecc/openXlsxTools.
-
-Motivation, build, install and verification: Docs/build/OPENXLSX_GRID.md.

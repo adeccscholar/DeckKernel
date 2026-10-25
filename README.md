@@ -9,7 +9,6 @@ documentation server.
 - [Scryfall data model](Docs/model/SCRYFALL_DATA_MODEL.md)
 - [Documentation server build](Docs/build/DOCU_SERVER.md)
 - [First connection build and test](Docs/build/FIRST_CONNECTION_TEST.md)
-- [OpenXLSX grid build and test](Docs/build/OPENXLSX_GRID.md)
 
 Local executable deployments are written below `apps/Debug` or `apps/Release`.
 The `apps/` directory is intentionally not tracked by Git.
