@@ -1,12 +1,12 @@
 # adecc C++ libraries
 
 The header-only libraries currently in DeckKernel's `adecc/` directory
-are intended to move to the standalone **adecc-core-lib** repository.
+have moved to the standalone **adecc-core-lib** repository.
 
-After extraction, DeckKernel can include the repository as a Git submodule
-under `adecc/`. The standalone repository may contain its own `adecc/`
+DeckKernel includes the repository as a Git submodule
+under `adecc-core-lib/`. The standalone repository may contain its own `adecc/`
 source directory; consequently the checkout path can be
-`DeckKernel/adecc/adecc/cpp_core/...`. A CMake `INTERFACE` target should
+`DeckKernel/adecc-core-lib/adecc/cpp_core/...`. A CMake `INTERFACE` target should
 expose the outer repository directory so consumers keep includes such as
 `#include <adecc/cpp_core/fixed_string.h>`.
 
@@ -17,8 +17,7 @@ Eligible purchasers of **Rethinking C++ (C++ neu denken)** have an optional
 additional MIT-like permissive license for the covered adecc-owned code,
 including commercial and proprietary use.
 
-See `adecc/ADECC_BOOK_LICENSE.md` (or the same document at the root of
-the future standalone repository) for the full draft terms. The Book License
+See `adecc-core-lib/adecc/ADECC_BOOK_LICENSE.md` (or the same document in the standalone repository) for the full draft terms. The Book License
 applies to the covered source independently of its Git checkout location;
 it does **not** license the rest of DeckKernel or third-party components.
 
