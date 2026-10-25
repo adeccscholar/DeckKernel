@@ -76,7 +76,7 @@ endif()
 add_executable(
    adecc_postgresql_pqxx_test
    test_postgresql_pqxx_database.cpp
-   "${DECKKERNEL_ROOT}/adecc/postgre/pqxx_database.h"
+   "${DECKKERNEL_ROOT}/adecc-core-lib/adecc/postgre/pqxx_database.h"
 )
 
 target_compile_definitions(
@@ -89,8 +89,8 @@ target_compile_definitions(
 target_include_directories(
    adecc_postgresql_pqxx_test
    PRIVATE
-      "${DECKKERNEL_ROOT}/adecc/cpp_core"
-      "${DECKKERNEL_ROOT}/adecc/postgre"
+      "${DECKKERNEL_ROOT}/adecc-core-lib/adecc/cpp_core"
+      "${DECKKERNEL_ROOT}/adecc-core-lib/adecc/postgre"
 )
 
 target_link_libraries(
