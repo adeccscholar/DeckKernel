@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+   Additive legacy BCC64X release extension for DeckKernel.
+   This is a staging manifest: published locks must not contain these packages
+   until the corresponding ZIPs have been packaged and uploaded to the existing
+   GitHub Release, with their actual byte sizes and SHA-256 digests.
+   Dependencies/versions match BuildEngine-Admin/admin/build-libraries.xml.
+-->
+<legacyReleasePackages schemaVersion="1" release="2026.09.26-1" toolchain="bcc64x">
+   <package name="libpng" version="1.6.59" depends="zlib@1.3.2"/>
+   <package name="libjpeg-turbo" version="3.2.0"/>
+   <package name="libtiff" version="4.7.2" depends="zlib@1.3.2,libjpeg-turbo@3.2.0"/>
+   <package name="onetbb" version="2023.1.0"/>
+   <package name="llvm-openmp" version="20.1.7"/>
+   <package name="opencv" version="5.0.0" depends="onetbb@2023.1.0,llvm-openmp@20.1.7,zlib@1.3.2"/>
+   <package name="leptonica" version="1.87.0" depends="zlib@1.3.2,libpng@1.6.59,libjpeg-turbo@3.2.0,libtiff@4.7.2"/>
+   <package name="tesseract" version="5.5.3" depends="leptonica@1.87.0"/>
+</legacyReleasePackages>
