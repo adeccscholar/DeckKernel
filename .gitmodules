@@ -1,0 +1,3 @@
+[submodule "adecc-core-lib"]
+	path = adecc-core-lib
+	url = https://github.com/adeccscholar/adecc-core-lib.git
