@@ -13,3 +13,9 @@ documentation server.
 
 Local executable deployments are written below `apps/Debug` or `apps/Release`.
 The `apps/` directory is intentionally not tracked by Git.
+
+
+The reusable header-only adecc C++ library is maintained independently in
+[adecc-core-lib](https://github.com/adeccscholar/adecc-core-lib), pinned here as
+the `adecc-core-lib/` Git submodule. Clone with `--recurse-submodules` or run
+`git submodule update --init --recursive` before configuring the examples.
