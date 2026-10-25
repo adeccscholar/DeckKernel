@@ -6,6 +6,9 @@
 \details Binary images are kept separately from card rows and reused across imports.
 */
 #include "scryfall_images.h"
+#include "../../src/scryfall/image_cache.h"
+#include <chrono>
+#include <thread>
 #include <curl/curl.h>
 #include <libpq-fe.h>
 #include <openssl/evp.h>
@@ -127,6 +130,10 @@ pg_connection_ty Connect() {
 void ImportImages(postgres_database_ty const& aDatabase) {
    (void)aDatabase; // Ensures FirstConnection has established its normal DB context.
    std::size_t const uLimit=ImageLimit();
+   std::filesystem::path const aCacheRoot=Env("DECKKERNEL_IMAGE_CACHE_ROOT","");
+   deckkernel::scryfall::ImageCache aCache(aCacheRoot.empty()?std::filesystem::path{".cache/scryfall/images"}:aCacheRoot);
+   std::size_t uHits{},uFetched{};
+   auto aNextRequest=std::chrono::steady_clock::now();
    pg_connection_ty const aConn=Connect();
    std::string const strSql=
       "SELECT image_url FROM deckkernel_test.scryfall_image_assets "
@@ -142,19 +149,28 @@ void ImportImages(postgres_database_ty const& aDatabase) {
    for(int i=0;i<PQntuples(aRows.get());++i) {
       std::string const strUrl=PQgetvalue(aRows.get(),i,0);
       try {
-         auto vecBytes=DownloadImage(strUrl);
-         std::string const strSha=Sha256(vecBytes);
+         auto optCached=aCache.Find(strUrl);
+         if(!optCached) {
+            std::this_thread::sleep_until(aNextRequest);
+            aNextRequest=std::chrono::steady_clock::now()+std::chrono::milliseconds(250);
+            auto vecDownloaded=DownloadImage(strUrl);
+            optCached=aCache.Store(strUrl,vecDownloaded);
+            ++uFetched;
+         }
+         else ++uHits;
+         auto const& vecBytes=optCached->vecBytes;
+         std::string const& strSha=optCached->strSha256;
          // libpq binary parameter format 1 stores the original bytes directly.
-         std::array<char const*,3> arrValues{
-            strUrl.c_str(),strSha.c_str(),reinterpret_cast<char const*>(vecBytes.data())};
-         std::array<int,3> arrLengths{0,0,static_cast<int>(vecBytes.size())};
-         std::array<int,3> arrFormats{0,0,1};
-         std::array<Oid,3> arrTypes{25,25,17}; // text, text, bytea
+         std::array<char const*,4> arrValues{
+            strUrl.c_str(),strSha.c_str(),reinterpret_cast<char const*>(vecBytes.data()),optCached->strMediaType.c_str()};
+         std::array<int,4> arrLengths{0,0,static_cast<int>(vecBytes.size()),0};
+         std::array<int,4> arrFormats{0,0,1,0};
+         std::array<Oid,4> arrTypes{25,25,17,25}; // text, text, bytea
          pg_result_ty aUpdate(PQexecParams(aConn.get(),
             "UPDATE deckkernel_test.scryfall_image_assets "
-            "SET sha256=$2, media_type='image/jpeg', image_data=$3, downloaded_at=now() "
+            "SET sha256=$2, media_type=$4, image_data=$3, downloaded_at=now() "
             "WHERE image_url=$1 AND image_data IS NULL",
-            3,arrTypes.data(),arrValues.data(),arrLengths.data(),arrFormats.data(),0));
+            4,arrTypes.data(),arrValues.data(),arrLengths.data(),arrFormats.data(),0));
          if(!aUpdate||PQresultStatus(aUpdate.get())!=PGRES_COMMAND_OK)
             throw std::runtime_error("PostgreSQL bytea update failed: "+
                std::string(PQerrorMessage(aConn.get())));
@@ -169,6 +185,7 @@ void ImportImages(postgres_database_ty const& aDatabase) {
    }
    std::println("[IMAGE] result: saved={}, failed={}, candidates={}, limit={}",
       uSaved,uFailed,PQntuples(aRows.get()),uLimit);
+   std::println("[IMAGE-CACHE] hits={}, fetched={}, root={}",uHits,uFetched,aCache.Root().string());
    if(uFailed) throw std::runtime_error(std::format("{} image downloads failed",uFailed));
 }
 }

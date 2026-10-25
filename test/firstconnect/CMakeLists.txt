@@ -101,6 +101,8 @@ add_executable(
    scryfall_parse.h
    scryfall_database.cpp
    scryfall_database.h
+   ../../src/scryfall/image_cache.cpp
+   ../../src/scryfall/image_cache.h
    scryfall_images.cpp
    scryfall_images.h
    scryfall_model.h

@@ -99,3 +99,7 @@ out
 
 # Generated documentation browser assets
 /Docs/js/
+
+# Persistent local image content cache (not committed)
+/test/firstconnect/.cache/
+/test/scantest/.cache/

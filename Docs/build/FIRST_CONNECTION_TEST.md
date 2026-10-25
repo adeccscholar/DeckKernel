@@ -279,3 +279,12 @@ images unless the executable is run.
 The separately documented `test/scantest` is the next step for actual
 OpenCV descriptors and image-based matching. **No native BCC64X run has yet
 verified the new import or scanner paths.**
+
+
+### Persistent disk image cache
+
+`src/scryfall/image_cache.{h,cpp}` stores original images in SHA-256 content-addressed blobs and maps source URLs to those blobs. Every hit verifies blob digest and image signature. The cache can repopulate PostgreSQL after rebuilding test tables or moving to a new database, and it is independent of OCR/ORB algorithm versions.
+
+Set `DECKKERNEL_IMAGE_CACHE_ROOT` to a stable absolute folder shared by FirstConnection and future Scantest runs. The default is `.cache/scryfall/images` relative to the process working directory. The disk cache and PostgreSQL `bytea` are complementary; never delete the disk cache during routine builds. Requests remain serial with a 250 ms minimum gap for image fetches; local hits trigger no HTTP request. The loader prints cache hit and network-fetch counts. This is conservative etiquette, not a stated Scryfall CDN-specific hard limit.
+
+Scryfall's API guidance asks clients not to exceed ten API requests per second. The public image CDN is outside that endpoint-specific request quota, but this does not authorize aggressive crawling. Stop on 429, honor Retry-After, and avoid repeated failed requests. Binary cache writes use temporary files and SHA-256 validation; Windows BCC64X runtime is not yet verified.
