@@ -102,15 +102,15 @@ add_executable(
    scryfall_database.cpp
    scryfall_database.h
    scryfall_model.h
-   "${DECKKERNEL_ROOT}/adecc/postgre/pqxx_database.h"
+   "${DECKKERNEL_ROOT}/adecc-core-lib/adecc/postgre/pqxx_database.h"
 )
 
 target_include_directories(
    deckkernel_scryfall_postgres_test
    PRIVATE
       "${CMAKE_CURRENT_LIST_DIR}"
-      "${DECKKERNEL_ROOT}/adecc/cpp_core"
-      "${DECKKERNEL_ROOT}/adecc/postgre"
+      "${DECKKERNEL_ROOT}/adecc-core-lib/adecc/cpp_core"
+      "${DECKKERNEL_ROOT}/adecc-core-lib/adecc/postgre"
 )
 
 target_compile_definitions(
