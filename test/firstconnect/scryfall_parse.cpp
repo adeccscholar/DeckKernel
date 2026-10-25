@@ -293,13 +293,42 @@ void ReadPlainBulk(
    isFile.seekg(0);
 
    if (chFirst == '[') {
-      json_ty const aCards = json_ty::parse(isFile);
-
-      for (json_ty const& aCard : aCards) {
-         AppendCard(aCard, aParsed);
+      // all_cards is a multi-gigabyte JSON array. Keep only the current object
+      // in memory; correctly handle escaped quotes and nested JSON structures.
+      isFile.get(chFirst); // consume opening '['
+      std::string strObject;
+      std::size_t uDepth=0;
+      bool bQuoted=false, bEscaped=false, bStarted=false;
+      char ch{};
+      while (isFile.get(ch)) {
+         if (!bStarted) {
+            if (std::isspace(static_cast<unsigned char>(ch)) || ch==',') { continue; }
+            if (ch==']') { return; }
+            if (ch!='{') { throw std::runtime_error("invalid all_cards JSON array element"); }
+            bStarted=true;
+            uDepth=1;
+            strObject.assign(1,ch);
+            continue;
+            }
+         strObject.push_back(ch);
+         if (bQuoted) {
+            if (bEscaped) { bEscaped=false; }
+            else if (ch=='\\') { bEscaped=true; }
+            else if (ch=='"') { bQuoted=false; }
+            }
+         else if (ch=='"') { bQuoted=true; }
+         else if (ch=='{' || ch=='[') { ++uDepth; }
+         else if (ch=='}' || ch==']') {
+            if (uDepth==0) { throw std::runtime_error("unexpected closing JSON delimiter"); }
+            --uDepth;
+            if (uDepth==0) {
+               AppendCard(json_ty::parse(strObject),aParsed);
+               strObject.clear();
+               bStarted=false;
+               }
+            }
          }
-
-      return;
+      throw std::runtime_error("truncated all_cards JSON array");
       }
 
    std::string strLine;
