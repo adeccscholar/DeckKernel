@@ -11,6 +11,7 @@ The evaluation stays here so the example visibly closes the data-flow loop.
 */
 
 #include "scryfall_database.h"
+#include "scryfall_images.h"
 #include "scryfall_load.h"
 #include "scryfall_parse.h"
 
@@ -154,6 +155,13 @@ int main() {
          "Store",
          [&aDatabase, &aParsed]() {
             StoreProcess(aDatabase, aParsed);
+            }
+         );
+
+      RunTimedProcess(
+         "Images",
+         [&aDatabase]() {
+            ImportImages(aDatabase);
             }
          );
 

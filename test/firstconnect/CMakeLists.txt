@@ -101,6 +101,8 @@ add_executable(
    scryfall_parse.h
    scryfall_database.cpp
    scryfall_database.h
+   scryfall_images.cpp
+   scryfall_images.h
    scryfall_model.h
    "${DECKKERNEL_ROOT}/adecc-core-lib/adecc/postgre/pqxx_database.h"
 )
