@@ -57,6 +57,7 @@ From the DeckKernel repository root:
 
 ```cmd
 git pull
+git submodule update --init --recursive
 ```
 
 For a new checkout, clone the repository first and then change into its root directory.
