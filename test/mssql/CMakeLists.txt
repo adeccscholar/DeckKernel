@@ -84,7 +84,7 @@ endif()
 add_executable(
    adecc_mssql_odbc_test
    test_mssql_odbc_database.cpp
-   "${DECKKERNEL_ROOT}/adecc/mssql/mssql_odbc_database.h"
+   "${DECKKERNEL_ROOT}/adecc-core-lib/adecc/mssql/mssql_odbc_database.h"
 )
 
 # Independent teaching example: CSV -> typed policies -> SQL Server.
@@ -95,10 +95,10 @@ add_executable(
 target_compile_definitions(adecc_mssql_csv_pipeline PRIVATE
    CHRONO_WORK_AROUND CHRONO_MISSED_ZONEDB)
 target_include_directories(adecc_mssql_csv_pipeline PRIVATE
-   "${DECKKERNEL_ROOT}/adecc/cpp_core"
-   "${DECKKERNEL_ROOT}/adecc/mssql"
-   "${DECKKERNEL_ROOT}/adecc/cpp_domain"
-   "${DECKKERNEL_ROOT}/adecc/openXlsxTools")
+   "${DECKKERNEL_ROOT}/adecc-core-lib/adecc/cpp_core"
+   "${DECKKERNEL_ROOT}/adecc-core-lib/adecc/mssql"
+   "${DECKKERNEL_ROOT}/adecc-core-lib/adecc/cpp_domain"
+   "${DECKKERNEL_ROOT}/adecc-core-lib/adecc/openXlsxTools")
 target_compile_options(adecc_mssql_csv_pipeline PRIVATE
    "-fborland-exec-code-page=65001")
 target_link_libraries(adecc_mssql_csv_pipeline PRIVATE OpenXLSX::OpenXLSX)
@@ -123,8 +123,8 @@ target_compile_definitions(
 target_include_directories(
    adecc_mssql_odbc_test
    PRIVATE
-      "${DECKKERNEL_ROOT}/adecc/cpp_core"
-      "${DECKKERNEL_ROOT}/adecc/mssql"
+      "${DECKKERNEL_ROOT}/adecc-core-lib/adecc/cpp_core"
+      "${DECKKERNEL_ROOT}/adecc-core-lib/adecc/mssql"
 )
 
 if(WIN32)
