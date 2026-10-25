@@ -119,13 +119,15 @@ using card_type_link_types = adecc::defined_type_list<int, int, int, int>;
 using card_face_types = adecc::defined_type_list<int, int, std::string, std::string,
    std::optional<std::string>, std::optional<std::string>, std::string,
    std::optional<std::string>, std::optional<std::string>, std::optional<std::string>,
-   std::optional<std::string>, std::optional<std::string>>;
+   std::optional<std::string>, std::optional<std::string>,
+   std::optional<std::string>, std::optional<std::string>, std::optional<std::string>>;
 
 struct CardFaceMetaData {
    static constexpr std::string_view svTableName = "deckkernel_test.scryfall_card_faces";
-   static constexpr std::array<std::string_view, 12> arrAttributeNames{
+   static constexpr std::array<std::string_view, 15> arrAttributeNames{
       "card_id", "face_id", "name", "type_line", "layout", "loyalty", "mana_cost", "power",
-      "illustration_id", "image_url_normal", "image_url_art_crop", "image_url_png"};
+      "illustration_id", "image_url_normal", "image_url_art_crop", "image_url_png",
+      "image_url_small", "image_url_large", "image_url_border_crop"};
    static constexpr std::array<std::size_t, 2> arrKeyIndices{0, 1};
    static constexpr std::optional<std::size_t> optIdentityIndex{};
    static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};

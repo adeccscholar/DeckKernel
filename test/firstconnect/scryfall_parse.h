@@ -27,6 +27,7 @@ struct StagedFace {
    std::string strName, strTypeLine, strManaCost;
    std::optional<std::string> optLayout, optLoyalty, optPower;
    std::optional<std::string> optIllustrationId, optImageNormalUrl, optImageArtCropUrl, optImagePngUrl;
+   std::optional<std::string> optImageSmallUrl, optImageLargeUrl, optImageBorderCropUrl;
    std::vector<std::string> vecLandTypes, vecCreatureTypes;
    std::vector<std::string> vecSuperTypes, vecMainTypes, vecArtifactTypes;
    };

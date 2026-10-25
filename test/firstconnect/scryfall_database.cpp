@@ -69,7 +69,29 @@ adecc::db::postgres::postgres_credentials MakeCredentials() {
 
 
 void EnsureSchema(postgres_database_ty const& aDatabase) {
+   // Durable cache schema: never drop or truncate this schema during model resets.
+   // PostgreSQL setup grants ownership to deckkernel_user.
+   aDatabase.ExecuteCommand("CREATE SCHEMA IF NOT EXISTS deckkernel_cache");
+   aDatabase.ExecuteCommand(
+      "CREATE TABLE IF NOT EXISTS deckkernel_cache.scryfall_images ("
+      "url text PRIMARY KEY, image_data bytea NOT NULL, sha256 text NOT NULL,"
+      "media_type text NOT NULL, cached_at timestamptz NOT NULL DEFAULT now(),"
+      "CHECK (length(sha256)=64), CHECK (octet_length(image_data)>0))");
+   // One-time and idempotent migration from the earlier persistent model assets.
+   // Perform before dropping any model tables, so existing images survive.
+   aDatabase.ExecuteCommand(
+      "DO $cache$ BEGIN "
+      "IF to_regclass('deckkernel_test.scryfall_image_assets') IS NOT NULL THEN "
+      "INSERT INTO deckkernel_cache.scryfall_images(url,image_data,sha256,media_type,cached_at) "
+      "SELECT image_url,image_data,sha256,media_type,COALESCE(downloaded_at,now()) "
+      "FROM deckkernel_test.scryfall_image_assets "
+      "WHERE image_data IS NOT NULL AND sha256 IS NOT NULL AND media_type IS NOT NULL "
+      "ON CONFLICT (url) DO NOTHING; "
+      "END IF; END $cache$");
    aDatabase.ExecuteCommand("DROP VIEW IF EXISTS deckkernel_test.scryfall_cards_view");
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_image_features");
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_image_variants");
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_image_assets");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_land_types");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_creature_types");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_artifact_types");
@@ -111,6 +133,7 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
       "name text NOT NULL, type_line text NOT NULL,"
       "layout text, loyalty text, mana_cost text NOT NULL, power text,"
       "illustration_id text, image_url_normal text, image_url_art_crop text, image_url_png text,"
+      "image_url_small text, image_url_large text, image_url_border_crop text,"
       "PRIMARY KEY (card_id, face_id))");
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_card_artifact_types ("
@@ -478,7 +501,8 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
                   std::get<0>(tplData), aFace.iFaceId, aFace.strName, aFace.strTypeLine,
                   aFace.optLayout, aFace.optLoyalty, aFace.strManaCost, aFace.optPower,
                   aFace.optIllustrationId, aFace.optImageNormalUrl,
-                  aFace.optImageArtCropUrl, aFace.optImagePngUrl};
+                  aFace.optImageArtCropUrl, aFace.optImagePngUrl,
+                  aFace.optImageSmallUrl, aFace.optImageLargeUrl, aFace.optImageBorderCropUrl};
                });
          })
       | std::views::join;
@@ -524,18 +548,26 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_illustration ON deckkernel_test.scryfall_cards(illustration_id)");
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_faces_illustration ON deckkernel_test.scryfall_card_faces(illustration_id)");
    aDatabase.ExecuteCommand(
-      "CREATE TABLE IF NOT EXISTS deckkernel_test.scryfall_image_assets ("
+      "CREATE TABLE deckkernel_test.scryfall_image_assets ("
       "id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, image_url text NOT NULL UNIQUE,"
       "image_kind text NOT NULL DEFAULT 'art_crop', illustration_id text,"
       "sha256 text, media_type text, image_data bytea, downloaded_at timestamptz,"
       "CHECK (sha256 IS NULL OR length(sha256)=64))");
    aDatabase.ExecuteCommand(
-      "CREATE TABLE IF NOT EXISTS deckkernel_test.scryfall_image_features ("
+      "CREATE TABLE deckkernel_test.scryfall_image_features ("
       "asset_id bigint PRIMARY KEY REFERENCES deckkernel_test.scryfall_image_assets(id) ON DELETE CASCADE,"
       "algorithm text NOT NULL, algorithm_version integer NOT NULL,"
       "perceptual_hash bit(64), orb_descriptors bytea, orb_keypoint_count integer NOT NULL DEFAULT 0,"
       "calculated_at timestamptz NOT NULL DEFAULT now())");
-   aDatabase.ExecuteCommand("CREATE INDEX IF NOT EXISTS ix_scryfall_image_assets_illustration ON deckkernel_test.scryfall_image_assets(illustration_id)");
+   aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_image_assets_illustration ON deckkernel_test.scryfall_image_assets(illustration_id)");
+   aDatabase.ExecuteCommand(
+      "CREATE TABLE deckkernel_test.scryfall_card_image_variants ("
+      "card_id integer NOT NULL, face_id integer NOT NULL,"
+      "variant text NOT NULL, asset_id bigint NOT NULL REFERENCES deckkernel_test.scryfall_image_assets(id),"
+      "PRIMARY KEY (card_id,face_id,variant),"
+      "FOREIGN KEY (card_id,face_id) REFERENCES deckkernel_test.scryfall_card_faces(card_id,face_id))");
+   aDatabase.ExecuteCommand(
+      "CREATE INDEX ix_scryfall_card_image_variants_asset ON deckkernel_test.scryfall_card_image_variants(asset_id)");
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_released ON deckkernel_test.scryfall_cards(released_at DESC)");
    aDatabase.ExecuteCommand(
       "CREATE VIEW deckkernel_test.scryfall_cards_view AS "
@@ -565,14 +597,32 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       "JOIN deckkernel_test.scryfall_card_faces f ON f.card_id=c.id "
       "JOIN deckkernel_test.rarities r ON r.id=c.rarity_id");
    aCardTransaction.CommitAndClose();
+   // One original blob per URL in the resettable model, plus normalized per-face
+   // image-variant links. Multiple printings may reference the same URL.
    aDatabase.ExecuteCommand(
-      "INSERT INTO deckkernel_test.scryfall_image_assets(image_url, image_kind, illustration_id) "
-      "SELECT DISTINCT ON (image_url_art_crop) image_url_art_crop, 'art_crop', illustration_id "
-      "FROM deckkernel_test.scryfall_card_faces "
-      "WHERE image_url_art_crop IS NOT NULL "
-      "ORDER BY image_url_art_crop, illustration_id NULLS LAST "
+      "INSERT INTO deckkernel_test.scryfall_image_assets(image_url,image_kind,illustration_id) "
+      "SELECT DISTINCT ON (v.url) v.url,v.variant,f.illustration_id "
+      "FROM deckkernel_test.scryfall_card_faces f "
+      "CROSS JOIN LATERAL (VALUES "
+      "('small',f.image_url_small),('normal',f.image_url_normal),"
+      "('large',f.image_url_large),('png',f.image_url_png),"
+      "('art_crop',f.image_url_art_crop),('border_crop',f.image_url_border_crop)"
+      ") v(variant,url) "
+      "WHERE v.url IS NOT NULL "
+      "ORDER BY v.url,f.illustration_id NULLS LAST "
       "ON CONFLICT (image_url) DO NOTHING");
-   std::println("[STORE] Image reference catalog populated (binary image acquisition is resumable)");
+   aDatabase.ExecuteCommand(
+      "INSERT INTO deckkernel_test.scryfall_card_image_variants(card_id,face_id,variant,asset_id) "
+      "SELECT f.card_id,f.face_id,v.variant,a.id "
+      "FROM deckkernel_test.scryfall_card_faces f "
+      "CROSS JOIN LATERAL (VALUES "
+      "('small',f.image_url_small),('normal',f.image_url_normal),"
+      "('large',f.image_url_large),('png',f.image_url_png),"
+      "('art_crop',f.image_url_art_crop),('border_crop',f.image_url_border_crop)"
+      ") v(variant,url) "
+      "JOIN deckkernel_test.scryfall_image_assets a ON a.image_url=v.url "
+      "WHERE v.url IS NOT NULL");
+   std::println("[STORE] Model image catalog created: per-card face/variant links and unique URLs");
 
    std::println("[STORE] Card subtype links committed: land={}, creature={}",
       uLandLinks, uCreatureLinks);

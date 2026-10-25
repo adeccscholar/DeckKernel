@@ -37,7 +37,12 @@ GRANT CONNECT ON DATABASE "DeckKernel" TO deckkernel_user;
 CREATE SCHEMA IF NOT EXISTS deckkernel_test AUTHORIZATION deckkernel_user;
 ALTER SCHEMA deckkernel_test OWNER TO deckkernel_user;
 
+-- Persistent image cache survives resets and full recreation of deckkernel_test.
+CREATE SCHEMA IF NOT EXISTS deckkernel_cache AUTHORIZATION deckkernel_user;
+ALTER SCHEMA deckkernel_cache OWNER TO deckkernel_user;
+
 GRANT USAGE, CREATE ON SCHEMA deckkernel_test TO deckkernel_user;
+GRANT USAGE, CREATE ON SCHEMA deckkernel_cache TO deckkernel_user;
 
 
 -- Existing test tables may have been created earlier by an administrator.

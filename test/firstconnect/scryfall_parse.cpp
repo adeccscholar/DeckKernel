@@ -177,6 +177,9 @@ void AppendCard(json_ty const& aCard, ParsedBulkData& aParsed) {
          aFace.optImageNormalUrl = OptionalText(*it, "normal");
          aFace.optImageArtCropUrl = OptionalText(*it, "art_crop");
          aFace.optImagePngUrl = OptionalText(*it, "png");
+         aFace.optImageSmallUrl = OptionalText(*it, "small");
+         aFace.optImageLargeUrl = OptionalText(*it, "large");
+         aFace.optImageBorderCropUrl = OptionalText(*it, "border_crop");
          }
       // A face normally has no layout field of its own; retain the parent layout if supplied.
       if (!aFace.optLayout) { aFace.optLayout = OptionalText(aCard, "layout"); }
