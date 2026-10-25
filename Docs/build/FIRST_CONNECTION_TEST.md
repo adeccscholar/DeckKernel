@@ -245,3 +245,37 @@ The example is split so each technical step can be discussed independently:
 The data model remains in scryfall_model.h. The Scryfall field and domain reference is
 documented centrally in the
 [Scryfall data model](../model/SCRYFALL_DATA_MODEL.md).
+
+
+## All Cards and image-based scan preparation (October 2026)
+
+The bulk loader now selects Scryfall **`all_cards`**, not `default_cards`.
+It therefore imports all represented languages/printings. The plain-JSON array
+reader parses one card object at a time rather than materializing the complete
+multi-gigabyte JSON file. The structured staging collection still holds card
+records until the existing store phase completes; this is not yet a fully
+stream-to-database import.
+
+Printing data includes `collector_number`, `lang`, and optional
+`illustration_id`. Faces store their own optional illustration ID and
+`normal`, `art_crop`, and `png` image URLs; for faces without an image
+object the root card image fields are used when available.
+
+After the normal Store phase, `scryfall_image_assets` is populated with
+deduplicated artwork URLs. Its `image_data bytea` stores original JPEG bytes,
+with SHA-256 and source URL; `scryfall_image_features` is reserved for the
+feature extractor, versioned with `algorithm` and `algorithm_version`.
+These two image tables are deliberately **persistent across FirstConnection
+runs**, unlike the lesson's other tables. The image step uses libcurl and libpq
+binary parameters, not text-encoded image SQL.
+
+`DECKKERNEL_IMAGE_LIMIT` controls new image downloads per run. The default
+is **100** for a bounded first test; set **0** to process every pending image.
+Already downloaded images are skipped. This can be a substantial download and
+PostgreSQL storage workload. Requests are made sequentially and are not
+parallelized against Scryfall's image CDN. Repeated builds do not download
+images unless the executable is run.
+
+The separately documented `test/scantest` is the next step for actual
+OpenCV descriptors and image-based matching. **No native BCC64X run has yet
+verified the new import or scanner paths.**
