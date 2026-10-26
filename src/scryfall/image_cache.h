@@ -12,6 +12,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace deckkernel::scryfall {
@@ -43,11 +44,22 @@ public:
    [[nodiscard]] CachedImage Store(std::string_view svUrl,
       std::span<std::uint8_t const> spBytes) const;
 
+   /** \brief Drop the URL reference after PostgreSQL committed successfully.
+       \details Shared SHA-256 blobs are kept until the final URL reference
+       is removed. This cache folder must not be written concurrently by
+       another process.
+       \returns true if the referenced entry was deleted.
+   */
+   [[nodiscard]] bool RemoveCommitted(std::string_view svUrl,
+      std::string_view svExpectedSha256);
+
    /** \brief Return original cache root. */
    [[nodiscard]] std::filesystem::path const& Root() const noexcept;
 
 private:
    std::filesystem::path m_aRoot;
+   std::unordered_map<std::string,std::size_t> m_mpBlobReferences;
+   bool m_bReferenceIndexBuilt { false };
 };
 
 /** \brief Compute lowercase SHA-256 for arbitrary binary data. */

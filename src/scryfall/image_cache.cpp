@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
+#include <system_error>
 #include <utility>
 
 namespace deckkernel::scryfall {
@@ -111,6 +112,56 @@ std::optional<CachedImage> ImageCache::Find(std::string_view svUrl) const {
    if(!optMime || *optMime!=strMime) return std::nullopt;
    return CachedImage{std::move(vecBytes),std::move(strDigest),std::move(strMime)};
 }
+bool ImageCache::RemoveCommitted(std::string_view svUrl,
+   std::string_view svExpectedSha256) {
+   if(!IsDigest(svExpectedSha256)) return false;
+   std::filesystem::path const aReference=ReferencePath(m_aRoot,svUrl);
+   std::ifstream isReference(aReference,std::ios::binary);
+   if(!isReference) return false;
+   std::string strDigest,strMime,strSource;
+   if(!std::getline(isReference,strDigest) ||
+      !std::getline(isReference,strMime) ||
+      !std::getline(isReference,strSource) ||
+      strDigest!=svExpectedSha256 || strSource!=svUrl)
+      return false;
+   isReference.close();
+
+   // A blob may have multiple URL references; build the index only when
+   // an existing disk entry actually needs eviction.
+   if(!m_bReferenceIndexBuilt) {
+      std::unordered_map<std::string,std::size_t> mpCounts;
+      std::filesystem::path const aRefs=m_aRoot/"urls";
+      if(std::filesystem::is_directory(aRefs)) {
+         for(auto const& aEntry:
+            std::filesystem::recursive_directory_iterator(aRefs)) {
+            if(!aEntry.is_regular_file() || aEntry.path().extension()!=".ref")
+               continue;
+            std::ifstream isEntry(aEntry.path(),std::ios::binary);
+            std::string strEntryDigest;
+            if(std::getline(isEntry,strEntryDigest) && IsDigest(strEntryDigest))
+               ++mpCounts[strEntryDigest];
+         }
+      }
+      m_mpBlobReferences=std::move(mpCounts);
+      m_bReferenceIndexBuilt=true;
+   }
+
+   std::error_code aError;
+   bool const bRemoved=std::filesystem::remove(aReference,aError);
+   if(aError || !bRemoved) return false;
+   auto aCount=m_mpBlobReferences.find(strDigest);
+   if(aCount!=m_mpBlobReferences.end() && aCount->second>0) {
+      if(--aCount->second==0) {
+         m_mpBlobReferences.erase(aCount);
+         std::error_code aBlobError;
+         std::filesystem::remove(BlobPath(m_aRoot,strDigest),aBlobError);
+         // Orphan blob cleanup failure is not a data loss: PostgreSQL
+         // already committed the original bytes in both schemas.
+      }
+   }
+   return true;
+}
+
 CachedImage ImageCache::Store(std::string_view svUrl,
    std::span<std::uint8_t const> spBytes) const {
    if(svUrl.empty()||svUrl.find('\n')!=std::string_view::npos ||
