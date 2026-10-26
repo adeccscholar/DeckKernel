@@ -225,3 +225,26 @@ that directory automatically when --tessdata and TESSDATA_PREFIX are absent.
 To intentionally disable OCR, configure with
 -DDECKKERNEL_CAMERA_ENABLE_OCR=OFF. The optional argument --ocr then reports
 that OCR support was disabled. Real BCC64X runtime behavior remains unverified.
+
+## Original phone photo instead of recording the screen
+
+If the available image is already on a phone, copy its original JPEG/PNG to
+the PC. Pointing a webcam at the phone display adds reflections and moire.
+For a single photo, use:
+
+    apps\Release\deckkernel_camera_recognition_test.exe --image=D:\Fotos\karte.jpg --ocr --save-events
+
+This bypasses Windows camera capture. The still image is decoded at its
+original size and processed once. If a plausible card quadrilateral is found,
+the crop is rectified and OCR reads its title and rules area. Otherwise,
+OCR tries the original image (best when the picture is tightly cropped).
+--save-events optionally writes the rectified crop into the local camera
+evidence directory. No Scryfall requests and no PostgreSQL writes occur.
+
+OCR now logs Tesseract's mean confidence separately; outputs below the
+provisional confidence floor (45) or with fewer than 3 alphanumeric
+characters are labeled UNREADABLE instead of presenting gibberish as a
+valid name. OCR accepted as UNVERIFIED is still *not* a card identity.
+This confidence filter cannot recover letters lost to overexposure or
+reflections. Prefer an original photo or a local screenshot over an
+optical recording of a phone display.
