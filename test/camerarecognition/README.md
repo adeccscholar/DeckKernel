@@ -302,3 +302,24 @@ decode of the full catalog. The recorded match remains UNVERIFIED:
 a positive artwork resemblance alone cannot identify a specific printing.
 The worker is tested only after execution on the user's BCC64X/PostgreSQL
 environment, and current preview graphics do not display its text result.
+
+## Side-by-side live diagnostic preview
+
+The Win32 preview shows two panels in one double-buffered window:
+
+- LEFT: raw live camera with the detected four-corner outline.
+- RIGHT: the **actual current rectified 480x672 card pixels** used by the
+  OCR retry state machine and the queued artwork matching worker.
+  When no contour is found the panel says NO CARD CONTOUR; it does not
+  continue displaying an outdated card.
+
+Press **R** while the preview has keyboard focus to switch the actual
+rectified card processing orientation between 0 and 180 degrees. The
+right-hand panel, OCR and artwork work with the same rotated pixels.
+This is manual orientation correction, not automatic orientation detection;
+90/270-degree and automatic upside-down recognition are still outstanding.
+
+FindCard now runs only once per live frame, with its result shared by the
+processor and preview instead of performing the same expensive contour
+extraction twice. The new synthetic self-test verifies that two 180-degree
+rotations reconstruct the original pixels and dHash.
