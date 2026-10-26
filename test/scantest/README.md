@@ -36,3 +36,12 @@ indexer instances.
     cmake --install test/scantest/build/Release
 
 This feature does not modify the schema or the image importer's state.
+
+## Pinned runtime deployment
+
+The executable now uses Cache/cmake/InstallPinnedRuntime.cmake for both
+post-build staging and installation. This includes opencv_feature500.dll
+(and other imported OpenCV/DB dependencies) rather than manually selecting
+only a subset of package DLL directories. Re-run CMake configure after pulling
+changes, then build and install. Existing identical DLLs are reused; a
+mismatched loaded DLL is never silently overwritten.
