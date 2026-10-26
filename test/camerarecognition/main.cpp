@@ -180,7 +180,8 @@ class CardOcr {
       auto end=text.find_last_not_of(' ');
       return text.substr(start,end-start+1);
    }
-   std::string ReadRegion(cv::Mat const& image,cv::Rect region,int mode) {
+   struct OcrResult {std::string text;int confidence{};};
+   OcrResult ReadRegion(cv::Mat const& image,cv::Rect region,int mode) {
       cv::Mat gray,scaled;
       cv::cvtColor(image(region),gray,cv::COLOR_BGR2GRAY);
       cv::resize(gray,scaled,cv::Size(),2.0,2.0,cv::INTER_CUBIC);
@@ -188,8 +189,13 @@ class CardOcr {
       m_api.SetImage(scaled.data,scaled.cols,scaled.rows,1,
          static_cast<int>(scaled.step));
       if(m_api.Recognize(nullptr)!=0)return {};
+      int const confidence=m_api.MeanTextConf();
       std::unique_ptr<char[]> text(m_api.GetUTF8Text());
-      return text?Clean(text.get()):std::string{};
+      std::string cleaned=text?Clean(text.get()):std::string{};
+      unsigned letters=0;
+      for(unsigned char ch:cleaned)if(std::isalnum(ch))++letters;
+      if(confidence<45||letters<3)return {{},confidence};
+      return {std::move(cleaned),confidence};
    }
 public:
    explicit CardOcr(std::string const& tessdata) {
@@ -208,8 +214,10 @@ public:
       auto const rules=ReadRegion(card,
          cv::Rect(card.cols/15,card.rows*58/100,card.cols*13/15,
             card.rows*27/100),tesseract::PSM_AUTO);
-      std::println("[CAM-OCR] card #{} name=\"{}\"",eventNumber,title);
-      std::println("[CAM-OCR] card #{} text=\"{}\"",eventNumber,rules);
+      std::println("[CAM-OCR] card #{} name=\"{}\" confidence={} status={}",
+         eventNumber,title.text,title.confidence,title.text.empty()?"UNREADABLE":"UNVERIFIED");
+      std::println("[CAM-OCR] card #{} text=\"{}\" confidence={} status={}",
+         eventNumber,rules.text,rules.confidence,rules.text.empty()?"UNREADABLE":"UNVERIFIED");
       std::println("[CAM-OCR] unverified OCR, not an edition or Oracle identity");
    }
 };
@@ -542,6 +550,7 @@ int CameraIndex(std::string_view str) {
 void Usage() {
    std::println("Usage: deckkernel_camera_recognition_test --self-test");
    std::println("   or: --sequence=folder [--save-events]");
+   std::println("   or: --image=file.png [--ocr] [--save-events] (original phone photo)");
    std::println("   or: --camera=0 [--backend=any|dshow|msmf] [--width=640 --height=480 --fps=30 --fourcc=auto|mjpg|yuy2] [--save-events]");
    std::println("   or: --probe-camera=0          test 4 Windows camera delivery modes");
    std::println("   optional: --ocr --tessdata=PATH_TO_TESSDATA (eng.traineddata required)");
@@ -557,6 +566,7 @@ int main(int argc,char** argv) {
       int width=640,height=480,fpsRequested=30;
       std::optional<int> probeCamera;
       std::string folder;
+      std::string imageFile;
       std::optional<int> camera;
       for(int i=1;i<argc;++i){
          std::string_view arg(argv[i]);
@@ -572,6 +582,7 @@ int main(int argc,char** argv) {
          else if(arg.starts_with("--fps="))fpsRequested=CameraIndex(arg.substr(6));
          else if(arg.starts_with("--probe-camera="))probeCamera=CameraIndex(arg.substr(15));
          else if(arg.starts_with("--sequence="))folder=arg.substr(11);
+         else if(arg.starts_with("--image="))imageFile=arg.substr(8);
          else if(arg.starts_with("--camera="))camera=CameraIndex(arg.substr(9));
          else throw std::runtime_error("unknown argument (use --help)");
       }
@@ -586,8 +597,10 @@ int main(int argc,char** argv) {
       if(width<160||height<120||width>3840||height>2160||
          fpsRequested<1||fpsRequested>120)
          throw std::runtime_error("invalid camera width, height or fps");
-      if(folder.empty()==!camera)
-         throw std::runtime_error("select one of --sequence or --camera");
+      unsigned const sources=static_cast<unsigned>(!folder.empty())+
+         static_cast<unsigned>(camera.has_value())+static_cast<unsigned>(!imageFile.empty());
+      if(sources!=1)
+         throw std::runtime_error("select exactly one of --image, --sequence or --camera");
       Processor processor(save);
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
       if(ocr) {
@@ -600,6 +613,38 @@ int main(int argc,char** argv) {
 #else
       if(ocr)throw std::runtime_error("OCR was not enabled at CMake configure time");
 #endif
+      if(!imageFile.empty()) {
+         cv::Mat const image=cv::imread(imageFile,cv::IMREAD_COLOR);
+         if(image.empty())
+            throw std::runtime_error("cannot decode original image: "+imageFile);
+         std::println("[CAM] still image={} size={}x{}",imageFile,image.cols,image.rows);
+         auto found=FindCard(image);
+         if(found) {
+            std::println("[CAM] card contour rectified to {}x{}",
+               found->rectified.cols,found->rectified.rows);
+#if defined(DECKKERNEL_CAMERA_HAS_OCR)
+            if(ocr) {
+               CardOcr stillOcr(tessdata);
+               stillOcr.Read(found->rectified,1);
+            }
+#endif
+            if(save) {
+               std::filesystem::create_directories(".cache/camera-recognition");
+               if(!cv::imwrite(".cache/camera-recognition/still-card.png",found->rectified))
+                  throw std::runtime_error("cannot save rectified still image");
+            }
+         } else {
+            std::println("[CAM] NO CARD CONTOUR: preserving original image for OCR");
+#if defined(DECKKERNEL_CAMERA_HAS_OCR)
+            if(ocr) {
+               // Original photo may already be tightly cropped to the card.
+               CardOcr stillOcr(tessdata);
+               stillOcr.Read(image,1);
+            }
+#endif
+         }
+         return 0;
+      }
       if(!folder.empty()){
          std::vector<std::filesystem::path> frames;
          for(auto const& e:std::filesystem::directory_iterator(folder)){
