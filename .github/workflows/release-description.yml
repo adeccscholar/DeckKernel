@@ -1,0 +1,51 @@
+name: Synchronize BCC64X Release Description
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - Docs/releases/2026.09.26-1.md
+      - .github/workflows/release-description.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  synchronize:
+    if: github.repository == 'adeccscholar/DeckKernel'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify published package archive metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/2026.09.26-1" > "${RUNNER_TEMP}/release.json"
+          python3 - "${RUNNER_TEMP}/release.json" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          release = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          published = {a["name"]: a for a in release["assets"]}
+          lines = pathlib.Path("Cache/thirdparty.lock").read_text().splitlines()
+          packages = [line.split("|") for line in lines if line.startswith("package|")]
+          if len(packages) != 25:
+             raise SystemExit(f"Expected 25 package entries; got {len(packages)}")
+          for fields in packages:
+             _, name, version, tag, path, size, sha = fields
+             archive = pathlib.PurePosixPath(path).name
+             a = published.get(archive)
+             if not a or a["size"] != int(size) or a.get("digest") != "sha256:" + sha:
+                raise SystemExit(f"Unpublished or mismatched ZIP: {archive}")
+             if tag != "2026.09.26-1":
+                raise SystemExit(f"Wrong package release tag: {name}")
+          print("Verified 25 GitHub assets.")
+          PY
+      - name: Apply versioned two-table release description
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit 2026.09.26-1 --repo "${GITHUB_REPOSITORY}" --notes-file Docs/releases/2026.09.26-1.md
