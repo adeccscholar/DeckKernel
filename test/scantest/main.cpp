@@ -148,9 +148,8 @@ int main(int argc,char** argv) {
          // Keyset pagination avoids repeatedly fetching the entire table and
          // respects already committed features from previous processes.
          unsigned const request=limit?
-            std::min<unsigned>(batchSize,
-               static_cast<unsigned>(std::min<std::size_t>(
-                  static_cast<std::size_t>(limit)-indexed,batchSize))):batchSize;
+            static_cast<unsigned>(std::min<std::size_t>(
+               batchSize,static_cast<std::size_t>(limit)-indexed)):batchSize;
          if(request==0)break;
          std::string const sql=std::format(
             "SELECT a.id::text, a.image_data "
@@ -166,7 +165,10 @@ int main(int argc,char** argv) {
          int const n=PQntuples(rows.get());
          if(!n) {
             if(!follow)break;
-            lastId=0; // start next sweep, including assets committed meanwhile
+            // Failed rows must not be reprocessed endlessly on every poll.
+            // New arrivals receive higher IDs; start a new sweep only when
+            // the source importer has committed something new.
+            lastId=0; // sweep again to see records committed meanwhile
             ++passes;
             std::println("[SCAN-INDEX] idle: indexed={} failed={} sweep={}; "
                "polling in {}s",indexed,failed,passes,pollSeconds);
