@@ -12,6 +12,7 @@
 #include <libpq-fe.h>
 #include <array>
 #include <charconv>
+#include <cstdint>
 #include <chrono>
 #include <thread>
 #include <string_view>
@@ -165,10 +166,10 @@ int main(int argc,char** argv) {
          int const n=PQntuples(rows.get());
          if(!n) {
             if(!follow)break;
-            // Failed rows must not be reprocessed endlessly on every poll.
-            // New arrivals receive higher IDs; start a new sweep only when
-            // the source importer has committed something new.
-            lastId=0; // sweep again to see records committed meanwhile
+            // Recheck committed rows and newly arriving assets on each poll.
+            // A failed decode can be retried on a later pass; the failures
+            // are reported, not silently treated as indexed.
+            lastId=0;
             ++passes;
             std::println("[SCAN-INDEX] idle: indexed={} failed={} sweep={}; "
                "polling in {}s",indexed,failed,passes,pollSeconds);
