@@ -593,7 +593,7 @@ int main(int argc,char** argv) {
       if(ocr) {
          if(tessdata.empty()) {
             if(auto const* env=std::getenv("TESSDATA_PREFIX");env&&*env)tessdata=env;
-            else throw std::runtime_error("--ocr requires --tessdata=directory or TESSDATA_PREFIX");
+            else tessdata=(std::filesystem::path(argv[0]).parent_path()/"tessdata").string();
          }
          processor.EnableOcr(tessdata);
       }
