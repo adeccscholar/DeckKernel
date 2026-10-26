@@ -76,42 +76,50 @@ SELECT current_database();
 
 Only then execute the file as a PostgreSQL administrator in pgAdmin or `psql`.
 The script contains its own guard and aborts if it is run against another database.
-Its relevant SQL is:
+The script sets up **both** the disposable model schema \`deckkernel_test\`
+and the permanent image cache schema \`deckkernel_cache\`. The cache table is
+created here, **not from FirstConnection**. The relevant cache portion is:
 
 ```sql
-DO $do$
-BEGIN
-   IF NOT EXISTS (
-      SELECT 1
-      FROM pg_catalog.pg_roles
-      WHERE rolname = 'deckkernel_user'
-   ) THEN
-      CREATE ROLE deckkernel_user LOGIN;
-   ELSE
-      ALTER ROLE deckkernel_user LOGIN;
-   END IF;
-END
-$do$;
+CREATE SCHEMA IF NOT EXISTS deckkernel_cache AUTHORIZATION deckkernel_user;
+ALTER SCHEMA deckkernel_cache OWNER TO deckkernel_user;
+GRANT USAGE, CREATE ON SCHEMA deckkernel_cache TO deckkernel_user;
 
-GRANT CONNECT ON DATABASE "DeckKernel" TO deckkernel_user;
+CREATE TABLE IF NOT EXISTS deckkernel_cache.scryfall_images (
+   url text PRIMARY KEY,
+   image_data bytea NOT NULL,
+   sha256 text NOT NULL CHECK (length(sha256) = 64),
+   media_type text NOT NULL,
+   cached_at timestamptz NOT NULL DEFAULT now(),
+   CHECK (octet_length(image_data) > 0)
+);
 
-CREATE SCHEMA IF NOT EXISTS deckkernel_test AUTHORIZATION deckkernel_user;
-ALTER SCHEMA deckkernel_test OWNER TO deckkernel_user;
+ALTER TABLE deckkernel_cache.scryfall_images OWNER TO deckkernel_user;
 
-GRANT USAGE, CREATE ON SCHEMA deckkernel_test TO deckkernel_user;
+GRANT SELECT, INSERT, UPDATE, DELETE
+   ON TABLE deckkernel_cache.scryfall_images TO deckkernel_user;
 
-DO $do$
-BEGIN
-   IF to_regclass('deckkernel_test.scryfall_cards') IS NOT NULL THEN
-      ALTER TABLE deckkernel_test.scryfall_cards OWNER TO deckkernel_user;
-   END IF;
-
-   IF to_regclass('deckkernel_test.scryfall_sets') IS NOT NULL THEN
-      ALTER TABLE deckkernel_test.scryfall_sets OWNER TO deckkernel_user;
-   END IF;
-END
-$do$;
 ```
+
+Run the complete checked-in SQL file from the DeckKernel repository root,
+as a PostgreSQL administrator while connected to database \`DeckKernel\`:
+
+```cmd
+psql -U postgres -d DeckKernel -v ON_ERROR_STOP=1 -f test/postgresql_sspi_setup.sql
+```
+
+Alternatively, execute the same SQL file in pgAdmin's Query Tool using
+an administrative connection to \`DeckKernel\`.
+
+The file is **idempotent** for the existing cache: it creates missing schema
+and table objects, repairs ownership, and grants the necessary rights without
+deleting image bytes or replacing their URL keys.
+
+**Do not grant database-wide \`CREATE\` to \`deckkernel_user\`.** PostgreSQL
+requires that privilege even for \`CREATE SCHEMA IF NOT EXISTS\`. FirstConnection
+now checks the pre-existing cache schema and table and fails with a setup
+instruction if they are missing or not accessible. It does not execute any
+\`CREATE SCHEMA\` or \`CREATE TABLE\` statements in \`deckkernel_cache\`.
 
 The `$do$ ... $do$` pairs are PostgreSQL dollar-quote delimiters. Both delimiters are
 required; a single `$` is not valid syntax.
@@ -122,7 +130,9 @@ The script:
 - creates `deckkernel_user LOGIN` if necessary and ensures an existing role has LOGIN;
 - grants it connection access to `DeckKernel`;
 - creates and assigns ownership of schema `deckkernel_test`;
-- grants schema usage/create rights;
+- creates the persistent `deckkernel_cache` schema and URL-keyed
+  `scryfall_images` table (or preserves existing image data);
+- grants schema usage/create rights, and read/write permissions on the image cache;
 - repairs ownership of existing first-connect test tables when they were previously
   created by an administrator.
 
@@ -309,6 +319,22 @@ Use the `-w` psql command from section 9 while diagnosing SSPI. It prevents a pa
 prompt from hiding the fact that the wrong HBA rule was selected.
 
 ## 11. Verify ownership of existing test objects
+
+The cache table must be owned by `deckkernel_user`. Verify it independently
+before starting FirstConnection:
+
+```sql
+SELECT current_database(),
+       has_schema_privilege('deckkernel_user', 'deckkernel_cache', 'USAGE') AS cache_schema_usage,
+       has_table_privilege('deckkernel_user', 'deckkernel_cache.scryfall_images', 'SELECT') AS cache_read,
+       has_table_privilege('deckkernel_user', 'deckkernel_cache.scryfall_images', 'INSERT') AS cache_insert,
+       has_table_privilege('deckkernel_user', 'deckkernel_cache.scryfall_images', 'UPDATE') AS cache_update;
+```
+
+All privilege columns must be `true`. If the schema/table is missing, rerun
+`test/postgresql_sspi_setup.sql` as administrator first. Never solve that
+failure by granting `CREATE ON DATABASE` to the normal application role.
+
 
 If the test objects already exist, verify their owners:
 

@@ -69,14 +69,28 @@ adecc::db::postgres::postgres_credentials MakeCredentials() {
 
 
 void EnsureSchema(postgres_database_ty const& aDatabase) {
-   // Durable cache schema: never drop or truncate this schema during model resets.
-   // PostgreSQL setup grants ownership to deckkernel_user.
-   aDatabase.ExecuteCommand("CREATE SCHEMA IF NOT EXISTS deckkernel_cache");
+   // Cache schema and table are provisioned by the administrator in
+   // test/postgresql_sspi_setup.sql. No database-level CREATE privilege is
+   // granted to the FirstConnection application role.
    aDatabase.ExecuteCommand(
-      "CREATE TABLE IF NOT EXISTS deckkernel_cache.scryfall_images ("
-      "url text PRIMARY KEY, image_data bytea NOT NULL, sha256 text NOT NULL,"
-      "media_type text NOT NULL, cached_at timestamptz NOT NULL DEFAULT now(),"
-      "CHECK (length(sha256)=64), CHECK (octet_length(image_data)>0))");
+      "DO $cache$ BEGIN "
+      "IF current_database() <> 'DeckKernel' THEN "
+      "RAISE EXCEPTION 'FirstConnection requires the DeckKernel database'; "
+      "END IF; "
+      "IF to_regnamespace('deckkernel_cache') IS NULL OR "
+      "to_regclass('deckkernel_cache.scryfall_images') IS NULL THEN "
+      "RAISE EXCEPTION 'Persistent image cache is not provisioned; run "
+      "test/postgresql_sspi_setup.sql as PostgreSQL administrator'; "
+      "END IF; "
+      "IF NOT has_schema_privilege(current_user, 'deckkernel_cache', 'USAGE') OR "
+      "NOT has_table_privilege(current_user, 'deckkernel_cache.scryfall_images', 'SELECT') OR "
+      "NOT has_table_privilege(current_user, 'deckkernel_cache.scryfall_images', 'INSERT') OR "
+      "NOT has_table_privilege(current_user, 'deckkernel_cache.scryfall_images', 'UPDATE') OR "
+      "NOT has_table_privilege(current_user, 'deckkernel_cache.scryfall_images', 'DELETE') THEN "
+      "RAISE EXCEPTION 'Insufficient permissions for persistent image cache; "
+      "run test/postgresql_sspi_setup.sql as PostgreSQL administrator'; "
+      "END IF; "
+      "END $cache$");
    // One-time and idempotent migration from the earlier persistent model assets.
    // Perform before dropping any model tables, so existing images survive.
    aDatabase.ExecuteCommand(

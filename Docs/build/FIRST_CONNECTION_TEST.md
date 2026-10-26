@@ -265,9 +265,10 @@ After the normal Store phase, `scryfall_image_assets` is populated with
 deduplicated artwork URLs. Its `image_data bytea` stores original JPEG bytes,
 with SHA-256 and source URL; `scryfall_image_features` is reserved for the
 feature extractor, versioned with `algorithm` and `algorithm_version`.
-These two image tables are deliberately **persistent across FirstConnection
-runs**, unlike the lesson's other tables. The image step uses libcurl and libpq
-binary parameters, not text-encoded image SQL.
+The model image tables are **disposable**: FirstConnection rebuilds them
+and repopulates image bytes from the permanent URL cache in
+\`deckkernel_cache.scryfall_images\`. Only the latter survives model rebuilds.
+The image step uses libcurl and libpq binary parameters, not text-encoded image SQL.
 
 `DECKKERNEL_IMAGE_LIMIT` controls new image downloads per run. The default
 is **100** for a bounded first test; set **0** to process every pending image.
@@ -282,6 +283,13 @@ verified the new import or scanner paths.**
 
 
 ### Permanent URL cache and resettable image model
+
+Before the first run, execute `test/postgresql_sspi_setup.sql` as PostgreSQL
+administrator, following [PostgreSQL setup](../preparation/POSTGRESQL_SETUP.md).
+This creates and grants ownership of the permanent image cache. A normal
+FirstConnection login intentionally does **not** need database-level
+`CREATE` privileges, and never attempts `CREATE SCHEMA`.
+
 
 Two PostgreSQL schemas now have different lifecycles. The durable **`deckkernel_cache.scryfall_images`** table is keyed by the exact source URL and stores the untouched binary bytes, SHA-256, media type and cache time. It must **never be dropped** by FirstConnection. The old `scryfall_image_assets` records are migrated into it automatically before the legacy model table is reset. If the entire database is dropped, a separate backup of `deckkernel_cache` is required to preserve these bytes.
 

@@ -44,6 +44,27 @@ ALTER SCHEMA deckkernel_cache OWNER TO deckkernel_user;
 GRANT USAGE, CREATE ON SCHEMA deckkernel_test TO deckkernel_user;
 GRANT USAGE, CREATE ON SCHEMA deckkernel_cache TO deckkernel_user;
 
+-- Cache provisioning is performed by the administrator ONCE; the FirstConnection
+-- application deliberately has no CREATE privilege on database "DeckKernel".
+-- Preserve the URL-keyed original image blobs across model-table rebuilds.
+CREATE TABLE IF NOT EXISTS deckkernel_cache.scryfall_images (
+   url text PRIMARY KEY,
+   image_data bytea NOT NULL,
+   sha256 text NOT NULL CHECK (length(sha256) = 64),
+   media_type text NOT NULL,
+   cached_at timestamptz NOT NULL DEFAULT now(),
+   CHECK (octet_length(image_data) > 0)
+);
+
+-- A previous setup may have created this table as postgres. Correct ownership
+-- without dropping or truncating existing cache entries.
+ALTER TABLE deckkernel_cache.scryfall_images OWNER TO deckkernel_user;
+
+GRANT SELECT, INSERT, UPDATE, DELETE
+   ON TABLE deckkernel_cache.scryfall_images TO deckkernel_user;
+
+
+
 
 -- Existing test tables may have been created earlier by an administrator.
 -- Transfer them to the functional-test role so CREATE INDEX, TRUNCATE and
@@ -59,3 +80,19 @@ BEGIN
    END IF;
 END
 $do$;
+
+-- Optional diagnostic: schema/table owners and access rights.
+SELECT n.nspname AS schema_name,
+       pg_get_userbyid(n.nspowner) AS schema_owner,
+       has_schema_privilege('deckkernel_user', n.oid, 'USAGE') AS can_use
+FROM pg_namespace n WHERE n.nspname = 'deckkernel_cache';
+
+SELECT c.relname AS table_name,
+       pg_get_userbyid(c.relowner) AS table_owner,
+       has_table_privilege('deckkernel_user', c.oid, 'SELECT') AS can_read,
+       has_table_privilege('deckkernel_user', c.oid, 'INSERT') AS can_insert,
+       has_table_privilege('deckkernel_user', c.oid, 'UPDATE') AS can_update,
+       has_table_privilege('deckkernel_user', c.oid, 'DELETE') AS can_delete
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'deckkernel_cache' AND c.relname = 'scryfall_images';
