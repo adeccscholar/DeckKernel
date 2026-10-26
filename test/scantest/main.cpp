@@ -3,7 +3,7 @@
 /**
 \file main.cpp
 \brief Compute versioned OpenCV image descriptors for Scryfall artwork stored by FirstConnection.
-\details One scan benchmark pass processes image assets lacking versioned descriptors.
+\details Index all pending stored images in bounded batches; optional follow mode picks up new imports.
 */
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
@@ -114,6 +114,7 @@ int main(int argc,char** argv) {
       for(int i=1;i<argc;++i) {
          std::string_view const arg(argv[i]);
          if(arg=="--follow")follow=true;
+         else if(arg=="--all"){limit=0;explicitLimit=true;}
          else if(arg.starts_with("--batch-size="))
             batchSize=ParseUnsigned(arg.substr(13),"--batch-size");
          else if(arg.starts_with("--limit=")) {
@@ -124,10 +125,11 @@ int main(int argc,char** argv) {
             pollSeconds=ParseUnsigned(arg.substr(15),"--poll-seconds");
          else if(arg=="--help") {
             std::println("deckkernel_card_scantest [--follow] [--batch-size=32] "
-               "[--limit=N] [--poll-seconds=5]");
+               "[--all|--limit=N] [--poll-seconds=5]");
             std::println("  --follow: index newly downloaded images without restarting "
                "the Scryfall importer (Ctrl+C to stop)");
-            std::println("  --limit=0: unlimited, otherwise total images in this run");
+            std::println("  --all or --limit=0: index all pending images (default)");
+            std::println("  --limit=N: opt-in cap on successfully processed images");
             return 0;
          }
          else throw std::runtime_error("unknown scan option; use --help");
@@ -135,7 +137,7 @@ int main(int argc,char** argv) {
       if(batchSize==0||batchSize>256||pollSeconds==0||pollSeconds>300)
          throw std::runtime_error("batch size must be 1..256, poll seconds 1..300");
       if(!explicitLimit)
-         limit=ParseUnsigned(Env("DECKKERNEL_SCAN_INDEX_LIMIT",follow?"0":"100"),
+         limit=ParseUnsigned(Env("DECKKERNEL_SCAN_INDEX_LIMIT","0"),
             "DECKKERNEL_SCAN_INDEX_LIMIT");
 
       connection_ty aConn=Connect();
@@ -144,7 +146,7 @@ int main(int argc,char** argv) {
       std::uint64_t lastId=0;
       unsigned passes=0;
       std::println("[SCAN-INDEX] mode={} batch={} limit={} poll={}s",
-         follow?"follow":"once",batchSize,limit,pollSeconds);
+         follow?"follow":"once",batchSize,limit?std::to_string(limit):"ALL",pollSeconds);
       for(;;) {
          // Keyset pagination avoids repeatedly fetching the entire table and
          // respects already committed features from previous processes.
