@@ -311,3 +311,12 @@ Scryfall's API guidance asks clients not to exceed ten API requests per second. 
 ### PostgreSQL SQL adapter compatibility
 
 FirstConnection performs schema preflight checks using ordinary scalar `SELECT CASE ... END` queries through `ExecuteOne<int>`. It deliberately does not submit PostgreSQL dollar-quoted `DO $tag$ ... $tag$` blocks to the framework's named-parameter translator, which rejects that syntax before execution. Existing model image bytes are migrated into the persistent cache with an ordinary `INSERT ... SELECT ... ON CONFLICT DO NOTHING` only when the previous model table exists. PostgreSQL administrative setup scripts may still use native `DO` blocks because they are executed directly through `psql`/pgAdmin, outside the application translator.
+
+
+### Image persistence consistency (cache-first)
+
+FirstConnection first restores **all** URLs already present in `deckkernel_cache.scryfall_images` into the resettable `deckkernel_test.scryfall_image_assets` table with one set-based `UPDATE ... FROM`; this step performs **no HTTP request** and is not limited by `DECKKERNEL_IMAGE_LIMIT`.
+
+For a remaining model URL, the importer checks the persistent on-disk image cache and only then makes a rate-limited Scryfall image request if the local disk copy is missing. A newly acquired image is written in **one PostgreSQL transaction** by (1) `INSERT ... ON CONFLICT DO NOTHING` into the durable URL-keyed cache and (2) `INSERT ... SELECT ... ON CONFLICT DO UPDATE` into the disposable model. The model upsert copies the binary payload directly from the database cache. If either write fails, both database changes are rolled back. The model's existing `image_kind`, `illustration_id`, and card/face/variant links remain unchanged. Re-running the test with cached URLs does not redownload their images.
+
+The limit `DECKKERNEL_IMAGE_LIMIT` counts only missing model image URLs considered for this pass; an empty durable cache and disk cache will still require an initial download of those images. This mechanism has not yet been verified with a native Windows BCC64X runtime and PostgreSQL test execution.
