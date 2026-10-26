@@ -353,3 +353,16 @@ The program performs **Connect → PostgreSQL cache restoration → disk cache l
 Temporary network and HTTP 429/500/502/503/504 errors are retried with exponential backoff and support for HTTP `Retry-After`. A URL that exhausts its retry allowance is recorded as failed while the importer continues; the process exits nonzero at the end if any URLs failed, so a later run can retry them. TLS certificate and local database/storage errors stop the process immediately; TLS verification stays enabled. During a long outage the retries may delay progress substantially. Use `--image-probe` for a one-image diagnostic and `--images-offline` for a strictly network-free recovery.
 
 **Safety:** The no-argument default has intentionally changed from `--all` to `--images-only` so an ordinary start cannot erase the already imported model. A complete model rebuild is now opt-in with `--all`.
+
+
+### Image-import performance profiling (October 2026)
+
+The importer previously enforced a fixed 250 ms minimum interval between image-request starts, limiting it to at most four HTTP requests per second before network, filesystem and database overhead. At 3.2 million missing image URLs that alone implies roughly 222 hours of request-start pacing. A 300-hour estimate is therefore not evidence that PostgreSQL is the primary bottleneck.
+
+The interval is now adjustable through `DECKKERNEL_IMAGE_INTERVAL_MS` (integer, 100–60000; default **250**). The default remains conservative. Changes affect **only newly started processes** and require no card import. Raise request rate cautiously and honor 429/503 and Retry-After. A useful first diagnostic is the existing 250 ms rate rather than a blind throughput increase.
+
+Every 100 processed images, `[IMAGE-PERF]` now reports accumulated HTTPS transfer time and effective Mbit/s, PostgreSQL write/commit time and average ms/image, disk-cache lookup/write time, throttle waiting, retry waiting and received MiB. These timers are sequential stage measurements, not independent wall-clock percentages; HTTPS elapsed time includes transfers, TLS and latency. The aggregate download rate uses transferred image payload bytes, not the physical network interface counter. The ETA remains an approximation and will vary with image sizes, HTTP latency, cache hits and retries.
+
+The two previous PostgreSQL statements plus explicit BEGIN/COMMIT are replaced by **one atomic SQL statement** with a writable CTE. It inserts the original bytes into `deckkernel_cache.scryfall_images` if missing and upserts the model image from the same authoritative cache data. Both effects commit together or neither does. The statement uses `INSERT ... RETURNING` to access newly inserted rows without a second table read in the same statement snapshot. This reduces client/server round-trips and synchronous commits per new image; it is **not** a guarantee of a proportional overall throughput increase, because the HTTP pacing may dominate.
+
+The on-disk image cache, database keys, image bytes, existing cache, and default `--images-only` resumability are unchanged. **Do not restart an already-running overnight importer just for these instrumentation changes**: finish or safely interrupt it first; the next run will reuse its committed image data. These improvements still require native BCC64X compilation and validation on the intended database.
