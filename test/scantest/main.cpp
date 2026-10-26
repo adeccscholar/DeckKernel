@@ -12,10 +12,14 @@
 #include <libpq-fe.h>
 #include <array>
 #include <charconv>
+#include <chrono>
+#include <thread>
+#include <string_view>
 #include <cstdlib>
 #include <format>
 #include <iostream>
 #include <memory>
+#include <limits>
 #include <print>
 #include <stdexcept>
 #include <string>
@@ -91,52 +95,127 @@ void Store(PGconn* pConn,std::string const& strId,std::string const& strHash,
       throw std::runtime_error("PostgreSQL image feature write failed");
 }
 }
-int main() {
+unsigned ParseUnsigned(std::string_view value,char const* field) {
+   unsigned number{};
+   auto const result=std::from_chars(value.data(),value.data()+value.size(),number);
+   if(result.ec!=std::errc{}||result.ptr!=value.data()+value.size())
+      throw std::runtime_error(std::string("invalid ")+field);
+   return number;
+}
+
+int main(int argc,char** argv) {
    try {
+      // This is an independent PROCESS; it can run concurrently with
+      // FirstConnection's image importer without touching the download cache.
+      bool follow=false;
+      unsigned batchSize=32,limit=0,pollSeconds=5;
+      bool explicitLimit=false;
+      for(int i=1;i<argc;++i) {
+         std::string_view const arg(argv[i]);
+         if(arg=="--follow")follow=true;
+         else if(arg.starts_with("--batch-size="))
+            batchSize=ParseUnsigned(arg.substr(13),"--batch-size");
+         else if(arg.starts_with("--limit=")) {
+            limit=ParseUnsigned(arg.substr(8),"--limit");
+            explicitLimit=true;
+         }
+         else if(arg.starts_with("--poll-seconds="))
+            pollSeconds=ParseUnsigned(arg.substr(15),"--poll-seconds");
+         else if(arg=="--help") {
+            std::println("deckkernel_card_scantest [--follow] [--batch-size=32] "
+               "[--limit=N] [--poll-seconds=5]");
+            std::println("  --follow: index newly downloaded images without restarting "
+               "the Scryfall importer (Ctrl+C to stop)");
+            std::println("  --limit=0: unlimited, otherwise total images in this run");
+            return 0;
+         }
+         else throw std::runtime_error("unknown scan option; use --help");
+      }
+      if(batchSize==0||batchSize>256||pollSeconds==0||pollSeconds>300)
+         throw std::runtime_error("batch size must be 1..256, poll seconds 1..300");
+      if(!explicitLimit)
+         limit=ParseUnsigned(Env("DECKKERNEL_SCAN_INDEX_LIMIT",follow?"0":"100"),
+            "DECKKERNEL_SCAN_INDEX_LIMIT");
+
       connection_ty aConn=Connect();
-      std::string strLimit=Env("DECKKERNEL_SCAN_INDEX_LIMIT","100");
-      unsigned uLimit{};
-      auto aNumber=std::from_chars(strLimit.data(),strLimit.data()+strLimit.size(),uLimit);
-      if(aNumber.ec!=std::errc{}||aNumber.ptr!=strLimit.data()+strLimit.size()||uLimit>1000000)
-         throw std::runtime_error("invalid DECKKERNEL_SCAN_INDEX_LIMIT");
-      std::string strSql=
-         "SELECT a.id::text, a.image_data FROM deckkernel_test.scryfall_image_assets a "
-         "LEFT JOIN deckkernel_test.scryfall_image_features f ON a.id=f.asset_id "
-         "WHERE a.image_data IS NOT NULL AND "
-         "(f.asset_id IS NULL OR f.algorithm<>'dhash64-orb' OR f.algorithm_version<>1) "
-         "ORDER BY a.id"+(uLimit?std::format(" LIMIT {}",uLimit):std::string{});
-      result_ty aRows(PQexec(aConn.get(),strSql.c_str()));
-      if(!aRows||PQresultStatus(aRows.get())!=PGRES_TUPLES_OK)
-         throw std::runtime_error("PostgreSQL feature source query failed");
       cv::Ptr<cv::ORB> aOrb=cv::ORB::create(500);
-      std::size_t uPass{},uFail{};
-      for(int i=0;i<PQntuples(aRows.get());++i) {
-         try {
-            std::string const strId=PQgetvalue(aRows.get(),i,0);
-            std::size_t uSize{};
-            std::unique_ptr<unsigned char,void(*)(void*)> aBytes(
-               PQunescapeBytea(reinterpret_cast<unsigned char const*>(PQgetvalue(aRows.get(),i,1)),&uSize),
-               [](void* p){if(p) PQfreemem(p);});
-            if(!aBytes||!uSize) throw std::runtime_error("empty bytea image");
-            cv::Mat aEncoded(1,static_cast<int>(uSize),CV_8UC1,aBytes.get());
-            cv::Mat aImage=cv::imdecode(aEncoded,cv::IMREAD_COLOR);
-            if(aImage.empty()) throw std::runtime_error("OpenCV cannot decode stored image");
-            std::string const strHash=DHash(aImage);
-            std::vector<cv::KeyPoint> vecKeypoints;
-            cv::Mat aDescriptors;
-            aOrb->detectAndCompute(aImage,cv::noArray(),vecKeypoints,aDescriptors);
-            Store(aConn.get(),strId,strHash,aDescriptors,static_cast<int>(vecKeypoints.size()));
-            ++uPass;
+      std::size_t indexed=0,failed=0;
+      std::uint64_t lastId=0;
+      unsigned passes=0;
+      std::println("[SCAN-INDEX] mode={} batch={} limit={} poll={}s",
+         follow?"follow":"once",batchSize,limit,pollSeconds);
+      for(;;) {
+         // Keyset pagination avoids repeatedly fetching the entire table and
+         // respects already committed features from previous processes.
+         unsigned const request=limit?
+            std::min<unsigned>(batchSize,
+               static_cast<unsigned>(std::min<std::size_t>(
+                  static_cast<std::size_t>(limit)-indexed,batchSize))):batchSize;
+         if(request==0)break;
+         std::string const sql=std::format(
+            "SELECT a.id::text, a.image_data "
+            "FROM deckkernel_test.scryfall_image_assets a "
+            "LEFT JOIN deckkernel_test.scryfall_image_features f ON f.asset_id=a.id "
+            "WHERE a.id > {} AND a.image_data IS NOT NULL AND "
+            "(f.asset_id IS NULL OR f.algorithm<>'dhash64-orb' OR f.algorithm_version<>1) "
+            "ORDER BY a.id LIMIT {}",lastId,request);
+         result_ty rows(PQexec(aConn.get(),sql.c_str()));
+         if(!rows||PQresultStatus(rows.get())!=PGRES_TUPLES_OK)
+            throw std::runtime_error(std::string("PostgreSQL feature query failed: ")+
+               PQerrorMessage(aConn.get()));
+         int const n=PQntuples(rows.get());
+         if(!n) {
+            if(!follow)break;
+            lastId=0; // start next sweep, including assets committed meanwhile
+            ++passes;
+            std::println("[SCAN-INDEX] idle: indexed={} failed={} sweep={}; "
+               "polling in {}s",indexed,failed,passes,pollSeconds);
+            rows.reset(); // free PostgreSQL batch before sleeping
+            std::this_thread::sleep_for(std::chrono::seconds(pollSeconds));
+            continue;
          }
-         catch(std::exception const& ex) {
-            ++uFail;
-            std::println(std::cerr,"[SCAN-INDEX] FAIL: {}",ex.what());
+         for(int i=0;i<n;++i) {
+            auto const idText=std::string(PQgetvalue(rows.get(),i,0));
+            std::uint64_t id{};
+            auto const parsed=std::from_chars(idText.data(),
+               idText.data()+idText.size(),id);
+            if(parsed.ec!=std::errc{}||parsed.ptr!=idText.data()+idText.size())
+               throw std::runtime_error("invalid image id returned by PostgreSQL");
+            lastId=id;
+            try {
+               std::size_t size{};
+               std::unique_ptr<unsigned char,void(*)(void*)> bytes(
+                  PQunescapeBytea(reinterpret_cast<unsigned char const*>(
+                     PQgetvalue(rows.get(),i,1)),&size),
+                  [](void* p){if(p)PQfreemem(p);});
+               if(!bytes||!size)throw std::runtime_error("empty bytea image");
+               if(size>static_cast<std::size_t>(std::numeric_limits<int>::max()))
+                  throw std::runtime_error("image exceeds OpenCV input bounds");
+               cv::Mat encoded(1,static_cast<int>(size),CV_8UC1,bytes.get());
+               cv::Mat image=cv::imdecode(encoded,cv::IMREAD_COLOR);
+               if(image.empty())throw std::runtime_error("OpenCV cannot decode image");
+               std::string const hash=DHash(image);
+               std::vector<cv::KeyPoint> keypoints;
+               cv::Mat descriptors;
+               aOrb->detectAndCompute(image,cv::noArray(),keypoints,descriptors);
+               Store(aConn.get(),idText,hash,descriptors,
+                  static_cast<int>(keypoints.size()));
+               ++indexed;
+            } catch(std::exception const& ex) {
+               ++failed;
+               std::println(std::cerr,"[SCAN-INDEX] asset={} failed: {}",
+                  idText,ex.what());
+            }
          }
+         std::println("[SCAN-INDEX] batch complete: total={} failed={} last-id={}",
+            indexed,failed,lastId);
+         if(limit&&indexed>=limit)break;
       }
       std::println("SMOKE|CHECK|feature-index|{}|indexed={},failed={}",
-         uFail?"FAIL":"PASS",uPass,uFail);
-      std::println("SMOKE|RESULT|{}|DeckKernel artwork feature indexing",uFail?"FAIL":"PASS");
-      return uFail?1:0;
+         failed?"FAIL":"PASS",indexed,failed);
+      std::println("SMOKE|RESULT|{}|DeckKernel artwork feature indexing",
+         failed?"FAIL":"PASS");
+      return failed?1:0;
    }
    catch(std::exception const& ex) {
       std::println(std::cerr,"[SCAN-INDEX] {}",ex.what());
