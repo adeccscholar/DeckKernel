@@ -76,8 +76,8 @@ SELECT current_database();
 
 Only then execute the file as a PostgreSQL administrator in pgAdmin or `psql`.
 The script contains its own guard and aborts if it is run against another database.
-The script sets up **both** the disposable model schema \`deckkernel_test\`
-and the permanent image cache schema \`deckkernel_cache\`. The cache table is
+The script sets up **both** the disposable model schema `deckkernel_test`
+and the permanent image cache schema `deckkernel_cache`. The cache table is
 created here, **not from FirstConnection**. The relevant cache portion is:
 
 ```sql
@@ -102,24 +102,24 @@ GRANT SELECT, INSERT, UPDATE, DELETE
 ```
 
 Run the complete checked-in SQL file from the DeckKernel repository root,
-as a PostgreSQL administrator while connected to database \`DeckKernel\`:
+as a PostgreSQL administrator while connected to database `DeckKernel`:
 
 ```cmd
 psql -U postgres -d DeckKernel -v ON_ERROR_STOP=1 -f test/postgresql_sspi_setup.sql
 ```
 
 Alternatively, execute the same SQL file in pgAdmin's Query Tool using
-an administrative connection to \`DeckKernel\`.
+an administrative connection to `DeckKernel`.
 
 The file is **idempotent** for the existing cache: it creates missing schema
 and table objects, repairs ownership, and grants the necessary rights without
 deleting image bytes or replacing their URL keys.
 
-**Do not grant database-wide \`CREATE\` to \`deckkernel_user\`.** PostgreSQL
-requires that privilege even for \`CREATE SCHEMA IF NOT EXISTS\`. FirstConnection
+**Do not grant database-wide `CREATE` to `deckkernel_user`.** PostgreSQL
+requires that privilege even for `CREATE SCHEMA IF NOT EXISTS`. FirstConnection
 now checks the pre-existing cache schema and table and fails with a setup
 instruction if they are missing or not accessible. It does not execute any
-\`CREATE SCHEMA\` or \`CREATE TABLE\` statements in \`deckkernel_cache\`.
+`CREATE SCHEMA` or `CREATE TABLE` statements in `deckkernel_cache`.
 
 The `$do$ ... $do$` pairs are PostgreSQL dollar-quote delimiters. Both delimiters are
 required; a single `$` is not valid syntax.
