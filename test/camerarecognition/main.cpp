@@ -5,6 +5,12 @@
     \details No Scryfall requests, no database access, no physical edition
              identification. Image evidence is optional and local.
 */
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <Windows.h>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
