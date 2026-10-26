@@ -147,51 +147,89 @@ std::size_t ReceiveHeader(char* pData,std::size_t uSize,std::size_t uCount,
    return uBytes;
 }
 
-std::vector<unsigned char> DownloadImage(std::string const& strUrl) {
-   if(!strUrl.starts_with("https://cards.scryfall.io/"))
-      throw std::runtime_error("unapproved Scryfall image host");
-   curl_handle_ty aCurl(curl_easy_init());
-   if(!aCurl) throw std::runtime_error("curl_easy_init failed");
-   std::vector<unsigned char> vecData;
-   ImageResponseHeaders aHeaders;
-   std::array<char,CURL_ERROR_SIZE> arrError{};
-   curl_easy_setopt(aCurl.get(),CURLOPT_ERRORBUFFER,arrError.data());
-   curl_easy_setopt(aCurl.get(),CURLOPT_URL,strUrl.c_str());
-   curl_easy_setopt(aCurl.get(),CURLOPT_FOLLOWLOCATION,0L);
-   curl_easy_setopt(aCurl.get(),CURLOPT_FAILONERROR,1L);
-   curl_easy_setopt(aCurl.get(),CURLOPT_TIMEOUT,45L);
-   curl_easy_setopt(aCurl.get(),CURLOPT_CONNECTTIMEOUT,10L);
-   curl_easy_setopt(aCurl.get(),CURLOPT_SSL_VERIFYPEER,1L);
-   curl_easy_setopt(aCurl.get(),CURLOPT_SSL_VERIFYHOST,2L);
-   curl_easy_setopt(aCurl.get(),CURLOPT_SSLVERSION,CURL_SSLVERSION_TLSv1_2);
+/** \brief Reusable libcurl easy handle for the complete sequential import.
+    \details Keeping the handle alive enables HTTP keep-alive, connection
+    reuse, and TLS session caching. Callback buffers are owned by this class.
+*/
+class ImageHttpClient final {
+   curl_handle_ty m_upCurl { curl_easy_init() };
+   std::string m_strCaBundle=Env("DECKKERNEL_CURL_CA_BUNDLE","");
+   std::vector<unsigned char> m_vecData;
+   ImageResponseHeaders m_aHeaders;
+   std::array<char,CURL_ERROR_SIZE> m_arrError{};
+
+public:
+   ImageHttpClient() {
+      if(!m_upCurl) throw std::runtime_error("curl_easy_init failed");
+      if(!m_strCaBundle.empty() &&
+         !std::filesystem::is_regular_file(m_strCaBundle))
+         throw std::runtime_error(
+            "DECKKERNEL_CURL_CA_BUNDLE points to a missing file");
+      CURL* const pCurl=m_upCurl.get();
+      curl_easy_setopt(pCurl,CURLOPT_ERRORBUFFER,m_arrError.data());
+      curl_easy_setopt(pCurl,CURLOPT_FOLLOWLOCATION,0L);
+      curl_easy_setopt(pCurl,CURLOPT_FAILONERROR,1L);
+      curl_easy_setopt(pCurl,CURLOPT_TIMEOUT,45L);
+      curl_easy_setopt(pCurl,CURLOPT_CONNECTTIMEOUT,10L);
+      curl_easy_setopt(pCurl,CURLOPT_SSL_VERIFYPEER,1L);
+      curl_easy_setopt(pCurl,CURLOPT_SSL_VERIFYHOST,2L);
+      curl_easy_setopt(pCurl,CURLOPT_SSLVERSION,CURL_SSLVERSION_TLSv1_2);
 #if defined(CURLSSLOPT_NATIVE_CA)
-   // Match the working Scryfall bulk downloader: use Windows trusted roots.
-   curl_easy_setopt(aCurl.get(),CURLOPT_SSL_OPTIONS,static_cast<long>(CURLSSLOPT_NATIVE_CA));
+      curl_easy_setopt(pCurl,CURLOPT_SSL_OPTIONS,
+         static_cast<long>(CURLSSLOPT_NATIVE_CA));
 #endif
-   // Optional explicit CA bundle for OpenSSL deployments with no native trust.
-   std::string const strCaBundle=Env("DECKKERNEL_CURL_CA_BUNDLE","");
-   if(!strCaBundle.empty()) {
-      if(!std::filesystem::is_regular_file(strCaBundle))
-         throw std::runtime_error("DECKKERNEL_CURL_CA_BUNDLE points to a missing file");
-      curl_easy_setopt(aCurl.get(),CURLOPT_CAINFO,strCaBundle.c_str());
+      if(!m_strCaBundle.empty())
+         curl_easy_setopt(pCurl,CURLOPT_CAINFO,m_strCaBundle.c_str());
+      curl_easy_setopt(pCurl,CURLOPT_PROTOCOLS_STR,"https");
+      curl_easy_setopt(pCurl,CURLOPT_REDIR_PROTOCOLS_STR,"https");
+      curl_easy_setopt(pCurl,CURLOPT_USERAGENT,
+         "adecc-DeckKernel/0.1 (+https://github.com/adeccscholar/DeckKernel)");
+      curl_easy_setopt(pCurl,CURLOPT_TCP_KEEPALIVE,1L);
+      curl_easy_setopt(pCurl,CURLOPT_FRESH_CONNECT,0L);
+      curl_easy_setopt(pCurl,CURLOPT_FORBID_REUSE,0L);
+      curl_easy_setopt(pCurl,CURLOPT_WRITEFUNCTION,&Receive);
+      curl_easy_setopt(pCurl,CURLOPT_WRITEDATA,&m_vecData);
+      curl_easy_setopt(pCurl,CURLOPT_HEADERFUNCTION,&ReceiveHeader);
+      curl_easy_setopt(pCurl,CURLOPT_HEADERDATA,&m_aHeaders);
    }
-   curl_easy_setopt(aCurl.get(),CURLOPT_PROTOCOLS_STR,"https");
-   curl_easy_setopt(aCurl.get(),CURLOPT_REDIR_PROTOCOLS_STR,"https");
-   curl_easy_setopt(aCurl.get(),CURLOPT_USERAGENT,"adecc-DeckKernel/0.1 (+https://github.com/adeccscholar/DeckKernel)");
-   curl_easy_setopt(aCurl.get(),CURLOPT_WRITEFUNCTION,&Receive);
-   curl_easy_setopt(aCurl.get(),CURLOPT_WRITEDATA,&vecData);
-   curl_easy_setopt(aCurl.get(),CURLOPT_HEADERFUNCTION,&ReceiveHeader);
-   curl_easy_setopt(aCurl.get(),CURLOPT_HEADERDATA,&aHeaders);
-   CURLcode const eCode=curl_easy_perform(aCurl.get());
-   long iHttpStatus{};
-   curl_easy_getinfo(aCurl.get(),CURLINFO_RESPONSE_CODE,&iHttpStatus);
-   if(eCode!=CURLE_OK)
-      throw ImageDownloadError(eCode,iHttpStatus,aHeaders.aRetryAfter,std::format(
-         "image HTTPS failed (curl={}, HTTP={}): {}",static_cast<int>(eCode),iHttpStatus,
-         arrError[0]?arrError.data():curl_easy_strerror(eCode)));
-   if(vecData.empty()) throw std::runtime_error("image server returned an empty body");
-   return vecData;
-}
+
+   ImageHttpClient(ImageHttpClient const&)=delete;
+   ImageHttpClient& operator=(ImageHttpClient const&)=delete;
+
+   struct Response final {
+      std::vector<unsigned char> vecBytes;
+      long iNewConnections{};
+      double flDns{},flTcp{},flTls{},flFirstByte{};
+   };
+
+   [[nodiscard]] Response Download(std::string const& strUrl) {
+      if(!strUrl.starts_with("https://cards.scryfall.io/"))
+         throw std::runtime_error("unapproved Scryfall image host");
+      m_vecData.clear();
+      m_aHeaders={};
+      m_arrError.fill('\0');
+      CURL* const pCurl=m_upCurl.get();
+      curl_easy_setopt(pCurl,CURLOPT_URL,strUrl.c_str());
+      CURLcode const eCode=curl_easy_perform(pCurl);
+      long iHttpStatus{};
+      curl_easy_getinfo(pCurl,CURLINFO_RESPONSE_CODE,&iHttpStatus);
+      if(eCode!=CURLE_OK)
+         throw ImageDownloadError(eCode,iHttpStatus,m_aHeaders.aRetryAfter,
+            std::format("image HTTPS failed (curl={}, HTTP={}): {}",
+               static_cast<int>(eCode),iHttpStatus,
+               m_arrError[0]?m_arrError.data():curl_easy_strerror(eCode)));
+      if(m_vecData.empty())
+         throw std::runtime_error("image server returned an empty body");
+      Response aResult;
+      curl_easy_getinfo(pCurl,CURLINFO_NUM_CONNECTS,&aResult.iNewConnections);
+      curl_easy_getinfo(pCurl,CURLINFO_NAMELOOKUP_TIME,&aResult.flDns);
+      curl_easy_getinfo(pCurl,CURLINFO_CONNECT_TIME,&aResult.flTcp);
+      curl_easy_getinfo(pCurl,CURLINFO_APPCONNECT_TIME,&aResult.flTls);
+      curl_easy_getinfo(pCurl,CURLINFO_STARTTRANSFER_TIME,&aResult.flFirstByte);
+      aResult.vecBytes=std::move(m_vecData);
+      return aResult;
+   }
+};
 
 std::string Sha256(std::vector<unsigned char> const& vecData) {
    std::array<unsigned char,EVP_MAX_MD_SIZE> arrDigest{};
@@ -289,6 +327,8 @@ struct ImageImportMetrics final {
    double flThrottleSeconds{};
    double flRetrySeconds{};
    std::uint64_t uHttpBytes{};
+   std::uint64_t uNewConnections{},uCacheDeleted{};
+   double flDnsSeconds{},flTcpSeconds{},flTlsSeconds{},flFirstByteSeconds{};
 };
 
 void ImportImages(postgres_database_ty const& aDatabase,
@@ -347,6 +387,8 @@ void ImportImages(postgres_database_ty const& aDatabase,
       bool bInitialized;
       ~CurlCleanup(){if(bInitialized)curl_global_cleanup();}
    } aCurlCleanup{aOptions.bAllowNetwork};
+   std::unique_ptr<ImageHttpClient> upHttp;
+   if(aOptions.bAllowNetwork) upHttp=std::make_unique<ImageHttpClient>();
    if(aOptions.bAllowNetwork) {
       curl_version_info_data const* pInfo=curl_version_info(CURLVERSION_NOW);
       std::println("[IMAGE-TLS] backend={}, native CA requested when supported; "
@@ -363,7 +405,6 @@ void ImportImages(postgres_database_ty const& aDatabase,
    };
    auto aNextRequest=std::chrono::steady_clock::now();
    auto const aStarted=std::chrono::steady_clock::now();
-   constexpr int iPageSize=512;
 
    // Keyset pagination: keep only 512 URL rows in memory at once, not the
    // potentially million-row catalog. Failed IDs are skipped until a future run.
@@ -409,12 +450,26 @@ void ImportImages(postgres_database_ty const& aDatabase,
                   aNextRequest=std::chrono::steady_clock::now()+aInterval;
                   auto const aHttpStarted=std::chrono::steady_clock::now();
                   try {
-                     auto vecDownloaded=DownloadImage(strUrl);
+                     auto aResponse=upHttp->Download(strUrl);
                      aMetrics.flHttpSeconds+=fnSeconds(aHttpStarted);
-                     aMetrics.uHttpBytes+=vecDownloaded.size();
-                     auto const aDiskWriteStarted=std::chrono::steady_clock::now();
-                     optCached=aCache.Store(strUrl,vecDownloaded);
-                     aMetrics.flDiskWriteSeconds+=fnSeconds(aDiskWriteStarted);
+                     aMetrics.uHttpBytes+=aResponse.vecBytes.size();
+                     aMetrics.uNewConnections+=
+                        static_cast<std::uint64_t>(aResponse.iNewConnections);
+                     aMetrics.flDnsSeconds+=aResponse.flDns;
+                     aMetrics.flTcpSeconds+=aResponse.flTcp;
+                     aMetrics.flTlsSeconds+=aResponse.flTls;
+                     aMetrics.flFirstByteSeconds+=aResponse.flFirstByte;
+                     // Do not write new images to disk on the success path.
+                     // Keep bytes in memory until both PostgreSQL schemas commit.
+                     auto optType=deckkernel::scryfall::DetectImageType(
+                        aResponse.vecBytes);
+                     if(!optType) throw std::runtime_error(
+                        "image has an unsupported signature");
+                     deckkernel::scryfall::CachedImage aDownloaded{
+                        std::move(aResponse.vecBytes),{},std::move(*optType)};
+                     aDownloaded.strSha256=deckkernel::scryfall::Sha256(
+                        aDownloaded.vecBytes);
+                     optCached=std::move(aDownloaded);
                      ++uFetched;
                      break;
                   }
@@ -443,9 +498,28 @@ void ImportImages(postgres_database_ty const& aDatabase,
             else ++uDiskHits;
             // Both inserts are one SQL statement and one atomic transaction.
             auto const aDatabaseStarted=std::chrono::steady_clock::now();
-            StoreInCacheAndModel(aConn.get(),strUrl,*optCached);
+            try {
+               StoreInCacheAndModel(aConn.get(),strUrl,*optCached);
+            }
+            catch(...) {
+               // A downloaded image is still available in memory; preserve
+               // it as a recovery copy if PostgreSQL failed. A cache hit
+               // already has its durable local file.
+               if(!aCache.Find(strUrl)) {
+                  try {
+                     static_cast<void>(aCache.Store(strUrl,optCached->vecBytes));
+                  }
+                  catch(...) {
+                     std::println(std::cerr,
+                        "[IMAGE-CACHE] WARNING: recovery file write failed for {}",strUrl);
+                  }
+               }
+               throw;
+            }
             aMetrics.flDatabaseSeconds+=fnSeconds(aDatabaseStarted);
             ++uSaved;
+            if(aCache.RemoveCommitted(strUrl,optCached->strSha256))
+               ++aMetrics.uCacheDeleted;
          }
          catch(ImageDownloadError const& ex) {
             ++uFailed;
@@ -484,12 +558,13 @@ void ImportImages(postgres_database_ty const& aDatabase,
             std::println("[IMAGE-PERF] HTTP={:.1f}s ({:.2f} Mbit/s overall), "
                "PG={:.1f}s ({:.1f} ms/image), disk_read={:.1f}s, "
                "disk_write={:.1f}s, throttle={:.1f}s, retries={:.1f}s, "
-               "received={} MiB",
+               "received={} MiB, new_connections={}, evicted={}",
                aMetrics.flHttpSeconds,flHttpMbitSec,
                aMetrics.flDatabaseSeconds,flDbMsPerImage,
                aMetrics.flDiskLookupSeconds,aMetrics.flDiskWriteSeconds,
                aMetrics.flThrottleSeconds,aMetrics.flRetrySeconds,
-               aMetrics.uHttpBytes/(1024*1024));
+               aMetrics.uHttpBytes/(1024*1024),
+               aMetrics.uNewConnections,aMetrics.uCacheDeleted);
          }
       }
    }
@@ -502,11 +577,12 @@ void ImportImages(postgres_database_ty const& aDatabase,
       uStillMissing,aCache.Root().string());
    std::println("[IMAGE-PERF] total: HTTP={:.1f}s, PG={:.1f}s, "
       "disk_read={:.1f}s, disk_write={:.1f}s, throttle={:.1f}s, "
-      "retry_wait={:.1f}s, received={} MiB",
+      "retry_wait={:.1f}s, received={} MiB, new_connections={}, evicted={}",
       aMetrics.flHttpSeconds,aMetrics.flDatabaseSeconds,
       aMetrics.flDiskLookupSeconds,aMetrics.flDiskWriteSeconds,
       aMetrics.flThrottleSeconds,aMetrics.flRetrySeconds,
-      aMetrics.uHttpBytes/(1024*1024));
+      aMetrics.uHttpBytes/(1024*1024),
+      aMetrics.uNewConnections,aMetrics.uCacheDeleted);
    if(uFailed)
       throw std::runtime_error(std::format(
          "{} image URLs could not be downloaded; saved images remain in "
