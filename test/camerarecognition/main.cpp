@@ -110,29 +110,33 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame) {
    cv::warpPerspective(frame,rectified,homography,cv::Size(480,672));
    return FoundCard{rectified,DHash(rectified)};
 }
+// A single uninterrupted card-presence session produces exactly one event.
+// Hash changes (illumination, corner jitter, exposure) MUST NOT be treated as
+// card swaps. A new session is armed only after a sustained empty scene.
 class StableCardTrigger {
    std::optional<hash_ty> m_previous;
-   std::optional<hash_ty> m_reported;
    unsigned m_stable{},m_absent{},m_events{};
-   bool m_ready{true};
+   bool m_armed{true};
 public:
    struct Event {unsigned number;hash_ty fingerprint;cv::Mat card;};
    std::optional<Event> Accept(std::optional<FoundCard> const& found) {
-      if(!found){
-         m_previous.reset();m_stable=0;
-         if(++m_absent>=6)m_ready=true;
+      constexpr unsigned stableFrames=5;
+      constexpr unsigned removalFrames=45; // 1.5 seconds at 30 FPS
+      if(!found) {
+         m_previous.reset();
+         m_stable=0;
+         if(++m_absent>=removalFrames)m_armed=true;
          return std::nullopt;
       }
       m_absent=0;
-      if(m_previous&&std::popcount(*m_previous^found->fingerprint)<=8)++m_stable;
-      else m_stable=1;
+      if(!m_armed)return std::nullopt;
+      if(m_previous && std::popcount(*m_previous^found->fingerprint)<=8)
+         ++m_stable;
+      else
+         m_stable=1;
       m_previous=found->fingerprint;
-      if(m_stable<5)return std::nullopt;
-      if(!m_ready&&m_reported&&
-         std::popcount(*m_reported^found->fingerprint)<=14)
-         return std::nullopt;
-      m_ready=false;
-      m_reported=found->fingerprint;
+      if(m_stable<stableFrames)return std::nullopt;
+      m_armed=false;
       return Event{++m_events,found->fingerprint,found->rectified.clone()};
    }
 };
@@ -171,14 +175,22 @@ class CameraWindow {
          return TRUE;
       }
       auto* self=reinterpret_cast<CameraWindow*>(GetWindowLongPtrW(hwnd,GWLP_USERDATA));
+      if(msg==WM_ERASEBKGND)return 1; // double-buffered WM_PAINT paints all pixels
       if(msg==WM_CLOSE){DestroyWindow(hwnd);return 0;}
       if(msg==WM_DESTROY){if(self)self->m_hwnd=nullptr;return 0;}
       if(msg==WM_PAINT) {
          PAINTSTRUCT ps{};
          HDC dc=BeginPaint(hwnd,&ps);
          RECT rc{};GetClientRect(hwnd,&rc);
-         FillRect(dc,&rc,reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
-         if(self&&!self->m_pixels.empty()&&rc.right>0&&rc.bottom>0) {
+         int const clientWidth=rc.right-rc.left;
+         int const clientHeight=rc.bottom-rc.top;
+         HDC buffer=CreateCompatibleDC(dc);
+         HBITMAP bitmap=(clientWidth>0&&clientHeight>0)?
+            CreateCompatibleBitmap(dc,clientWidth,clientHeight):nullptr;
+         HGDIOBJ oldBitmap=bitmap?SelectObject(buffer,bitmap):nullptr;
+         if(bitmap)
+            FillRect(buffer,&rc,reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+         if(bitmap&&self&&!self->m_pixels.empty()&&clientWidth>0&&clientHeight>0) {
             auto const& img=self->m_pixels;
             double scale=std::min(static_cast<double>(rc.right)/img.cols,
                static_cast<double>(rc.bottom)/img.rows);
@@ -191,10 +203,16 @@ class CameraWindow {
             info.bmiHeader.biPlanes=1;
             info.bmiHeader.biBitCount=32;
             info.bmiHeader.biCompression=BI_RGB;
-            SetStretchBltMode(dc,HALFTONE);
-            StretchDIBits(dc,(rc.right-w)/2,(rc.bottom-h)/2,w,h,
+            SetStretchBltMode(buffer,HALFTONE);
+            StretchDIBits(buffer,(rc.right-w)/2,(rc.bottom-h)/2,w,h,
                0,0,img.cols,img.rows,img.data,&info,DIB_RGB_COLORS,SRCCOPY);
          }
+         if(bitmap) {
+            BitBlt(dc,0,0,clientWidth,clientHeight,buffer,0,0,SRCCOPY);
+            SelectObject(buffer,oldBitmap);
+            DeleteObject(bitmap);
+         }
+         DeleteDC(buffer);
          EndPaint(hwnd,&ps);
          return 0;
       }
@@ -244,10 +262,21 @@ void SelfTest() {
    unsigned events{};
    for(int i=0;i<12;++i)if(processor.Process(card))++events;
    if(events!=1)throw std::runtime_error("first stable card must emit one event");
-   for(int i=0;i<8;++i)processor.Process(blank);
+   // Hash fluctuations with uninterrupted presence are NOT a new card.
+   cv::Mat fluctuating=card.clone();
+   cv::rectangle(fluctuating,cv::Rect(495,205,140,140),
+      cv::Scalar(70,80,90),-1);
+   for(int i=0;i<30;++i)
+      if(processor.Process(i%2?card:fluctuating))++events;
+   if(events!=1)throw std::runtime_error("hash jitter caused duplicate card event");
+   // Short contour dropouts must not count as the card being removed.
+   for(int i=0;i<12;++i)processor.Process(blank);
+   for(int i=0;i<12;++i)if(processor.Process(card))++events;
+   if(events!=1)throw std::runtime_error("brief contour loss caused a duplicate");
+   for(int i=0;i<48;++i)processor.Process(blank);
    for(int i=0;i<12;++i)if(processor.Process(card))++events;
    if(events!=2)throw std::runtime_error("reinserted card must emit second event");
-   std::println("SMOKE|RESULT|PASS|stable card, no duplicates, removal and reentry");
+   std::println("SMOKE|RESULT|PASS|stable event, jitter suppression, short occlusion and reentry");
 }
 
 #if defined(DECKKERNEL_CAMERA_HAS_VIDEOIO)
