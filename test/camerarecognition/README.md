@@ -248,3 +248,30 @@ valid name. OCR accepted as UNVERIFIED is still *not* a card identity.
 This confidence filter cannot recover letters lost to overexposure or
 reflections. Prefer an original photo or a local screenshot over an
 optical recording of a phone display.
+
+## Focus-aware OCR retries and offline artwork candidates
+
+After an initial unreadable title, OCR retries on the still-present card.
+New crops are inspected every 30 frames. An attempt is triggered when
+Laplacian sharpness increases by 10 percent or at 90 frames regardless
+of focus. There are at most eight attempts per card; the same card event
+number is retained. A 45-frame disappearance resets the attempt budget.
+
+The optional --artwork switch operates independently of --ocr and does not
+require the scantest feature index. It directly reads already-downloaded
+art_crop image bytes from deckkernel_test.scryfall_image_assets in
+PostgreSQL, joins card face names and compares the illustration region via
+dHash64. It never downloads images or writes to the database.
+
+    apps\Release\deckkernel_camera_recognition_test.exe --camera=4 --backend=dshow --width=640 --height=480 --fps=30 --fourcc=yuy2 --ocr --artwork --artwork-limit=100
+
+    apps\Release\deckkernel_camera_recognition_test.exe --image=D:\Fotos\karte.jpg --ocr --artwork
+
+The candidate window is deliberately bounded (default 100 stored art
+crops; 1..1000 configurable). Only the first matching asset IDs are
+sampled; the results are NOT an exhaustive catalog match. Reported
+name, asset ID and hamming distance are unverified suggestions, never
+proof of a particular Magic printing. Identical artworks may occur in
+multiple editions. The first matcher is synchronous at a new-card event
+and may momentarily slow camera preview; a future iteration should
+separate the image matching from capture and use ORB verification.
