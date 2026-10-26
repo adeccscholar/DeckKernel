@@ -340,7 +340,7 @@ int Audit(PGconn* p,IWICImagingFactory* factory,std::uint64_t limit){
    return failed?1:0;
 }
 }
-int WINAPI wWinMain(HINSTANCE inst,HINSTANCE,LPWSTR,int show){
+int WINAPI WinMain(HINSTANCE inst,HINSTANCE,LPSTR,int show){
    if(FAILED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)))return 1;
    struct Uninit{~Uninit(){CoUninitialize();}} uninit;
    try{
