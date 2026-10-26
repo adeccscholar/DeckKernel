@@ -72,36 +72,59 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
    // Cache schema and table are provisioned by the administrator in
    // test/postgresql_sspi_setup.sql. No database-level CREATE privilege is
    // granted to the FirstConnection application role.
-   aDatabase.ExecuteCommand(
-      "DO $cache$ BEGIN "
-      "IF current_database() <> 'DeckKernel' THEN "
-      "RAISE EXCEPTION 'FirstConnection requires the DeckKernel database'; "
-      "END IF; "
-      "IF to_regnamespace('deckkernel_cache') IS NULL OR "
-      "to_regclass('deckkernel_cache.scryfall_images') IS NULL THEN "
-      "RAISE EXCEPTION 'Persistent image cache is not provisioned; run "
-      "test/postgresql_sspi_setup.sql as PostgreSQL administrator'; "
-      "END IF; "
-      "IF NOT has_schema_privilege(current_user, 'deckkernel_cache', 'USAGE') OR "
-      "NOT has_table_privilege(current_user, 'deckkernel_cache.scryfall_images', 'SELECT') OR "
-      "NOT has_table_privilege(current_user, 'deckkernel_cache.scryfall_images', 'INSERT') OR "
-      "NOT has_table_privilege(current_user, 'deckkernel_cache.scryfall_images', 'UPDATE') OR "
-      "NOT has_table_privilege(current_user, 'deckkernel_cache.scryfall_images', 'DELETE') THEN "
-      "RAISE EXCEPTION 'Insufficient permissions for persistent image cache; "
-      "run test/postgresql_sspi_setup.sql as PostgreSQL administrator'; "
-      "END IF; "
-      "END $cache$");
-   // One-time and idempotent migration from the earlier persistent model assets.
-   // Perform before dropping any model tables, so existing images survive.
-   aDatabase.ExecuteCommand(
-      "DO $cache$ BEGIN "
-      "IF to_regclass('deckkernel_test.scryfall_image_assets') IS NOT NULL THEN "
-      "INSERT INTO deckkernel_cache.scryfall_images(url,image_data,sha256,media_type,cached_at) "
-      "SELECT image_url,image_data,sha256,media_type,COALESCE(downloaded_at,now()) "
-      "FROM deckkernel_test.scryfall_image_assets "
-      "WHERE image_data IS NOT NULL AND sha256 IS NOT NULL AND media_type IS NOT NULL "
-      "ON CONFLICT (url) DO NOTHING; "
-      "END IF; END $cache$");
+   // The native named-parameter translator deliberately rejects PostgreSQL
+   // dollar-quoted blocks. Query ordinary scalar values instead of DO $...$.
+   // These preflight checks never create or mutate cache schema objects.
+   auto const aDatabaseCheck = aDatabase.ExecuteOne<int>(
+      "SELECT CASE WHEN current_database() = 'DeckKernel' THEN 1 ELSE 0 END");
+   if(!aDatabaseCheck || std::get<0>(*aDatabaseCheck) != 1) {
+      throw std::runtime_error(
+         "FirstConnection requires the DeckKernel database");
+      }
+
+   auto const aCacheCheck = aDatabase.ExecuteOne<int>(
+      "SELECT CASE WHEN to_regnamespace('deckkernel_cache') IS NOT NULL "
+      "AND to_regclass('deckkernel_cache.scryfall_images') IS NOT NULL "
+      "THEN 1 ELSE 0 END");
+   if(!aCacheCheck || std::get<0>(*aCacheCheck) != 1) {
+      throw std::runtime_error(
+         "Persistent image cache is not provisioned; run "
+         "test/postgresql_sspi_setup.sql as PostgreSQL administrator");
+      }
+
+   auto const aPermissionCheck = aDatabase.ExecuteOne<int>(
+      "SELECT CASE WHEN "
+      "has_schema_privilege(current_user, 'deckkernel_cache', 'USAGE') AND "
+      "has_table_privilege(current_user, 'deckkernel_cache.scryfall_images', 'SELECT') AND "
+      "has_table_privilege(current_user, 'deckkernel_cache.scryfall_images', 'INSERT') AND "
+      "has_table_privilege(current_user, 'deckkernel_cache.scryfall_images', 'UPDATE') AND "
+      "has_table_privilege(current_user, 'deckkernel_cache.scryfall_images', 'DELETE') "
+      "THEN 1 ELSE 0 END");
+   if(!aPermissionCheck || std::get<0>(*aPermissionCheck) != 1) {
+      throw std::runtime_error(
+         "Insufficient permissions for persistent image cache; run "
+         "test/postgresql_sspi_setup.sql as PostgreSQL administrator");
+      }
+
+   // Migrate previous model image bytes before model tables are dropped.
+   // On fresh installations the old table does not exist: skip migration.
+   // This conditional is deliberately in C++, not a PostgreSQL DO block.
+   auto const aPreviousAssets = aDatabase.ExecuteOne<int>(
+      "SELECT CASE WHEN "
+      "to_regclass('deckkernel_test.scryfall_image_assets') IS NOT NULL "
+      "THEN 1 ELSE 0 END");
+   if(!aPreviousAssets) {
+      throw std::runtime_error(
+         "Cannot inspect previous FirstConnection image assets");
+      }
+   if(std::get<0>(*aPreviousAssets) == 1) {
+      aDatabase.ExecuteCommand(
+         "INSERT INTO deckkernel_cache.scryfall_images(url,image_data,sha256,media_type,cached_at) "
+         "SELECT image_url,image_data,sha256,media_type,COALESCE(downloaded_at,now()) "
+         "FROM deckkernel_test.scryfall_image_assets "
+         "WHERE image_data IS NOT NULL AND sha256 IS NOT NULL AND media_type IS NOT NULL "
+         "ON CONFLICT (url) DO NOTHING");
+      }
    aDatabase.ExecuteCommand("DROP VIEW IF EXISTS deckkernel_test.scryfall_cards_view");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_image_features");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_image_variants");
