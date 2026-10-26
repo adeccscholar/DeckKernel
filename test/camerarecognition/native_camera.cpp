@@ -28,6 +28,7 @@
 #include <charconv>
 #include <chrono>
 #include <format>
+#include <iostream>
 #include <print>
 #include <stdexcept>
 #include <string>
