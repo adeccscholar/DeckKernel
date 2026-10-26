@@ -282,6 +282,15 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame) {
    for(unsigned i=0;i<4;++i)quad[i]=cv::Point(cvRound(pts[i].x),cvRound(pts[i].y));
    return FoundCard{rectified,DHash(rectified),quad};
 }
+// Manual 180-degree correction of an upside-down card. Use the same pixels
+// for OCR, artwork matching, saved evidence and the diagnostic preview.
+// This is NOT automatic orientation detection.
+void FlipRectifiedCard(FoundCard& card) {
+   cv::Mat rotated;
+   cv::rotate(card.rectified,rotated,cv::ROTATE_180);
+   card.rectified=std::move(rotated);
+   card.fingerprint=DHash(card.rectified);
+}
 // A continuous card-presence session produces exactly one presentation event
 // and, after sustained absence, exactly one removal event.
 // dHash fluctuations must NOT produce either event on their own.
@@ -415,8 +424,16 @@ public:
    void EnableArtwork(unsigned limit){m_artwork=std::make_unique<ArtworkMatcher>(limit);}
 #endif
    [[nodiscard]] unsigned RemovedEvents() const noexcept {return m_removedEvents;}
-   bool Process(cv::Mat const& frame) {
-      auto found=FindCard(frame);
+   void ReevaluateOcrAfterRotation() noexcept {
+      // Changing the orientation must be allowed to rerun OCR even when a
+      // previous, wrong-side-up title passed the provisional confidence test.
+      m_ocrAccepted=false;
+      m_ocrAttempts=0;
+      m_liveFrames=90;
+      m_bestSharpness=0;
+   }
+   bool Process(cv::Mat const& frame) {return Process(FindCard(frame));}
+   bool Process(std::optional<FoundCard> const& found) {
       auto event=m_detector.Accept(found);
       if(found && m_ocrCard && !m_ocrAccepted) {
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
@@ -478,6 +495,41 @@ public:
 class CameraWindow {
    HWND m_hwnd{};
    cv::Mat m_pixels;
+   cv::Mat m_rectifiedPixels;
+   bool m_flip180{};
+   static void PaintImage(HDC dc,cv::Mat const& image,RECT const& area) {
+      if(image.empty())return;
+      int const availableWidth=area.right-area.left;
+      int const availableHeight=area.bottom-area.top;
+      if(availableWidth<=0||availableHeight<=0)return;
+      double const scale=std::min(
+         static_cast<double>(availableWidth)/image.cols,
+         static_cast<double>(availableHeight)/image.rows);
+      int const width=std::max(1,static_cast<int>(image.cols*scale));
+      int const height=std::max(1,static_cast<int>(image.rows*scale));
+      BITMAPINFO info{};
+      info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
+      info.bmiHeader.biWidth=image.cols;
+      info.bmiHeader.biHeight=-image.rows; // top-down BGRA bitmap
+      info.bmiHeader.biPlanes=1;
+      info.bmiHeader.biBitCount=32;
+      info.bmiHeader.biCompression=BI_RGB;
+      SetStretchBltMode(dc,HALFTONE);
+      StretchDIBits(dc,area.left+(availableWidth-width)/2,
+         area.top+(availableHeight-height)/2,width,height,
+         0,0,image.cols,image.rows,image.data,&info,DIB_RGB_COLORS,SRCCOPY);
+   }
+   static cv::Mat ToDisplayPixels(cv::Mat const& image) {
+      if(image.empty())return {};
+      cv::Mat pixels;
+      if(image.channels()==3)
+         cv::cvtColor(image,pixels,cv::COLOR_BGR2BGRA);
+      else if(image.channels()==4)
+         pixels=image.clone();
+      else
+         cv::cvtColor(image,pixels,cv::COLOR_GRAY2BGRA);
+      return pixels;
+   }
    static LRESULT CALLBACK Proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
       if(msg==WM_NCCREATE) {
          auto* cs=reinterpret_cast<CREATESTRUCTW*>(lp);
@@ -485,7 +537,14 @@ class CameraWindow {
          return TRUE;
       }
       auto* self=reinterpret_cast<CameraWindow*>(GetWindowLongPtrW(hwnd,GWLP_USERDATA));
-      if(msg==WM_ERASEBKGND)return 1; // double-buffered WM_PAINT paints all pixels
+      if(msg==WM_ERASEBKGND)return 1;
+      if(msg==WM_KEYDOWN && self && wp==static_cast<WPARAM>('R')) {
+         self->m_flip180=!self->m_flip180;
+         std::println("[CAM] manual card orientation={} degrees (R toggles)",
+            self->m_flip180?180:0);
+         InvalidateRect(hwnd,nullptr,FALSE);
+         return 0;
+      }
       if(msg==WM_CLOSE){DestroyWindow(hwnd);return 0;}
       if(msg==WM_DESTROY){if(self)self->m_hwnd=nullptr;return 0;}
       if(msg==WM_PAINT) {
@@ -495,34 +554,40 @@ class CameraWindow {
          int const clientWidth=rc.right-rc.left;
          int const clientHeight=rc.bottom-rc.top;
          HDC buffer=CreateCompatibleDC(dc);
-         HBITMAP bitmap=(clientWidth>0&&clientHeight>0)?
+         HBITMAP bitmap=(buffer && clientWidth>0 && clientHeight>0)?
             CreateCompatibleBitmap(dc,clientWidth,clientHeight):nullptr;
-         HGDIOBJ oldBitmap=bitmap?SelectObject(buffer,bitmap):nullptr;
-         if(bitmap)
-            FillRect(buffer,&rc,reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
-         if(bitmap&&self&&!self->m_pixels.empty()&&clientWidth>0&&clientHeight>0) {
-            auto const& img=self->m_pixels;
-            double scale=std::min(static_cast<double>(rc.right)/img.cols,
-               static_cast<double>(rc.bottom)/img.rows);
-            int w=std::max(1,static_cast<int>(img.cols*scale));
-            int h=std::max(1,static_cast<int>(img.rows*scale));
-            BITMAPINFO info{};
-            info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
-            info.bmiHeader.biWidth=img.cols;
-            info.bmiHeader.biHeight=-img.rows;
-            info.bmiHeader.biPlanes=1;
-            info.bmiHeader.biBitCount=32;
-            info.bmiHeader.biCompression=BI_RGB;
-            SetStretchBltMode(buffer,HALFTONE);
-            StretchDIBits(buffer,(rc.right-w)/2,(rc.bottom-h)/2,w,h,
-               0,0,img.cols,img.rows,img.data,&info,DIB_RGB_COLORS,SRCCOPY);
-         }
          if(bitmap) {
+            HGDIOBJ oldBitmap=SelectObject(buffer,bitmap);
+            FillRect(buffer,&rc,reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+            int const divider=clientWidth*57/100;
+            RECT const left{12,42,divider-10,clientHeight-12};
+            RECT const right{divider+10,42,clientWidth-12,clientHeight-12};
+            SetBkMode(buffer,TRANSPARENT);
+            SetTextColor(buffer,RGB(232,237,242));
+            wchar_t const* titleLeft=L"CAMERA - DETECTED CONTOUR";
+            TextOutW(buffer,12,13,titleLeft,static_cast<int>(wcslen(titleLeft)));
+            wchar_t const* titleRight=self&&self->m_flip180?
+               L"RECTIFIED CARD - ROTATED 180 (R)":
+               L"RECTIFIED CARD - ROTATION 0 (R)";
+            TextOutW(buffer,divider+10,13,titleRight,
+               static_cast<int>(wcslen(titleRight)));
+            if(self) {
+               PaintImage(buffer,self->m_pixels,left);
+               PaintImage(buffer,self->m_rectifiedPixels,right);
+               if(self->m_rectifiedPixels.empty()) {
+                  wchar_t const* waiting=L"NO CARD CONTOUR";
+                  TextOutW(buffer,divider+22,clientHeight/2,waiting,
+                     static_cast<int>(wcslen(waiting)));
+               }
+            }
+            RECT separator{divider,12,divider+1,clientHeight-12};
+            FillRect(buffer,&separator,
+               reinterpret_cast<HBRUSH>(GetStockObject(GRAY_BRUSH)));
             BitBlt(dc,0,0,clientWidth,clientHeight,buffer,0,0,SRCCOPY);
             SelectObject(buffer,oldBitmap);
             DeleteObject(bitmap);
          }
-         DeleteDC(buffer);
+         if(buffer)DeleteDC(buffer);
          EndPaint(hwnd,&ps);
          return 0;
       }
@@ -538,12 +603,15 @@ public:
       cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);
       if(!RegisterClassW(&cls)&&GetLastError()!=ERROR_CLASS_ALREADY_EXISTS)
          throw std::runtime_error("camera preview class registration failed");
-      m_hwnd=CreateWindowExW(0,cls.lpszClassName,L"DeckKernel - camera preview",
+      m_hwnd=CreateWindowExW(0,cls.lpszClassName,L"DeckKernel - camera + rectified card",
          WS_OVERLAPPEDWINDOW|WS_VISIBLE,CW_USEDEFAULT,CW_USEDEFAULT,
-         920,730,nullptr,nullptr,instance,this);
+         1450,850,nullptr,nullptr,instance,this);
       if(!m_hwnd)throw std::runtime_error("camera preview creation failed");
       ShowWindow(m_hwnd,SW_SHOW);
+      std::println("[CAM] preview: left=camera, right=actual rectified OCR/artwork "
+         "input; press R to toggle 0/180 degrees");
    }
+   [[nodiscard]] bool Flip180() const noexcept {return m_flip180;}
    bool Messages() {
       MSG message{};
       while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){
@@ -552,10 +620,10 @@ public:
       }
       return m_hwnd!=nullptr;
    }
-   void Show(cv::Mat const& frame,int index,double fps,double brightness) {
-      if(frame.channels()==3)cv::cvtColor(frame,m_pixels,cv::COLOR_BGR2BGRA);
-      else if(frame.channels()==4)m_pixels=frame.clone();
-      else cv::cvtColor(frame,m_pixels,cv::COLOR_GRAY2BGRA);
+   void Show(cv::Mat const& frame,cv::Mat const& rectified,
+      int index,double fps,double brightness) {
+      m_pixels=ToDisplayPixels(frame);
+      m_rectifiedPixels=ToDisplayPixels(rectified);
       auto title=std::format(L"DeckKernel - camera {} - {}x{} - {:.1f} fps - brightness {:.0f}",
          index,frame.cols,frame.rows,fps,brightness);
       SetWindowTextW(m_hwnd,title.c_str());
@@ -569,6 +637,17 @@ void SelfTest() {
    cv::Mat blank(720,1280,CV_8UC3,cv::Scalar(20,20,20));
    cv::Mat card=blank.clone();
    cv::rectangle(card,cv::Rect(475,175,250,350),cv::Scalar(240,240,240),-1);
+   // The manual 180-degree correction must be lossless and preserve the hash
+   // on two successive toggles. Both panels and downstream consumers use it.
+   auto sample=FindCard(card);
+   if(!sample)throw std::runtime_error("synthetic card contour missing");
+   cv::Mat const before=sample->rectified.clone();
+   hash_ty const hashBefore=sample->fingerprint;
+   FlipRectifiedCard(*sample);
+   FlipRectifiedCard(*sample);
+   if(cv::norm(before,sample->rectified,cv::NORM_INF)!=0 ||
+      sample->fingerprint!=hashBefore)
+      throw std::runtime_error("180-degree preview orientation roundtrip failed");
    // A blank view before the first card must never emit a removal.
    for(int i=0;i<60;++i)processor.Process(blank);
    if(processor.RemovedEvents()!=0)
@@ -903,6 +982,7 @@ int main(int argc,char** argv) {
       unsigned failures=0,blackFrames=0;
       auto interval=std::chrono::steady_clock::now();
       double fps=0.0;
+      bool appliedFlip=false;
       auto const beginning=interval;
       while(preview.Messages()){
          if(!capture.read(frame)||frame.empty()){
@@ -914,15 +994,24 @@ int main(int argc,char** argv) {
          failures=0;
          ++count;
          FrameSignal const signal=MeasureFrame(frame);
+         // One contour detection/rectification per frame. Use precisely the
+         // same pixels for the side panel, the OCR and the artwork worker.
+         auto found=signal.nonblack?FindCard(frame):std::optional<FoundCard>{};
+         bool const flip=preview.Flip180();
+         if(flip!=appliedFlip) {
+            processor.ReevaluateOcrAfterRotation();
+            appliedFlip=flip;
+         }
+         if(found&&flip)FlipRectifiedCard(*found);
          if(signal.nonblack) {
             blackFrames=0;
-            processor.Process(frame);
+            processor.Process(found);
          } else {
             ++blackFrames;
          }
-         // Visual diagnostic: mark the four corners that pass the card geometry checks.
+         // Visual diagnostic: mark the four corners that pass card geometry checks.
          cv::Mat annotated=frame.clone();
-         if(auto found=FindCard(frame)) {
+         if(found) {
             for(unsigned i=0;i<4;++i)
                cv::line(annotated,found->corners[i],found->corners[(i+1)%4],
                   cv::Scalar(0,220,0),2,cv::LINE_AA);
@@ -932,7 +1021,8 @@ int main(int argc,char** argv) {
             cv::putText(annotated,"NO CARD CONTOUR",cv::Point(12,26),
                cv::FONT_HERSHEY_SIMPLEX,0.7,cv::Scalar(0,170,240),2,cv::LINE_AA);
          }
-         preview.Show(annotated,*camera,fps,signal.brightness);
+         preview.Show(annotated,found?found->rectified:cv::Mat{},
+            *camera,fps,signal.brightness);
          auto now=std::chrono::steady_clock::now();
          double const seconds=std::chrono::duration<double>(now-interval).count();
          if(seconds>=2.0){
