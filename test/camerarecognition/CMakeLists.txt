@@ -30,6 +30,14 @@ if(TARGET opencv_videoio)
 else()
    message(STATUS "CameraRecognitionTest: no videoio; replay and self-test remain available")
 endif()
+# Artwork candidates are read directly from stored Scryfall art_crop images.
+# The feature indexer / scantest is NOT required.
+option(DECKKERNEL_CAMERA_ENABLE_ARTWORK "Enable offline PostgreSQL artwork candidates" ON)
+if(DECKKERNEL_CAMERA_ENABLE_ARTWORK)
+   find_package(PostgreSQL REQUIRED)
+   target_link_libraries(deckkernel_camera_recognition_test PRIVATE PostgreSQL::PostgreSQL)
+   target_compile_definitions(deckkernel_camera_recognition_test PRIVATE DECKKERNEL_CAMERA_HAS_ARTWORK=1)
+endif()
 # OCR is a required feature when requested, never silently disabled.
 option(DECKKERNEL_CAMERA_ENABLE_OCR "Enable pinned Tesseract OCR" ON)
 if(DECKKERNEL_CAMERA_ENABLE_OCR)
