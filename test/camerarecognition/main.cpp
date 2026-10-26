@@ -110,22 +110,39 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame) {
    cv::warpPerspective(frame,rectified,homography,cv::Size(480,672));
    return FoundCard{rectified,DHash(rectified)};
 }
-// A single uninterrupted card-presence session produces exactly one event.
-// Hash changes (illumination, corner jitter, exposure) MUST NOT be treated as
-// card swaps. A new session is armed only after a sustained empty scene.
+// A continuous card-presence session produces exactly one presentation event
+// and, after sustained absence, exactly one removal event.
+// dHash fluctuations must NOT produce either event on their own.
 class StableCardTrigger {
    std::optional<hash_ty> m_previous;
+   std::optional<unsigned> m_activeNumber;
+   hash_ty m_activeFingerprint{};
    unsigned m_stable{},m_absent{},m_events{};
    bool m_armed{true};
 public:
-   struct Event {unsigned number;hash_ty fingerprint;cv::Mat card;};
+   enum class EventKind { Presented, Removed };
+   struct Event {
+      EventKind kind;
+      unsigned number;
+      hash_ty fingerprint;
+      cv::Mat card;
+   };
    std::optional<Event> Accept(std::optional<FoundCard> const& found) {
       constexpr unsigned stableFrames=5;
       constexpr unsigned removalFrames=45; // 1.5 seconds at 30 FPS
       if(!found) {
          m_previous.reset();
          m_stable=0;
-         if(++m_absent>=removalFrames)m_armed=true;
+         if(m_absent<removalFrames)++m_absent;
+         if(m_absent==removalFrames) {
+            m_armed=true;
+            if(m_activeNumber) {
+               Event event{EventKind::Removed,*m_activeNumber,
+                  m_activeFingerprint,{}};
+               m_activeNumber.reset(); // A single removal per presentation.
+               return event;
+            }
+         }
          return std::nullopt;
       }
       m_absent=0;
@@ -137,21 +154,33 @@ public:
       m_previous=found->fingerprint;
       if(m_stable<stableFrames)return std::nullopt;
       m_armed=false;
-      return Event{++m_events,found->fingerprint,found->rectified.clone()};
+      m_activeNumber=++m_events;
+      m_activeFingerprint=found->fingerprint;
+      return Event{EventKind::Presented,*m_activeNumber,
+         m_activeFingerprint,found->rectified.clone()};
    }
 };
 class Processor {
    StableCardTrigger m_detector;
    bool m_save{};
+   unsigned m_removedEvents{};
    std::filesystem::path m_root;
 public:
    explicit Processor(bool save):m_save(save),
       m_root(std::getenv("DECKKERNEL_CAMERA_EVIDENCE_ROOT")?
          std::getenv("DECKKERNEL_CAMERA_EVIDENCE_ROOT"):
          ".cache/camera-recognition") {}
+   [[nodiscard]] unsigned RemovedEvents() const noexcept {return m_removedEvents;}
    bool Process(cv::Mat const& frame) {
       auto event=m_detector.Accept(FindCard(frame));
       if(!event)return false;
+      if(event->kind==StableCardTrigger::EventKind::Removed) {
+         ++m_removedEvents;
+         std::println("[CAM] CARD-NO-LONGER-DETECTED #{} fingerprint={:016x}; "
+            "absent-frames=45; ready-for-next-card",
+            event->number,event->fingerprint);
+         return false;
+      }
       std::println("[CAM] NEW-STABLE-CARD #{} fingerprint={:016x}; edition=UNKNOWN",
          event->number,event->fingerprint);
       if(m_save){
@@ -259,6 +288,10 @@ void SelfTest() {
    cv::Mat blank(720,1280,CV_8UC3,cv::Scalar(20,20,20));
    cv::Mat card=blank.clone();
    cv::rectangle(card,cv::Rect(475,175,250,350),cv::Scalar(240,240,240),-1);
+   // A blank view before the first card must never emit a removal.
+   for(int i=0;i<60;++i)processor.Process(blank);
+   if(processor.RemovedEvents()!=0)
+      throw std::runtime_error("empty startup scene emitted a removal");
    unsigned events{};
    for(int i=0;i<12;++i)if(processor.Process(card))++events;
    if(events!=1)throw std::runtime_error("first stable card must emit one event");
@@ -269,14 +302,29 @@ void SelfTest() {
    for(int i=0;i<30;++i)
       if(processor.Process(i%2?card:fluctuating))++events;
    if(events!=1)throw std::runtime_error("hash jitter caused duplicate card event");
-   // Short contour dropouts must not count as the card being removed.
+   // Short contour dropouts must not emit a removal or a duplicate.
    for(int i=0;i<12;++i)processor.Process(blank);
+   if(processor.RemovedEvents()!=0)
+      throw std::runtime_error("short contour dropout emitted a removal");
    for(int i=0;i<12;++i)if(processor.Process(card))++events;
    if(events!=1)throw std::runtime_error("brief contour loss caused a duplicate");
-   for(int i=0;i<48;++i)processor.Process(blank);
+   // One removal after exactly 45 absent frames, never repeated while empty.
+   for(int i=0;i<44;++i)processor.Process(blank);
+   if(processor.RemovedEvents()!=0)
+      throw std::runtime_error("card removal signalled before frame 45");
+   processor.Process(blank);
+   if(processor.RemovedEvents()!=1)
+      throw std::runtime_error("missing removal after 45 empty frames");
+   for(int i=0;i<60;++i)processor.Process(blank);
+   if(processor.RemovedEvents()!=1)
+      throw std::runtime_error("repeated removal while scene remained empty");
    for(int i=0;i<12;++i)if(processor.Process(card))++events;
    if(events!=2)throw std::runtime_error("reinserted card must emit second event");
-   std::println("SMOKE|RESULT|PASS|stable event, jitter suppression, short occlusion and reentry");
+   for(int i=0;i<45;++i)processor.Process(blank);
+   if(processor.RemovedEvents()!=2)
+      throw std::runtime_error("second recognized card did not emit removal");
+   std::println("SMOKE|RESULT|PASS|stable presentation, one removal per card, "
+      "jitter suppression, short dropout and reentry");
 }
 
 #if defined(DECKKERNEL_CAMERA_HAS_VIDEOIO)
