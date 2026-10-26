@@ -5,6 +5,12 @@
     \details No Scryfall requests, no database access, no physical edition
              identification. Image evidence is optional and local.
 */
+#ifndef UNICODE
+#define UNICODE
+#endif
+#ifndef _UNICODE
+#define _UNICODE
+#endif
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
