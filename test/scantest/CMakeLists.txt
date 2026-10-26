@@ -101,32 +101,8 @@ target_include_directories(deckkernel_card_scantest PRIVATE
 target_link_libraries(deckkernel_card_scantest PRIVATE
    PostgreSQL::PostgreSQL ${OpenCV_LIBS})
 
-# ---------------------------------------------------------------------------
-# Installation
-# ---------------------------------------------------------------------------
-
-install(
-   TARGETS deckkernel_card_scantest
-   RUNTIME DESTINATION .
-)
-
-function(deckkernel_install_runtime_dlls thePackageRoot)
-   install(
-      DIRECTORY
-         "${thePackageRoot}/bin/win64/${ADECC_THIRDPARTY_CONFIGURATION}/"
-      DESTINATION .
-      OPTIONAL
-      FILES_MATCHING
-         PATTERN "*.dll"
-   )
-endfunction()
-
-deckkernel_install_runtime_dlls("${ADECC_TP_CURL_ROOT}")
-deckkernel_install_runtime_dlls("${ADECC_TP_OPENSSL_ROOT}")
-deckkernel_install_runtime_dlls("${ADECC_TP_LIBPQ_ROOT}")
-deckkernel_install_runtime_dlls("${ADECC_TP_LIBPQXX_ROOT}")
-deckkernel_install_runtime_dlls("${ADECC_TP_ZLIB_ROOT}")
-deckkernel_install_runtime_dlls("${ADECC_TP_BROTLI_ROOT}")
-deckkernel_install_runtime_dlls("${ADECC_TP_ZSTD_ROOT}")
-
-# The packaged OpenCV DLL runtime closure is resolved through BuildEngine ThirdParty.
+# Resolve the exact pinned DLL closure, including libopencv_feature500.dll.
+include("${DECKKERNEL_ROOT}/Cache/cmake/InstallPinnedRuntime.cmake")
+adecc_stage_pinned_runtime(deckkernel_card_scantest)
+install(TARGETS deckkernel_card_scantest RUNTIME DESTINATION .)
+adecc_install_pinned_runtime(deckkernel_card_scantest Runtime)
