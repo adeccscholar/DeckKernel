@@ -267,11 +267,38 @@ dHash64. It never downloads images or writes to the database.
 
     apps\Release\deckkernel_camera_recognition_test.exe --image=D:\Fotos\karte.jpg --ocr --artwork
 
-The candidate window is deliberately bounded (default 100 stored art
-crops; 1..1000 configurable). Only the first matching asset IDs are
-sampled; the results are NOT an exhaustive catalog match. Reported
+The candidate window is deliberately bounded (default 100 top-ranked indexed
+artworks; 1..1000 configurable). It searches the full populated feature
+catalog and then re-ranks the shortlisted assets with ORB. Reported
 name, asset ID and hamming distance are unverified suggestions, never
 proof of a particular Magic printing. Identical artworks may occur in
 multiple editions. The first matcher is synchronous at a new-card event
 and may momentarily slow camera preview; a future iteration should
 separate the image matching from capture and use ORB verification.
+
+## Indexed artwork search in a separate worker
+
+The earlier prototype queried the first N image blobs synchronously during
+camera capture. It is replaced with a single background worker that owns its
+own PostgreSQL connection and ORB detector. The camera submits one cloned
+rectified card per stable presentation into a single-slot bounded queue.
+An outdated queued request is replaced, avoiding unlimited memory growth.
+Capture, painting and OCR retries continue while SQL and ORB run.
+
+The worker scans the entire version-1 dHash feature catalog (no first-100
+asset restriction), orders references by Hamming distance using PostgreSQL
+bit_count and selects the closest --artwork-limit candidates (default 100).
+Only these candidates have their image_data decoded. OpenCV ORB and a
+two-nearest-neighbor ratio test rerank the shortlisted artworks. This
+requires the existing indexed features to be populated by scantest. Run
+scantest --all before expecting broad artwork coverage; --follow can
+continue indexing simultaneously with the camera. No Scryfall requests,
+network image downloads, or model schema resets are performed.
+
+The SQL shortlist currently orders all indexed 64-bit hash rows and
+limits returned image blobs; this is **not** yet an approximate-nearest-
+neighbor database index with sublinear lookup. It does avoid the costly
+decode of the full catalog. The recorded match remains UNVERIFIED:
+a positive artwork resemblance alone cannot identify a specific printing.
+The worker is tested only after execution on the user's BCC64X/PostgreSQL
+environment, and current preview graphics do not display its text result.
