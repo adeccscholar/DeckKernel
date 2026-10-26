@@ -30,25 +30,33 @@ if(TARGET opencv_videoio)
 else()
    message(STATUS "CameraRecognitionTest: no videoio; replay and self-test remain available")
 endif()
-# OCR uses the pinned BuildEngine packages only when explicitly enabled.
-# The language model is separate runtime data, never downloaded by CMake.
-option(DECKKERNEL_CAMERA_ENABLE_OCR "Enable pinned Tesseract OCR on stable card events" ON)
+# OCR is a required feature when requested, never silently disabled.
+option(DECKKERNEL_CAMERA_ENABLE_OCR "Enable pinned Tesseract OCR" ON)
 if(DECKKERNEL_CAMERA_ENABLE_OCR)
-   find_package(Leptonica 1.87 CONFIG QUIET)
-   find_package(Tesseract 5.5 CONFIG QUIET)
-   if(TARGET Tesseract::libtesseract AND
-      Tesseract_INCLUDE_DIRS AND
-      EXISTS "${Tesseract_INCLUDE_DIRS}/tesseract/baseapi.h")
-      target_include_directories(deckkernel_camera_recognition_test PRIVATE
-         "${Tesseract_INCLUDE_DIRS}" "${Leptonica_INCLUDE_DIRS}")
-      target_link_libraries(deckkernel_camera_recognition_test PRIVATE
-         Tesseract::libtesseract)
-      target_compile_definitions(deckkernel_camera_recognition_test PRIVATE
-         DECKKERNEL_CAMERA_HAS_OCR=1)
-      message(STATUS "CameraRecognitionTest: Tesseract OCR enabled; eng.traineddata still required at runtime")
-   else()
-      message(STATUS "CameraRecognitionTest: pinned Tesseract unavailable; OCR disabled")
+   if(NOT DEFINED ADECC_TP_TESSERACT_ROOT OR NOT DEFINED ADECC_TP_LEPTONICA_ROOT)
+      message(FATAL_ERROR "Pinned Tesseract/Leptonica not registered by bootstrap")
    endif()
+   set(Leptonica_DIR "${ADECC_TP_LEPTONICA_ROOT}/lib/win64/${CMAKE_BUILD_TYPE}/cmake/leptonica")
+   set(Tesseract_DIR "${ADECC_TP_TESSERACT_ROOT}/lib/win64/${CMAKE_BUILD_TYPE}/cmake/tesseract")
+   find_package(Leptonica 1.87 CONFIG REQUIRED)
+   find_package(Tesseract 5.5 CONFIG REQUIRED)
+   if(NOT TARGET Tesseract::libtesseract)
+      message(FATAL_ERROR "Pinned Tesseract package lacks Tesseract::libtesseract")
+   endif()
+   if(NOT Tesseract_INCLUDE_DIRS OR NOT EXISTS "${Tesseract_INCLUDE_DIRS}/tesseract/baseapi.h")
+      message(FATAL_ERROR "Pinned Tesseract headers missing at Tesseract_INCLUDE_DIRS")
+   endif()
+   set(DECKKERNEL_TESSDATA_DIRECTORY "${ADECC_TP_TESSERACT_ROOT}/share/tessdata")
+   if(NOT EXISTS "${DECKKERNEL_TESSDATA_DIRECTORY}/eng.traineddata")
+      message(FATAL_ERROR "Pinned OCR model absent: ${DECKKERNEL_TESSDATA_DIRECTORY}/eng.traineddata")
+   endif()
+   target_include_directories(deckkernel_camera_recognition_test PRIVATE
+      "${Tesseract_INCLUDE_DIRS}" "${Leptonica_INCLUDE_DIRS}")
+   target_link_libraries(deckkernel_camera_recognition_test PRIVATE Tesseract::libtesseract)
+   target_compile_definitions(deckkernel_camera_recognition_test PRIVATE DECKKERNEL_CAMERA_HAS_OCR=1)
+   message(STATUS "CameraRecognitionTest: pinned Tesseract OCR REQUIRED and ENABLED")
+   install(FILES "${DECKKERNEL_TESSDATA_DIRECTORY}/eng.traineddata"
+      DESTINATION tessdata COMPONENT Runtime)
 endif()
 include("${DECKKERNEL_ROOT}/Cache/cmake/InstallPinnedRuntime.cmake")
 adecc_stage_pinned_runtime(deckkernel_camera_recognition_test)
