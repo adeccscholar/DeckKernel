@@ -213,3 +213,15 @@ inaccurate because the current first-stage geometry does not yet
 handle glare, rotation, split-card layouts, and alternate frames.
 OCR runs synchronously at the event and may briefly delay the preview.
 Edition remains UNKNOWN until a validated candidate match is implemented.
+
+## Required pinned OCR deployment
+
+DECKKERNEL_CAMERA_ENABLE_OCR=ON requires the exact pinned Leptonica 1.87 and
+Tesseract 5.5 CMake exports, baseapi.h and eng.traineddata. Missing assets
+fail configure rather than silently disabling OCR. Tesseract DLL imports are
+staged and installed through the runtime closure helper. The verified English
+model is installed in apps/Release/tessdata; with --ocr the executable uses
+that directory automatically when --tessdata and TESSDATA_PREFIX are absent.
+To intentionally disable OCR, configure with
+-DDECKKERNEL_CAMERA_ENABLE_OCR=OFF. The optional argument --ocr then reports
+that OCR support was disabled. Real BCC64X runtime behavior remains unverified.
