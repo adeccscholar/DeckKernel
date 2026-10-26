@@ -42,6 +42,38 @@ Live camera mode requires opencv_videoio to be exported by the installed
 BuildEngine OpenCV package; existing scantest does not prove that component
 is available. Without it the project still builds its replay and self-test.
 
+## Camera signal diagnostics
+
+A successful VideoCapture::isOpened() does **not** prove that real pixels
+arrive. A USB/internal camera may report 1920x1080 at 1 FPS while returning
+black placeholder frames. The camera LED may remain off.
+
+Run these diagnostics before debugging card contours:
+
+    apps\Release\deckkernel_camera_recognition_test.exe --probe-camera=0
+    apps\Release\deckkernel_camera_recognition_test.exe --probe-camera=1
+
+The probe tests DirectShow MJPG, DirectShow YUY2, Media Foundation auto
+and Media Foundation MJPG, each at 640x480/30 FPS. It prints the actually
+negotiated resolution/FOURCC, number of received frames, black/nonblack
+frames, changed frames and maximum pixel intensity. A mode counts as
+usable only when it returns nonblack pixels; no Scryfall or database
+operations occur.
+
+When the probe identifies a usable mode:
+
+    apps\Release\deckkernel_camera_recognition_test.exe --camera=1 --backend=dshow --width=640 --height=480 --fps=30 --fourcc=mjpg
+
+Other options: --backend=msmf, --fourcc=yuy2 or --fourcc=auto.
+
+If every probe returns black frames, independently verify the same
+physical device in Windows Camera, verify Windows camera permissions,
+check the physical shutter, and close applications that hold the camera.
+A camera that is opened by the driver but produces only black pixels
+cannot be fixed by changing the card recognition algorithm. The program
+now reports VIDEO SIGNAL ABSENT rather than silently processing black
+placeholder frames.
+
 Camera snapshots, if requested, go to .cache/camera-recognition or the folder
 specified by DECKKERNEL_CAMERA_EVIDENCE_ROOT. Do not commit private photographs.
 
