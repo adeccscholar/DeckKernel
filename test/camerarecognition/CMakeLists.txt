@@ -30,6 +30,26 @@ if(TARGET opencv_videoio)
 else()
    message(STATUS "CameraRecognitionTest: no videoio; replay and self-test remain available")
 endif()
+# OCR uses the pinned BuildEngine packages only when explicitly enabled.
+# The language model is separate runtime data, never downloaded by CMake.
+option(DECKKERNEL_CAMERA_ENABLE_OCR "Enable pinned Tesseract OCR on stable card events" ON)
+if(DECKKERNEL_CAMERA_ENABLE_OCR)
+   find_package(Leptonica 1.87 CONFIG QUIET)
+   find_package(Tesseract 5.5 CONFIG QUIET)
+   if(TARGET Tesseract::libtesseract AND
+      Tesseract_INCLUDE_DIRS AND
+      EXISTS "${Tesseract_INCLUDE_DIRS}/tesseract/baseapi.h")
+      target_include_directories(deckkernel_camera_recognition_test PRIVATE
+         "${Tesseract_INCLUDE_DIRS}" "${Leptonica_INCLUDE_DIRS}")
+      target_link_libraries(deckkernel_camera_recognition_test PRIVATE
+         Tesseract::libtesseract)
+      target_compile_definitions(deckkernel_camera_recognition_test PRIVATE
+         DECKKERNEL_CAMERA_HAS_OCR=1)
+      message(STATUS "CameraRecognitionTest: Tesseract OCR enabled; eng.traineddata still required at runtime")
+   else()
+      message(STATUS "CameraRecognitionTest: pinned Tesseract unavailable; OCR disabled")
+   endif()
+endif()
 include("${DECKKERNEL_ROOT}/Cache/cmake/InstallPinnedRuntime.cmake")
 adecc_stage_pinned_runtime(deckkernel_camera_recognition_test)
 install(TARGETS deckkernel_camera_recognition_test RUNTIME DESTINATION .)
