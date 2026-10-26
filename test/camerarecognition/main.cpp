@@ -41,6 +41,10 @@
 #include <filesystem>
 #include <chrono>
 #include <memory>
+#include <mutex>
+#include <condition_variable>
+#include <thread>
+#include <opencv2/features2d.hpp>
 #include <cctype>
 #include <format>
 #include <iostream>
@@ -68,97 +72,158 @@ hash_ty DHash(cv::Mat const& source) {
    return uResult;
 }
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
-// Offline candidate search, deliberately independent of scryfall_image_features.
-// Reads *only* already downloaded, committed art_crop image bytes.
+// The camera owns a bounded, single-slot worker; only the worker may use
+// its PostgreSQL connection or OpenCV ORB matcher. No camera-frame IO or
+// expensive SQL query runs on the capture/preview thread.
 class ArtworkMatcher {
-   unsigned m_limit{};
-   static std::string Env(char const* key,char const* fallback) {
-      if(auto const* value=std::getenv(key);value&&*value)return value;
+   struct Task {unsigned event{}; cv::Mat card;};
+   std::mutex m_mutex;
+   std::condition_variable m_cv;
+   std::optional<Task> m_pending;
+   bool m_stopping{};
+   std::thread m_worker;
+   unsigned m_candidates{};
+   static std::string Env(char const* k,char const* fallback) {
+      if(auto const* value=std::getenv(k);value&&*value)return value;
       return fallback;
    }
-   struct ConnectionDeleter {
-      void operator()(PGconn* p) const noexcept {if(p)PQfinish(p);}
-   };
-   struct ResultDeleter {
-      void operator()(PGresult* p) const noexcept {if(p)PQclear(p);}
-   };
-   using Conn=std::unique_ptr<PGconn,ConnectionDeleter>;
-   using Rows=std::unique_ptr<PGresult,ResultDeleter>;
-   Conn m_db;
-   static cv::Mat Art(cv::Mat const& source) {
-      if(source.empty())return {};
-      // Standard portrait layout: illustration beneath the title/type band.
-      int const x=source.cols/12,y=source.rows*19/100;
-      int const w=source.cols-x*2,h=source.rows*33/100;
-      return source(cv::Rect(x,y,w,h));
-   }
-public:
-   explicit ArtworkMatcher(unsigned limit):m_limit(limit) {
-      std::array<std::string,7> const fields{
-         Env("DECKKERNEL_PGHOST","localhost"),
-         Env("DECKKERNEL_PGPORT","5432"),
+   struct PgDelete {void operator()(PGconn* p) const noexcept {if(p)PQfinish(p);}};
+   struct RowsDelete {void operator()(PGresult* p) const noexcept {if(p)PQclear(p);}};
+   using Conn=std::unique_ptr<PGconn,PgDelete>;
+   using Rows=std::unique_ptr<PGresult,RowsDelete>;
+   static Conn Connect() {
+      std::array<std::string,7> fields{
+         Env("DECKKERNEL_PGHOST","localhost"),Env("DECKKERNEL_PGPORT","5432"),
          Env("DECKKERNEL_PGDATABASE","DeckKernel"),
          Env("DECKKERNEL_PGUSER","deckkernel_user"),
          Env("DECKKERNEL_PGPASSWORD",""),
          Env("DECKKERNEL_PGSSLMODE","prefer"),
-         Env("DECKKERNEL_PG_GSSENCMODE","disable")
-      };
+         Env("DECKKERNEL_PG_GSSENCMODE","disable")};
       char const* keys[]={"host","port","dbname","user","password","sslmode","gssencmode",nullptr};
       char const* values[]={fields[0].c_str(),fields[1].c_str(),fields[2].c_str(),
          fields[3].c_str(),fields[4].c_str(),fields[5].c_str(),fields[6].c_str(),nullptr};
-      m_db.reset(PQconnectdbParams(keys,values,0));
-      if(!m_db||PQstatus(m_db.get())!=CONNECTION_OK)
-         throw std::runtime_error("artwork matcher cannot connect to DeckKernel PostgreSQL");
+      Conn db(PQconnectdbParams(keys,values,0));
+      if(!db||PQstatus(db.get())!=CONNECTION_OK)
+         throw std::runtime_error("artwork worker PostgreSQL connection failed");
+      return db;
    }
-   void Search(cv::Mat const& card,unsigned eventNumber) {
-      cv::Mat cropped=Art(card);
-      if(cropped.empty())return;
-      hash_ty const sourceHash=DHash(cropped);
-      std::string const bound=std::to_string(m_limit);
-      char const* values[]={bound.c_str()};
-      Rows rows(PQexecParams(m_db.get(),
-         "SELECT a.id::text, f.name, a.image_data "
-         "FROM deckkernel_test.scryfall_image_assets a "
+   static cv::Mat Art(cv::Mat const& card) {
+      int const x=card.cols/12,y=card.rows*19/100;
+      return card(cv::Rect(x,y,card.cols-x*2,card.rows*33/100));
+   }
+   static std::string Bits(hash_ty h) {
+      std::string bits(64,'0');
+      for(unsigned i=0;i<64;++i)bits[i]=((h>>(63-i))&1U)?'1':'0';
+      return bits;
+   }
+   void Match(PGconn* db,Task const& task) {
+      cv::Mat const source=Art(task.card);
+      std::string const hash=Bits(DHash(source));
+      std::string const count=std::to_string(m_candidates);
+      char const* params[]={hash.c_str(),count.c_str()};
+      // Query scans the small 64-bit feature records, not a blob full scan.
+      // The feature indexer is a separate, incremental producer.
+      Rows rows(PQexecParams(db,
+         "SELECT a.id::text, cf.name, a.image_data, "
+         "bit_count(f.perceptual_hash # $1::bit(64))::text "
+         "FROM deckkernel_test.scryfall_image_features f "
+         "JOIN deckkernel_test.scryfall_image_assets a ON a.id=f.asset_id "
          "JOIN deckkernel_test.scryfall_card_image_variants v "
          "  ON v.asset_id=a.id AND v.variant='art_crop' "
-         "JOIN deckkernel_test.scryfall_card_faces f "
-         "  ON f.card_id=v.card_id AND f.face_id=v.face_id "
-         "WHERE a.image_data IS NOT NULL AND a.image_kind='art_crop' "
-         "ORDER BY a.id LIMIT $1::integer",
-         1,nullptr,values,nullptr,nullptr,0));
+         "JOIN deckkernel_test.scryfall_card_faces cf "
+         "  ON cf.card_id=v.card_id AND cf.face_id=v.face_id "
+         "WHERE f.algorithm='dhash64-orb' AND f.algorithm_version=1 "
+         "  AND f.perceptual_hash IS NOT NULL AND a.image_data IS NOT NULL "
+         "ORDER BY bit_count(f.perceptual_hash # $1::bit(64)),a.id "
+         "LIMIT $2::integer",
+         2,nullptr,params,nullptr,nullptr,0));
       if(!rows||PQresultStatus(rows.get())!=PGRES_TUPLES_OK)
-         throw std::runtime_error("artwork SQL query failed: "+std::string(PQerrorMessage(m_db.get())));
-      int best=65,second=65;
+         throw std::runtime_error(std::string("artwork feature query failed: ")+PQerrorMessage(db));
+      cv::Ptr<cv::ORB> orb=cv::ORB::create(500);
+      std::vector<cv::KeyPoint> sourcePoints;
+      cv::Mat sourceDesc;
+      orb->detectAndCompute(source,cv::noArray(),sourcePoints,sourceDesc);
+      cv::BFMatcher matcher(cv::NORM_HAMMING,false);
+      int bestOrb=-1,bestHash=65;
       std::string bestName,bestId;
-      unsigned decoded=0;
+      int tested=0;
       for(int i=0;i<PQntuples(rows.get());++i) {
-         std::size_t length{};
+         std::size_t n{};
          std::unique_ptr<unsigned char,void(*)(void*)> bytes(
-            PQunescapeBytea(reinterpret_cast<unsigned char const*>(
-               PQgetvalue(rows.get(),i,2)),&length),
+            PQunescapeBytea(reinterpret_cast<unsigned char const*>(PQgetvalue(rows.get(),i,2)),&n),
             [](void* p){if(p)PQfreemem(p);});
-         if(!bytes||!length||length>8*1024*1024)continue;
-         cv::Mat encoded(1,static_cast<int>(length),CV_8UC1,bytes.get());
-         cv::Mat art=cv::imdecode(encoded,cv::IMREAD_COLOR);
-         if(art.empty())continue;
-         ++decoded;
-         int const score=std::popcount(sourceHash^DHash(art));
-         if(score<best) {
-            second=best;
-            best=score;
-            bestName=PQgetvalue(rows.get(),i,1);
+         if(!bytes||!n||n>8*1024*1024)continue;
+         cv::Mat encoded(1,static_cast<int>(n),CV_8UC1,bytes.get());
+         cv::Mat reference=cv::imdecode(encoded,cv::IMREAD_COLOR);
+         if(reference.empty())continue;
+         std::vector<cv::KeyPoint> points;
+         cv::Mat desc;
+         orb->detectAndCompute(reference,cv::noArray(),points,desc);
+         int good=0;
+         if(!sourceDesc.empty()&&!desc.empty()) {
+            std::vector<std::vector<cv::DMatch>> pairs;
+            matcher.knnMatch(sourceDesc,desc,pairs,2);
+            for(auto const& pair:pairs)
+               if(pair.size()==2 && pair[0].distance<0.75f*pair[1].distance)
+                  ++good;
+         }
+         ++tested;
+         int distance=std::stoi(PQgetvalue(rows.get(),i,3));
+         if(good>bestOrb||(good==bestOrb&&distance<bestHash)) {
+            bestOrb=good;bestHash=distance;
             bestId=PQgetvalue(rows.get(),i,0);
-         } else if(score<second)second=score;
+            bestName=PQgetvalue(rows.get(),i,1);
+         }
       }
-      if(decoded==0) {
-         std::println("[CAM-ART] card #{} NO_REFERENCE_ART; candidates=0",eventNumber);
-      } else {
-         std::println("[CAM-ART] card #{} candidate=\"{}\" asset={} distance={}/64 "
-            "runner-up={}/64 scanned={} status={}",
-            eventNumber,bestName,bestId,best,second,decoded,
-            best<=10&&second-best>=4?"POSSIBLE":"UNVERIFIED");
-         std::println("[CAM-ART] artwork only; no definitive printing or edition");
+      if(tested)
+         std::println("[CAM-ART] card #{} candidate=\"{}\" asset={} dhash={}/64 "
+            "orb-good={} shortlisted={} status=UNVERIFIED",
+            task.event,bestName,bestId,bestHash,bestOrb,tested);
+      else
+         std::println("[CAM-ART] card #{} NO_INDEXED_ART; run scantest --all",task.event);
+   }
+   void Run() {
+      try {
+         Conn db=Connect();
+         for(;;) {
+            Task task;
+            {
+               std::unique_lock lock(m_mutex);
+               m_cv.wait(lock,[this]{return m_stopping||m_pending.has_value();});
+               if(m_stopping&&!m_pending)break;
+               task=std::move(*m_pending);
+               m_pending.reset();
+            }
+            try {Match(db.get(),task);}
+            catch(std::exception const& e) {
+               std::println(std::cerr,"[CAM-ART] card #{} error: {}",task.event,e.what());
+            }
+         }
+      } catch(std::exception const& e) {
+         std::println(std::cerr,"[CAM-ART] worker unavailable: {}",e.what());
       }
+   }
+public:
+   explicit ArtworkMatcher(unsigned candidates):m_candidates(candidates),
+      m_worker([this]{Run();}) {}
+   ~ArtworkMatcher() {
+      {
+         std::lock_guard lock(m_mutex);
+         m_stopping=true;
+      }
+      m_cv.notify_one();
+      if(m_worker.joinable())m_worker.join();
+   }
+   ArtworkMatcher(ArtworkMatcher const&)=delete;
+   ArtworkMatcher& operator=(ArtworkMatcher const&)=delete;
+   void Search(cv::Mat const& card,unsigned eventNumber) {
+      {
+         std::lock_guard lock(m_mutex);
+         // Replace outdated queued work, never allow unbounded frames/jobs.
+         m_pending=Task{eventNumber,card.clone()};
+      }
+      m_cv.notify_one();
+      std::println("[CAM-ART] card #{} queued in background",eventNumber);
    }
 };
 #endif
