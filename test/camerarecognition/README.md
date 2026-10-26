@@ -188,3 +188,28 @@ proof of physical removal: occlusions, reflections and background changes can
 also hide a contour. No message is emitted on an empty startup scene, on a
 short dropout, or repeatedly while the view remains empty. Synthetic smoke
 checks these transitions and reentry.
+
+## Camera overlay and OCR
+
+The live preview outlines the detected four-corner card candidate and
+displays CARD CONTOUR or NO CARD CONTOUR. The geometry-based detector
+does not yet determine card identity or printing.
+
+At CMake configure time, DECKKERNEL_CAMERA_ENABLE_OCR=ON (default)
+tries the pinned Tesseract 5.5 and Leptonica 1.87 package configuration.
+Look for the "Tesseract OCR enabled" CMake message. If the installed
+package is unavailable, the camera still builds without OCR.
+
+OCR needs a local eng.traineddata in the directory passed to --tessdata.
+The BuildEngine Tesseract OCR smoke specifies the pinned model. There
+are no downloads or network/database writes:
+
+    apps\Release\deckkernel_camera_recognition_test.exe --camera=4 --backend=dshow --width=640 --height=480 --fps=30 --fourcc=yuy2 --ocr --tessdata=D:\path\to\tessdata --save-events
+
+After a NEW-STABLE-CARD event the title band is read with Tesseract
+PSM_SINGLE_LINE and the rules-text box with PSM_AUTO. The console
+receives [CAM-OCR] card #N name="..." and text="...". OCR may be
+inaccurate because the current first-stage geometry does not yet
+handle glare, rotation, split-card layouts, and alternate frames.
+OCR runs synchronously at the event and may briefly delay the preview.
+Edition remains UNKNOWN until a validated candidate match is implemented.
