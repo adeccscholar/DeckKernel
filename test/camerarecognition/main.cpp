@@ -22,6 +22,9 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/geometry.hpp>
 #include <opencv2/imgcodecs.hpp>
+#if defined(DECKKERNEL_CAMERA_HAS_OCR)
+#include <tesseract/baseapi.h>
+#endif
 #if defined(DECKKERNEL_CAMERA_HAS_VIDEOIO)
 #include <opencv2/videoio.hpp>
 #endif
@@ -34,6 +37,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <chrono>
+#include <memory>
+#include <cctype>
 #include <format>
 #include <iostream>
 #include <limits>
@@ -62,6 +67,7 @@ hash_ty DHash(cv::Mat const& source) {
 struct FoundCard {
    cv::Mat rectified;
    hash_ty fingerprint{};
+   std::array<cv::Point,4> corners{};
 };
 std::optional<FoundCard> FindCard(cv::Mat const& frame) {
    if(frame.empty()||frame.cols<64||frame.rows<64)return std::nullopt;
@@ -108,7 +114,9 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame) {
    cv::Mat homography=cv::getPerspectiveTransform(pts.data(),target.data());
    cv::Mat rectified;
    cv::warpPerspective(frame,rectified,homography,cv::Size(480,672));
-   return FoundCard{rectified,DHash(rectified)};
+   std::array<cv::Point,4> quad{};
+   for(unsigned i=0;i<4;++i)quad[i]=cv::Point(cvRound(pts[i].x),cvRound(pts[i].y));
+   return FoundCard{rectified,DHash(rectified),quad};
 }
 // A continuous card-presence session produces exactly one presentation event
 // and, after sustained absence, exactly one removal event.
@@ -160,16 +168,69 @@ public:
          m_activeFingerprint,found->rectified.clone()};
    }
 };
+
+#if defined(DECKKERNEL_CAMERA_HAS_OCR)
+class CardOcr {
+   tesseract::TessBaseAPI m_api;
+   bool m_ready{};
+   static std::string Clean(std::string text) {
+      for(char& ch:text)if(ch=='\n'||ch=='\r'||ch=='\t')ch=' ';
+      auto start=text.find_first_not_of(' ');
+      if(start==std::string::npos)return {};
+      auto end=text.find_last_not_of(' ');
+      return text.substr(start,end-start+1);
+   }
+   std::string ReadRegion(cv::Mat const& image,cv::Rect region,int mode) {
+      cv::Mat gray,scaled;
+      cv::cvtColor(image(region),gray,cv::COLOR_BGR2GRAY);
+      cv::resize(gray,scaled,cv::Size(),2.0,2.0,cv::INTER_CUBIC);
+      m_api.SetPageSegMode(static_cast<tesseract::PageSegMode>(mode));
+      m_api.SetImage(scaled.data,scaled.cols,scaled.rows,1,
+         static_cast<int>(scaled.step));
+      if(m_api.Recognize(nullptr)!=0)return {};
+      std::unique_ptr<char[]> text(m_api.GetUTF8Text());
+      return text?Clean(text.get()):std::string{};
+   }
+public:
+   explicit CardOcr(std::string const& tessdata) {
+      if(m_api.Init(tessdata.c_str(),"eng",tesseract::OEM_LSTM_ONLY)!=0)
+         throw std::runtime_error("Tesseract could not initialize eng.traineddata at "+tessdata);
+      m_ready=true;
+   }
+   ~CardOcr(){if(m_ready)m_api.End();}
+   void Read(cv::Mat const& card,unsigned eventNumber) {
+      if(card.empty()||card.cols<100||card.rows<200)return;
+      // The upper title band is the most useful first-pass OCR target.
+      auto const title=ReadRegion(card,
+         cv::Rect(card.cols/20,card.rows/30,card.cols*9/10,card.rows/9),
+         tesseract::PSM_SINGLE_LINE);
+      // Text box is a separate multi-line recognition task.
+      auto const rules=ReadRegion(card,
+         cv::Rect(card.cols/15,card.rows*58/100,card.cols*13/15,
+            card.rows*27/100),tesseract::PSM_AUTO);
+      std::println("[CAM-OCR] card #{} name=\"{}\"",eventNumber,title);
+      std::println("[CAM-OCR] card #{} text=\"{}\"",eventNumber,rules);
+      std::println("[CAM-OCR] unverified OCR, not an edition or Oracle identity");
+   }
+};
+#endif
+
 class Processor {
    StableCardTrigger m_detector;
    bool m_save{};
    unsigned m_removedEvents{};
+#if defined(DECKKERNEL_CAMERA_HAS_OCR)
+   std::unique_ptr<CardOcr> m_ocr;
+#endif
    std::filesystem::path m_root;
 public:
    explicit Processor(bool save):m_save(save),
       m_root(std::getenv("DECKKERNEL_CAMERA_EVIDENCE_ROOT")?
          std::getenv("DECKKERNEL_CAMERA_EVIDENCE_ROOT"):
          ".cache/camera-recognition") {}
+#if defined(DECKKERNEL_CAMERA_HAS_OCR)
+   void EnableOcr(std::string const& data){m_ocr=std::make_unique<CardOcr>(data);}
+#endif
    [[nodiscard]] unsigned RemovedEvents() const noexcept {return m_removedEvents;}
    bool Process(cv::Mat const& frame) {
       auto event=m_detector.Accept(FindCard(frame));
@@ -183,6 +244,9 @@ public:
       }
       std::println("[CAM] NEW-STABLE-CARD #{} fingerprint={:016x}; edition=UNKNOWN",
          event->number,event->fingerprint);
+#if defined(DECKKERNEL_CAMERA_HAS_OCR)
+      if(m_ocr)m_ocr->Read(event->card,event->number);
+#endif
       if(m_save){
          std::filesystem::create_directories(m_root);
          auto const name=m_root/std::format("event-{:06}.png",event->number);
@@ -480,11 +544,14 @@ void Usage() {
    std::println("   or: --sequence=folder [--save-events]");
    std::println("   or: --camera=0 [--backend=any|dshow|msmf] [--width=640 --height=480 --fps=30 --fourcc=auto|mjpg|yuy2] [--save-events]");
    std::println("   or: --probe-camera=0          test 4 Windows camera delivery modes");
+   std::println("   optional: --ocr --tessdata=PATH_TO_TESSDATA (eng.traineddata required)");
 }
 }
 int main(int argc,char** argv) {
    try{
       bool selfTest=false,save=false;
+      bool ocr=false;
+      std::string tessdata;
       std::string backend="any";
       std::string fourcc="auto";
       int width=640,height=480,fpsRequested=30;
@@ -496,6 +563,8 @@ int main(int argc,char** argv) {
          if(arg=="--help"){Usage();return 0;}
          if(arg=="--self-test")selfTest=true;
          else if(arg=="--save-events")save=true;
+         else if(arg=="--ocr")ocr=true;
+         else if(arg.starts_with("--tessdata="))tessdata=arg.substr(11);
          else if(arg.starts_with("--backend="))backend=arg.substr(10);
          else if(arg.starts_with("--fourcc="))fourcc=arg.substr(9);
          else if(arg.starts_with("--width="))width=CameraIndex(arg.substr(8));
@@ -520,6 +589,17 @@ int main(int argc,char** argv) {
       if(folder.empty()==!camera)
          throw std::runtime_error("select one of --sequence or --camera");
       Processor processor(save);
+#if defined(DECKKERNEL_CAMERA_HAS_OCR)
+      if(ocr) {
+         if(tessdata.empty()) {
+            if(auto const* env=std::getenv("TESSDATA_PREFIX");env&&*env)tessdata=env;
+            else throw std::runtime_error("--ocr requires --tessdata=directory or TESSDATA_PREFIX");
+         }
+         processor.EnableOcr(tessdata);
+      }
+#else
+      if(ocr)throw std::runtime_error("OCR was not enabled at CMake configure time");
+#endif
       if(!folder.empty()){
          std::vector<std::filesystem::path> frames;
          for(auto const& e:std::filesystem::directory_iterator(folder)){
@@ -569,7 +649,19 @@ int main(int argc,char** argv) {
          } else {
             ++blackFrames;
          }
-         preview.Show(frame,*camera,fps,signal.brightness);
+         // Visual diagnostic: mark the four corners that pass the card geometry checks.
+         cv::Mat annotated=frame.clone();
+         if(auto found=FindCard(frame)) {
+            for(unsigned i=0;i<4;++i)
+               cv::line(annotated,found->corners[i],found->corners[(i+1)%4],
+                  cv::Scalar(0,220,0),2,cv::LINE_AA);
+            cv::putText(annotated,"CARD CONTOUR",cv::Point(12,26),
+               cv::FONT_HERSHEY_SIMPLEX,0.7,cv::Scalar(0,220,0),2,cv::LINE_AA);
+         } else {
+            cv::putText(annotated,"NO CARD CONTOUR",cv::Point(12,26),
+               cv::FONT_HERSHEY_SIMPLEX,0.7,cv::Scalar(0,170,240),2,cv::LINE_AA);
+         }
+         preview.Show(annotated,*camera,fps,signal.brightness);
          auto now=std::chrono::steady_clock::now();
          double const seconds=std::chrono::duration<double>(now-interval).count();
          if(seconds>=2.0){
