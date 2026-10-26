@@ -64,6 +64,9 @@ function(adecc_install_pinned_runtime target component)
    adecc_runtime_search_directories(_adecc_dirs _adecc_toolchain_dirs)
    set(ADECC_RUNTIME_EXE "$<TARGET_FILE:${target}>")
    set(ADECC_RUNTIME_DIRS "${_adecc_dirs}")
+   set(ADECC_RUNTIME_COMPILER_DIR "${_compiler_dir}")
+   set(ADECC_RUNTIME_ZLIB_DIR "${ADECC_TP_ZLIB_ROOT}/bin/win64/${CMAKE_BUILD_TYPE}")
+   set(ADECC_RUNTIME_RESOLVER "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ResolvePinnedRuntimeConflicts.cmake")
    # Only these source roots are eligible to supply copied runtime DLLs.
    # The operating system's own DLLs remain host-provided and are not installed.
    set(ADECC_RUNTIME_ALLOWED_ROOTS
@@ -74,6 +77,9 @@ function(adecc_install_pinned_runtime target component)
 set(_adecc_executable [==[@ADECC_RUNTIME_EXE@]==])
 set(_adecc_search_dirs [==[@ADECC_RUNTIME_DIRS@]==])
 set(_adecc_allowed_roots [==[@ADECC_RUNTIME_ALLOWED_ROOTS@]==])
+set(_adecc_compiler_dir [==[@ADECC_RUNTIME_COMPILER_DIR@]==])
+set(_adecc_zlib_dir [==[@ADECC_RUNTIME_ZLIB_DIR@]==])
+include([==[@ADECC_RUNTIME_RESOLVER@]==])
 file(GET_RUNTIME_DEPENDENCIES
    EXECUTABLES "${_adecc_executable}"
    RESOLVED_DEPENDENCIES_VAR _adecc_resolved
@@ -87,10 +93,8 @@ if(_adecc_unresolved)
    message(FATAL_ERROR
       "Unresolved runtime dependencies of ${_adecc_executable}: ${_adecc_unresolved}")
 endif()
-if(_adecc_conflict_FILENAMES)
-   message(FATAL_ERROR
-      "Conflicting runtime dependencies: ${_adecc_conflict_FILENAMES}")
-endif()
+adecc_reconcile_runtime_dependencies(_adecc_resolved _adecc_conflict
+   "${_adecc_compiler_dir}" "${_adecc_zlib_dir}")
 
 # Preflight the entire shared runtime directory before touching any DLL.
 # Long-running DeckKernel processes may have the same libraries loaded.
@@ -176,6 +180,9 @@ function(adecc_stage_pinned_runtime target)
    set(ADECC_RUNTIME_EXE "$<TARGET_FILE:${target}>")
    set(ADECC_RUNTIME_OUTPUT "$<TARGET_FILE_DIR:${target}>")
    set(ADECC_RUNTIME_DIRS "${_adecc_dirs}")
+   set(ADECC_RUNTIME_COMPILER_DIR "${_compiler_dir}")
+   set(ADECC_RUNTIME_ZLIB_DIR "${ADECC_TP_ZLIB_ROOT}/bin/win64/${CMAKE_BUILD_TYPE}")
+   set(ADECC_RUNTIME_RESOLVER "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ResolvePinnedRuntimeConflicts.cmake")
    set(ADECC_RUNTIME_ALLOWED_ROOTS
       "${ADECC_REPOSITORY_ROOT}/ThirdParty;${_adecc_toolchain_dirs}")
 
@@ -184,6 +191,9 @@ set(_exe [==[@ADECC_RUNTIME_EXE@]==])
 set(_output [==[@ADECC_RUNTIME_OUTPUT@]==])
 set(_dirs [==[@ADECC_RUNTIME_DIRS@]==])
 set(_roots [==[@ADECC_RUNTIME_ALLOWED_ROOTS@]==])
+set(_compiler_dir [==[@ADECC_RUNTIME_COMPILER_DIR@]==])
+set(_zlib_dir [==[@ADECC_RUNTIME_ZLIB_DIR@]==])
+include([==[@ADECC_RUNTIME_RESOLVER@]==])
 file(GET_RUNTIME_DEPENDENCIES
    EXECUTABLES "${_exe}"
    RESOLVED_DEPENDENCIES_VAR _resolved
@@ -195,9 +205,8 @@ file(GET_RUNTIME_DEPENDENCIES
 if(_unresolved)
    message(FATAL_ERROR "Missing runtime imports for ${_exe}: ${_unresolved}")
 endif()
-if(_conflict_FILENAMES)
-   message(FATAL_ERROR "Conflicting runtime imports: ${_conflict_FILENAMES}")
-endif()
+adecc_reconcile_runtime_dependencies(_resolved _conflict
+   "${_compiler_dir}" "${_zlib_dir}")
 set(_count 0)
 foreach(_dll IN LISTS _resolved)
    file(REAL_PATH "${_dll}" _real)
