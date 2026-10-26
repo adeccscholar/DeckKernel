@@ -157,3 +157,22 @@ Interpretation:
 This test is only a Windows hardware diagnostic. It does not write files,
 access PostgreSQL, contact Scryfall, or change the running downloader.
 It has not been compiled or run on the user's BCC64X system yet.
+
+## Stabilized live view and event semantics
+
+The Windows live preview now uses an off-screen GDI bitmap to paint each frame
+in one BitBlt; WM_ERASEBKGND does not clear the client area between frames.
+This addresses preview flicker independently of camera FPS.
+
+The camera event state machine emits **one event per continuous card-presence
+session**, not a new event whenever the dHash changes. Short gaps in contour
+detection and image-content differences do not rearm recognition. To test a
+second card, clear the view so no card contour is detected for at least 45
+frames (about 1.5 s at 30 FPS), then insert the next card. This is an interim
+robustness policy: replacing one card directly with another without an empty
+scene is not yet recognized. Exact Scryfall card identification is also not yet
+implemented; `edition=UNKNOWN` is expected.
+
+The synthetic self-test now includes alternating image-content jitter, brief
+contour dropouts, and removal/reentry. Physical camera behavior remains to be
+verified on the Windows BCC64X target.
