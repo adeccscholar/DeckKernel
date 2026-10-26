@@ -189,6 +189,45 @@ Validated Validate(PGconn* p,IWICImagingFactory* factory,std::uint64_t id){
    a.bitmap=Decode(factory,a.image.bytes);
    return a;
 }
+/** \brief Calculate an aspect-preserving, centered rectangle.
+    \details Fits the source completely inside the viewport (letterboxing)
+    and never enlarges it beyond its native pixel dimensions.
+    Only one axis is selected as the limiting dimension; the other is
+    derived from the original width/height ratio using 64-bit arithmetic.
+*/
+struct ImageExtent {
+   int width{};
+   int height{};
+};
+[[nodiscard]] constexpr ImageExtent AspectFit(
+   UINT srcWidth,UINT srcHeight,int availableWidth,int availableHeight) noexcept {
+   if(!srcWidth||!srcHeight||availableWidth<=0||availableHeight<=0)
+      return {};
+   std::uint64_t const maxWidth=std::min<std::uint64_t>(
+      srcWidth,static_cast<std::uint64_t>(availableWidth));
+   std::uint64_t const maxHeight=std::min<std::uint64_t>(
+      srcHeight,static_cast<std::uint64_t>(availableHeight));
+
+   if(maxWidth*srcHeight<=maxHeight*srcWidth) {
+      return {
+         static_cast<int>(maxWidth),
+         static_cast<int>(std::max<std::uint64_t>(
+            1,(maxWidth*srcHeight+srcWidth/2)/srcWidth))
+         };
+   }
+   return {
+      static_cast<int>(std::max<std::uint64_t>(
+         1,(maxHeight*srcWidth+srcHeight/2)/srcHeight)),
+      static_cast<int>(maxHeight)
+      };
+}
+static_assert(AspectFit(200,300,800,400).width==200);
+static_assert(AspectFit(200,300,800,400).height==300);
+static_assert(AspectFit(600,400,300,400).width==300);
+static_assert(AspectFit(600,400,300,400).height==200);
+static_assert(AspectFit(600,400,1000,1000).width==600);
+static_assert(AspectFit(600,400,1000,1000).height==400);
+
 struct Viewer{
    conn_t conn;
    Com<IWICImagingFactory> factory;
@@ -252,21 +291,39 @@ struct Viewer{
       MoveWindow(info,280,std::max(38,h-96),std::max(10,w-288),89,TRUE);
    }
    void Paint(HDC hdc,RECT rc){
-      RECT area{280,38,rc.right-8,rc.bottom-102};
-      HBRUSH brush=CreateSolidBrush(RGB(25,27,30));FillRect(hdc,&area,brush);DeleteObject(brush);
-      if(!current||area.right<=area.left||area.bottom<=area.top)return;
-      auto const& b=current->bitmap;
-      double scale=std::min(static_cast<double>(area.right-area.left)/b.width,
-         static_cast<double>(area.bottom-area.top)/b.height);
-      int w=std::max(1,static_cast<int>(b.width*scale));
-      int h=std::max(1,static_cast<int>(b.height*scale));
-      int x=area.left+(area.right-area.left-w)/2,y=area.top+(area.bottom-area.top-h)/2;
-      BITMAPINFO bmp{};bmp.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
-      bmp.bmiHeader.biWidth=static_cast<LONG>(b.width);bmp.bmiHeader.biHeight=-static_cast<LONG>(b.height);
-      bmp.bmiHeader.biPlanes=1;bmp.bmiHeader.biBitCount=32;bmp.bmiHeader.biCompression=BI_RGB;
+      // The list and metadata panels are not part of the image viewport.
+      // Unused space is letterboxed rather than stretching the picture.
+      RECT const area{280,38,rc.right-8,rc.bottom-102};
+      if(area.right<=area.left||area.bottom<=area.top)return;
+      HBRUSH const brush=CreateSolidBrush(RGB(25,27,30));
+      FillRect(hdc,&area,brush);
+      DeleteObject(brush);
+      if(!current||current->bitmap.bgra.empty())return;
+
+      auto const& bitmap=current->bitmap;
+      ImageExtent const fitted=AspectFit(bitmap.width,bitmap.height,
+         area.right-area.left,area.bottom-area.top);
+      if(fitted.width==0||fitted.height==0)return;
+      int const x=area.left+((area.right-area.left)-fitted.width)/2;
+      int const y=area.top+((area.bottom-area.top)-fitted.height)/2;
+
+      BITMAPINFO info{};
+      info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
+      info.bmiHeader.biWidth=static_cast<LONG>(bitmap.width);
+      info.bmiHeader.biHeight=-static_cast<LONG>(bitmap.height);
+      info.bmiHeader.biPlanes=1;
+      info.bmiHeader.biBitCount=32;
+      info.bmiHeader.biCompression=BI_RGB;
+
+      int const saved=SaveDC(hdc);
+      IntersectClipRect(hdc,area.left,area.top,area.right,area.bottom);
       SetStretchBltMode(hdc,HALFTONE);
-      StretchDIBits(hdc,x,y,w,h,0,0,static_cast<int>(b.width),static_cast<int>(b.height),
-         b.bgra.data(),&bmp,DIB_RGB_COLORS,SRCCOPY);
+      SetBrushOrgEx(hdc,0,0,nullptr);
+      StretchDIBits(hdc,x,y,fitted.width,fitted.height,
+         0,0,static_cast<int>(bitmap.width),static_cast<int>(bitmap.height),
+         bitmap.bgra.data(),&info,DIB_RGB_COLORS,SRCCOPY);
+      if(saved)RestoreDC(hdc,saved);
+
    }
 };
 template<class F>void Safe(Viewer* p,F&& fn){
