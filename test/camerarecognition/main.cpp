@@ -204,8 +204,8 @@ public:
       m_ready=true;
    }
    ~CardOcr(){if(m_ready)m_api.End();}
-   void Read(cv::Mat const& card,unsigned eventNumber) {
-      if(card.empty()||card.cols<100||card.rows<200)return;
+   bool Read(cv::Mat const& card,unsigned eventNumber,unsigned attempt) {
+      if(card.empty()||card.cols<100||card.rows<200)return false;
       // The upper title band is the most useful first-pass OCR target.
       auto const title=ReadRegion(card,
          cv::Rect(card.cols/20,card.rows/30,card.cols*9/10,card.rows/9),
@@ -214,11 +214,12 @@ public:
       auto const rules=ReadRegion(card,
          cv::Rect(card.cols/15,card.rows*58/100,card.cols*13/15,
             card.rows*27/100),tesseract::PSM_AUTO);
-      std::println("[CAM-OCR] card #{} name=\"{}\" confidence={} status={}",
-         eventNumber,title.text,title.confidence,title.text.empty()?"UNREADABLE":"UNVERIFIED");
-      std::println("[CAM-OCR] card #{} text=\"{}\" confidence={} status={}",
-         eventNumber,rules.text,rules.confidence,rules.text.empty()?"UNREADABLE":"UNVERIFIED");
+      std::println("[CAM-OCR] card #{} attempt={} name=\"{}\" confidence={} status={}",
+         eventNumber,attempt,title.text,title.confidence,title.text.empty()?"UNREADABLE":"UNVERIFIED");
+      std::println("[CAM-OCR] card #{} attempt={} text=\"{}\" confidence={} status={}",
+         eventNumber,attempt,rules.text,rules.confidence,rules.text.empty()?"UNREADABLE":"UNVERIFIED");
       std::println("[CAM-OCR] unverified OCR, not an edition or Oracle identity");
+      return !title.text.empty();
    }
 };
 #endif
@@ -227,6 +228,10 @@ class Processor {
    StableCardTrigger m_detector;
    bool m_save{};
    unsigned m_removedEvents{};
+   unsigned m_liveFrames{},m_ocrAttempts{};
+   double m_bestSharpness{};
+   std::optional<unsigned> m_ocrCard;
+   bool m_ocrAccepted{};
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
    std::unique_ptr<CardOcr> m_ocr;
 #endif
@@ -241,10 +246,36 @@ public:
 #endif
    [[nodiscard]] unsigned RemovedEvents() const noexcept {return m_removedEvents;}
    bool Process(cv::Mat const& frame) {
-      auto event=m_detector.Accept(FindCard(frame));
+      auto found=FindCard(frame);
+      auto event=m_detector.Accept(found);
+      if(found && m_ocrCard && !m_ocrAccepted) {
+#if defined(DECKKERNEL_CAMERA_HAS_OCR)
+         if(m_ocr && m_ocrAttempts<8) {
+            ++m_liveFrames;
+            if(m_liveFrames>=30) {
+               cv::Mat gray;
+               cv::cvtColor(found->rectified,gray,cv::COLOR_BGR2GRAY);
+               cv::Mat lap;
+               cv::Laplacian(gray,lap,CV_64F);
+               cv::Scalar mean,dev;
+               cv::meanStdDev(lap,mean,dev);
+               double const sharpness=dev[0]*dev[0];
+               if(sharpness>m_bestSharpness*1.10 || m_liveFrames>=90) {
+                  m_liveFrames=0;
+                  m_bestSharpness=std::max(m_bestSharpness,sharpness);
+                  ++m_ocrAttempts;
+                  m_ocrAccepted=m_ocr->Read(found->rectified,*m_ocrCard,m_ocrAttempts);
+                  if(m_ocrAccepted)std::println("[CAM-OCR] card #{} accepted after {} attempts",*m_ocrCard,m_ocrAttempts);
+               }
+            }
+         }
+#endif
+      }
       if(!event)return false;
       if(event->kind==StableCardTrigger::EventKind::Removed) {
          ++m_removedEvents;
+         m_ocrCard.reset();m_ocrAccepted=false;m_ocrAttempts=0;
+         m_liveFrames=0;m_bestSharpness=0;
          std::println("[CAM] CARD-NO-LONGER-DETECTED #{} fingerprint={:016x}; "
             "absent-frames=45; ready-for-next-card",
             event->number,event->fingerprint);
@@ -252,8 +283,13 @@ public:
       }
       std::println("[CAM] NEW-STABLE-CARD #{} fingerprint={:016x}; edition=UNKNOWN",
          event->number,event->fingerprint);
+      m_ocrCard=event->number;
+      m_liveFrames=0;m_bestSharpness=0;m_ocrAttempts=0;m_ocrAccepted=false;
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
-      if(m_ocr)m_ocr->Read(event->card,event->number);
+      if(m_ocr) {
+         m_ocrAttempts=1;
+         m_ocrAccepted=m_ocr->Read(event->card,event->number,m_ocrAttempts);
+      }
 #endif
       if(m_save){
          std::filesystem::create_directories(m_root);
@@ -621,7 +657,7 @@ int main(int argc,char** argv) {
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
             if(ocr) {
                CardOcr stillOcr(tessdata);
-               stillOcr.Read(found->rectified,1);
+               static_cast<void>(stillOcr.Read(found->rectified,1,1));
             }
 #endif
             if(save) {
@@ -635,7 +671,7 @@ int main(int argc,char** argv) {
             if(ocr) {
                // Original photo may already be tightly cropped to the card.
                CardOcr stillOcr(tessdata);
-               stillOcr.Read(image,1);
+               static_cast<void>(stillOcr.Read(image,1,1));
             }
 #endif
          }
