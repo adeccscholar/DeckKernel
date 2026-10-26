@@ -601,14 +601,10 @@ int main(int argc,char** argv) {
          static_cast<unsigned>(camera.has_value())+static_cast<unsigned>(!imageFile.empty());
       if(sources!=1)
          throw std::runtime_error("select exactly one of --image, --sequence or --camera");
-      Processor processor(save);
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
-      if(ocr) {
-         if(tessdata.empty()) {
-            if(auto const* env=std::getenv("TESSDATA_PREFIX");env&&*env)tessdata=env;
-            else tessdata=(std::filesystem::path(argv[0]).parent_path()/"tessdata").string();
-         }
-         processor.EnableOcr(tessdata);
+      if(ocr && tessdata.empty()) {
+         if(auto const* env=std::getenv("TESSDATA_PREFIX");env&&*env)tessdata=env;
+         else tessdata=(std::filesystem::path(argv[0]).parent_path()/"tessdata").string();
       }
 #else
       if(ocr)throw std::runtime_error("OCR was not enabled at CMake configure time");
@@ -645,6 +641,10 @@ int main(int argc,char** argv) {
          }
          return 0;
       }
+      Processor processor(save);
+#if defined(DECKKERNEL_CAMERA_HAS_OCR)
+      if(ocr)processor.EnableOcr(tessdata);
+#endif
       if(!folder.empty()){
          std::vector<std::filesystem::path> frames;
          for(auto const& e:std::filesystem::directory_iterator(folder)){
