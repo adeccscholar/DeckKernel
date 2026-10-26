@@ -518,8 +518,15 @@ void ImportImages(postgres_database_ty const& aDatabase,
             }
             aMetrics.flDatabaseSeconds+=fnSeconds(aDatabaseStarted);
             ++uSaved;
-            if(aCache.RemoveCommitted(strUrl,optCached->strSha256))
-               ++aMetrics.uCacheDeleted;
+            try {
+               if(aCache.RemoveCommitted(strUrl,optCached->strSha256))
+                  ++aMetrics.uCacheDeleted;
+            }
+            catch(std::exception const& ex) {
+               // Cleanup is best-effort after PostgreSQL has committed.
+               std::println(std::cerr,
+                  "[IMAGE-CACHE] cleanup warning for {}: {}",strUrl,ex.what());
+            }
          }
          catch(ImageDownloadError const& ex) {
             ++uFailed;
