@@ -120,3 +120,40 @@ double-faced and rotated cards. For each, capture several angles/distances,
 
 The synthetic CTest covers event rearming, not physical-world accuracy.
 A native Windows/BCC64X runtime test with a real camera is still required.
+
+## Independent native DirectShow hardware activation
+
+The OpenCV 5.0 BuildEngine catalog enables WITH_DSHOW, disables WITH_MSMF
+and videoio plug-ins. The existing OpenCV consumer smoke only checks whether
+the DirectShow backend is registered: it never activates a physical webcam.
+An OpenCV videoio backend that reports isOpened() can nevertheless deliver
+1920x1080 black frames at ~1 FPS while the physical camera LED remains OFF.
+
+Use a separate executable with *native Windows DirectShow COM* to determine
+whether the Windows driver can activate the actual hardware independently of
+OpenCV. No OpenCV DLL is linked into this executable.
+
+    apps\Release\deckkernel_native_camera_probe.exe --list
+    apps\Release\deckkernel_native_camera_probe.exe --device=0 --seconds=8
+
+The enumeration reports the real DirectShow FriendlyName and DevicePath.
+The device number is scoped to this enumeration, not a guaranteed match for
+the opaque OpenCV CAP_DSHOW index. The probe builds a native capture graph
+with a video renderer, calls IMediaControl::Run, and checks that the graph
+enters RUNNING. Observe the **physical camera LED** and native preview.
+RUNNING alone is not proof of visible pixels.
+
+Interpretation:
+
+- Native camera LED turns on and preview works: Windows hardware works;
+  investigate BuildEngine's OpenCV 5.0 DSHOW/videoio integration, not card
+  detection.
+- Native graph cannot start or camera LED remains off: Windows driver,
+  device selection, privacy permissions or hardware activation are still
+  suspect. The HRESULT is printed to identify the exact failing COM call.
+- If neither native enumeration nor the Windows Camera app sees the expected
+  devices, the problem is below OpenCV.
+
+This test is only a Windows hardware diagnostic. It does not write files,
+access PostgreSQL, contact Scryfall, or change the running downloader.
+It has not been compiled or run on the user's BCC64X system yet.

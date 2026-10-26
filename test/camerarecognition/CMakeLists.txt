@@ -34,5 +34,19 @@ include("${DECKKERNEL_ROOT}/Cache/cmake/InstallPinnedRuntime.cmake")
 adecc_stage_pinned_runtime(deckkernel_camera_recognition_test)
 install(TARGETS deckkernel_camera_recognition_test RUNTIME DESTINATION .)
 adecc_install_pinned_runtime(deckkernel_camera_recognition_test Runtime)
+# Independent hardware activation probe. DirectShow's Windows SDK COM
+# interfaces are used directly; OpenCV DLLs and its videoio wrapper are
+# deliberately NOT linked into this executable.
+add_executable(deckkernel_native_camera_probe native_camera.cpp)
+set_property(TARGET deckkernel_native_camera_probe PROPERTY CXX_SCAN_FOR_MODULES OFF)
+target_compile_features(deckkernel_native_camera_probe PRIVATE cxx_std_23)
+target_compile_definitions(deckkernel_native_camera_probe PRIVATE
+   UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX
+   CHRONO_WORK_AROUND CHRONO_MISSED_ZONEDB)
+target_link_libraries(deckkernel_native_camera_probe PRIVATE ole32 oleaut32 user32)
+adecc_stage_pinned_runtime(deckkernel_native_camera_probe)
+install(TARGETS deckkernel_native_camera_probe RUNTIME DESTINATION .)
+adecc_install_pinned_runtime(deckkernel_native_camera_probe Runtime)
+
 enable_testing()
 add_test(NAME CameraRecognitionStateMachine COMMAND deckkernel_camera_recognition_test --self-test)
