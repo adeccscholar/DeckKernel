@@ -25,8 +25,8 @@ indexer independently of the image downloader.
 
 Without --follow the program exits after existing pending images have been
 processed. --limit=N caps successful images (0 means unlimited).
-DECKKERNEL_SCAN_INDEX_LIMIT defaults to 100 in one-shot mode, 0 in
---follow mode. --batch-size=N limits the bytes queried per batch; each image
+DECKKERNEL_SCAN_INDEX_LIMIT defaults to 0 (ALL) in both one-shot
+and --follow mode. --batch-size=N limits the bytes queried per batch; each image
 is decoded and indexed sequentially within the batch. Concurrent means
 running alongside the importer, not multiple CPU workers or multiple
 indexer instances.
@@ -45,3 +45,17 @@ post-build staging and installation. This includes opencv_feature500.dll
 only a subset of package DLL directories. Re-run CMake configure after pulling
 changes, then build and install. Existing identical DLLs are reused; a
 mismatched loaded DLL is never silently overwritten.
+
+## Complete initial index
+
+The previous default of 100 was a test cap and is removed. Run
+
+    apps\Release\deckkernel_card_scantest.exe --all --batch-size=32
+
+to index every available unindexed image, in small PostgreSQL batches.
+Repeat the command safely to process newly added assets; already indexed
+version-1 records are skipped. Use --follow to continue polling for new
+images. --limit=N remains only an explicit, opt-in test limit.
+
+The camera matcher reads this existing scryfall_image_features table.
+No cache flush or re-import of Scryfall records is necessary.
