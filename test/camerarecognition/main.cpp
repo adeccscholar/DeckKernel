@@ -5,6 +5,7 @@
     \details No Scryfall requests, no database access, no physical edition
              identification. Image evidence is optional and local.
 */
+#include <Windows.h>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/geometry.hpp>
@@ -20,6 +21,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <chrono>
 #include <format>
 #include <iostream>
 #include <limits>
@@ -145,6 +147,83 @@ public:
       return true;
    }
 };
+
+#if defined(DECKKERNEL_CAMERA_HAS_VIDEOIO)
+class CameraWindow {
+   HWND m_hwnd{};
+   cv::Mat m_pixels;
+   static LRESULT CALLBACK Proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
+      if(msg==WM_NCCREATE) {
+         auto* cs=reinterpret_cast<CREATESTRUCTW*>(lp);
+         SetWindowLongPtrW(hwnd,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
+         return TRUE;
+      }
+      auto* self=reinterpret_cast<CameraWindow*>(GetWindowLongPtrW(hwnd,GWLP_USERDATA));
+      if(msg==WM_CLOSE){DestroyWindow(hwnd);return 0;}
+      if(msg==WM_DESTROY){if(self)self->m_hwnd=nullptr;return 0;}
+      if(msg==WM_PAINT) {
+         PAINTSTRUCT ps{};
+         HDC dc=BeginPaint(hwnd,&ps);
+         RECT rc{};GetClientRect(hwnd,&rc);
+         FillRect(dc,&rc,reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+         if(self&&!self->m_pixels.empty()&&rc.right>0&&rc.bottom>0) {
+            auto const& img=self->m_pixels;
+            double scale=std::min(static_cast<double>(rc.right)/img.cols,
+               static_cast<double>(rc.bottom)/img.rows);
+            int w=std::max(1,static_cast<int>(img.cols*scale));
+            int h=std::max(1,static_cast<int>(img.rows*scale));
+            BITMAPINFO info{};
+            info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
+            info.bmiHeader.biWidth=img.cols;
+            info.bmiHeader.biHeight=-img.rows;
+            info.bmiHeader.biPlanes=1;
+            info.bmiHeader.biBitCount=32;
+            info.bmiHeader.biCompression=BI_RGB;
+            SetStretchBltMode(dc,HALFTONE);
+            StretchDIBits(dc,(rc.right-w)/2,(rc.bottom-h)/2,w,h,
+               0,0,img.cols,img.rows,img.data,&info,DIB_RGB_COLORS,SRCCOPY);
+         }
+         EndPaint(hwnd,&ps);
+         return 0;
+      }
+      return DefWindowProcW(hwnd,msg,wp,lp);
+   }
+public:
+   explicit CameraWindow(int index) {
+      HINSTANCE instance=GetModuleHandleW(nullptr);
+      WNDCLASSW cls{};
+      cls.hInstance=instance;
+      cls.lpfnWndProc=Proc;
+      cls.lpszClassName=L"DeckKernelLiveCamera";
+      cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);
+      if(!RegisterClassW(&cls)&&GetLastError()!=ERROR_CLASS_ALREADY_EXISTS)
+         throw std::runtime_error("camera preview class registration failed");
+      m_hwnd=CreateWindowExW(0,cls.lpszClassName,L"DeckKernel - camera preview",
+         WS_OVERLAPPEDWINDOW|WS_VISIBLE,CW_USEDEFAULT,CW_USEDEFAULT,
+         920,730,nullptr,nullptr,instance,this);
+      if(!m_hwnd)throw std::runtime_error("camera preview creation failed");
+      ShowWindow(m_hwnd,SW_SHOW);
+   }
+   bool Messages() {
+      MSG message{};
+      while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){
+         TranslateMessage(&message);
+         DispatchMessageW(&message);
+      }
+      return m_hwnd!=nullptr;
+   }
+   void Show(cv::Mat const& frame,int index,double fps,double brightness) {
+      if(frame.channels()==3)cv::cvtColor(frame,m_pixels,cv::COLOR_BGR2BGRA);
+      else if(frame.channels()==4)m_pixels=frame.clone();
+      else cv::cvtColor(frame,m_pixels,cv::COLOR_GRAY2BGRA);
+      auto title=std::format(L"DeckKernel - camera {} - {}x{} - {:.1f} fps - brightness {:.0f}",
+         index,frame.cols,frame.rows,fps,brightness);
+      SetWindowTextW(m_hwnd,title.c_str());
+      InvalidateRect(m_hwnd,nullptr,FALSE);
+   }
+};
+#endif
+
 void SelfTest() {
    Processor processor(false);
    cv::Mat blank(720,1280,CV_8UC3,cv::Scalar(20,20,20));
@@ -168,12 +247,13 @@ int CameraIndex(std::string_view str) {
 void Usage() {
    std::println("Usage: deckkernel_camera_recognition_test --self-test");
    std::println("   or: --sequence=folder [--save-events]");
-   std::println("   or: --camera=0 [--save-events] (requires OpenCV videoio)");
+   std::println("   or: --camera=0 [--backend=any|dshow|msmf] [--save-events]");
 }
 }
 int main(int argc,char** argv) {
    try{
       bool selfTest=false,save=false;
+      std::string backend="any";
       std::string folder;
       std::optional<int> camera;
       for(int i=1;i<argc;++i){
@@ -181,6 +261,7 @@ int main(int argc,char** argv) {
          if(arg=="--help"){Usage();return 0;}
          if(arg=="--self-test")selfTest=true;
          else if(arg=="--save-events")save=true;
+         else if(arg.starts_with("--backend="))backend=arg.substr(10);
          else if(arg.starts_with("--sequence="))folder=arg.substr(11);
          else if(arg.starts_with("--camera="))camera=CameraIndex(arg.substr(9));
          else throw std::runtime_error("unknown argument (use --help)");
@@ -208,14 +289,48 @@ int main(int argc,char** argv) {
          return 0;
       }
 #if defined(DECKKERNEL_CAMERA_HAS_VIDEOIO)
-      cv::VideoCapture capture(*camera,cv::CAP_ANY);
+      int api=cv::CAP_ANY;
+      if(backend=="dshow")api=cv::CAP_DSHOW;
+      else if(backend=="msmf")api=cv::CAP_MSMF;
+      else if(backend!="any")throw std::runtime_error("use --backend=any|dshow|msmf");
+      std::println("[CAM] opening camera={} backend-request={}",*camera,backend);
+      cv::VideoCapture capture(*camera,api);
       if(!capture.isOpened())
-         throw std::runtime_error("cannot open camera; check permissions and ID");
-      std::println("[CAM] live camera={}; Ctrl+C stops; no network or database writes",
-         *camera);
+         throw std::runtime_error("cannot open camera: try another index/backend or Windows camera privacy settings");
+      std::println("[CAM] opened camera={} backend={}",*camera,capture.getBackendName());
+      CameraWindow preview(*camera);
       cv::Mat frame;
-      while(capture.read(frame)&&!frame.empty())processor.Process(frame);
-      throw std::runtime_error("camera stopped delivering frames");
+      unsigned long long count=0;
+      unsigned failures=0;
+      auto interval=std::chrono::steady_clock::now();
+      double fps=0.0;
+      while(preview.Messages()){
+         if(!capture.read(frame)||frame.empty()){
+            if(++failures==1 || failures%30==0)
+               std::println(std::cerr,"[CAM] no frame returned, consecutive failures={}",failures);
+            if(failures>=90)throw std::runtime_error("camera open but no frames received");
+            continue;
+         }
+         failures=0;
+         ++count;
+         cv::Scalar const mean=cv::mean(frame);
+         double const brightness=frame.channels()==3?
+            (mean[0]+mean[1]+mean[2])/3.0:mean[0];
+         processor.Process(frame);
+         preview.Show(frame,*camera,fps,brightness);
+         auto now=std::chrono::steady_clock::now();
+         double seconds=std::chrono::duration<double>(now-interval).count();
+         if(seconds>=2.0){
+            fps=count/seconds;
+            std::println("[CAM] backend={} frames={} size={}x{} fps={:.1f} brightness={:.0f}",
+               capture.getBackendName(),count,frame.cols,frame.rows,fps,brightness);
+            if(brightness<8)
+               std::println("[CAM] nearly black frames: check lens/privacy shutter");
+            count=0;interval=now;
+         }
+      }
+      std::println("[CAM] preview closed");
+      return 0;
 #else
       throw std::runtime_error("OpenCV videoio not present in installed BuildEngine stack; use --sequence");
 #endif
