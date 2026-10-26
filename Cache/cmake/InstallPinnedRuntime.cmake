@@ -92,7 +92,11 @@ if(_adecc_conflict_FILENAMES)
       "Conflicting runtime dependencies: ${_adecc_conflict_FILENAMES}")
 endif()
 
-set(_adecc_count 0)
+# Preflight the entire shared runtime directory before touching any DLL.
+# Long-running DeckKernel processes may have the same libraries loaded.
+set(_adecc_install_sources)
+set(_adecc_install_destinations)
+set(_adecc_reused 0)
 foreach(_dll IN LISTS _adecc_resolved)
    file(REAL_PATH "${_dll}" _dll_real)
    file(TO_CMAKE_PATH "${_dll_real}" _dll_normalized)
@@ -108,16 +112,52 @@ foreach(_dll IN LISTS _adecc_resolved)
          break()
       endif()
    endforeach()
-   if(_adecc_copy)
-      file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}"
-         TYPE SHARED_LIBRARY FILES "${_dll_real}")
-      math(EXPR _adecc_count "${_adecc_count} + 1")
-      message(STATUS "[RUNTIME] Required DLL: ${_dll_real}")
-   else()
+   if(NOT _adecc_copy)
       message(STATUS "[RUNTIME] Host-provided DLL (not copied): ${_dll_real}")
+      continue()
    endif()
+
+   get_filename_component(_dll_name "${_dll_real}" NAME)
+   set(_destination "${CMAKE_INSTALL_PREFIX}/${_dll_name}")
+   if(EXISTS "${_destination}")
+      file(SHA256 "${_dll_real}" _source_hash)
+      file(SHA256 "${_destination}" _destination_hash)
+      if(_source_hash STREQUAL _destination_hash)
+         math(EXPR _adecc_reused "${_adecc_reused} + 1")
+         message(STATUS "[RUNTIME] Reusing identical installed DLL: ${_dll_name}")
+         continue()
+      endif()
+      # Never try replacing a DLL that another program may have loaded.
+      message(FATAL_ERROR
+         "[RUNTIME] Installed shared DLL differs from the pinned build: ${_destination}\n"
+         "Source: ${_dll_real}\n"
+         "Refusing to overwrite a potentially loaded DLL. Keep the running "
+         "image downloader alive and deploy to a separate app directory, or "
+         "stop all programs using the DLL before replacing it.")
+   endif()
+   list(APPEND _adecc_install_sources "${_dll_real}")
+   list(APPEND _adecc_install_destinations "${_destination}")
 endforeach()
-message(STATUS "[RUNTIME] Installed ${_adecc_count} required DLLs")
+
+set(_adecc_count 0)
+list(LENGTH _adecc_install_sources _adecc_pending)
+if(_adecc_pending GREATER 0)
+   math(EXPR _adecc_last "${_adecc_pending} - 1")
+   foreach(_index RANGE 0 ${_adecc_last})
+      list(GET _adecc_install_sources ${_index} _source)
+      list(GET _adecc_install_destinations ${_index} _destination)
+      file(COPY_FILE "${_source}" "${_destination}"
+         ONLY_IF_DIFFERENT RESULT _copy_result)
+      if(NOT _copy_result STREQUAL "0")
+         message(FATAL_ERROR
+            "[RUNTIME] Failed to copy ${_source} to ${_destination}: "
+            "${_copy_result}. Check folder permissions and running programs.")
+      endif()
+      math(EXPR _adecc_count "${_adecc_count} + 1")
+      message(STATUS "[RUNTIME] Installed new DLL: ${_destination}")
+   endforeach()
+endif()
+message(STATUS "[RUNTIME] New DLLs: ${_adecc_count}; reused identical DLLs: ${_adecc_reused}")
 ]=])
    string(CONFIGURE "${_script_template}" _script @ONLY)
    set(_script_file "${CMAKE_CURRENT_BINARY_DIR}/adecc_runtime_${target}_${component}.cmake")
