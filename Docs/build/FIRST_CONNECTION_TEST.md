@@ -333,8 +333,23 @@ apps\Release\deckkernel_scryfall_postgres_test.exe --images-offline
 ```
 
 - `--image-probe`: one unresolved image URL (after restoring all PostgreSQL cache hits), with at most one HTTPS attempt. Test this first.
-- `--images-only`: restore all permanent PostgreSQL cache hits, then process only missing URLs, bounded by `DECKKERNEL_IMAGE_LIMIT` (default 100, 0 for all).
-- `--images-offline`: restore images from the PostgreSQL cache and local disk cache only; **never contact Scryfall**. Disk-only recovery is bounded by `DECKKERNEL_IMAGE_LIMIT`.
-- `--all` (or no argument): the original full Load/Parse/Store/import workflow; **this resets the model**.
+- `--images-only` (**default, including no-argument launch**): restore all permanent PostgreSQL cache hits and process every remaining URL in bounded database pages, **without an external script**. Its default is unlimited; explicitly set `DECKKERNEL_IMAGE_LIMIT` for a bounded run.
+- `--images-offline`: restore every available image from the PostgreSQL cache and local disk cache only; **never contact Scryfall**. Explicit `DECKKERNEL_IMAGE_LIMIT` can bound the disk-only pass.
+- `--all` (explicit only): the original full Load/Parse/Store/import workflow; **this resets the model**. Its initial network image limit remains 100 unless explicitly configured.
 
 The separate image downloader now matches the bulk downloader's libcurl configuration by requesting Windows native CA certificates through `CURLSSLOPT_NATIVE_CA` when available, with peer/host verification enabled. When required, set `DECKKERNEL_CURL_CA_BUNDLE` to an existing trusted PEM certificate-bundle file. **Never disable `CURLOPT_SSL_VERIFYPEER` or `CURLOPT_SSL_VERIFYHOST`.** It prints the active libcurl TLS backend and uses the CURL error buffer to reveal certificate issues. Certificate/TLS failures and HTTP 429/503 now immediately abort the image stage, preventing repeated doomed downloads. Compilation and runtime behavior still require verification on Windows/BCC64X.
+
+
+### Unattended complete image import (no batch file)
+
+Run the installed executable **directly** in the DeckKernel repository root:
+
+```cmd
+apps\Release\deckkernel_scryfall_postgres_test.exe --images-only
+```
+
+The program performs **Connect → PostgreSQL cache restoration → disk cache lookup → download on miss → transactional insert/upsert into both PostgreSQL schemas**, with **no Load, Parse, Store, DDL, or model-table reset**. With no `DECKKERNEL_IMAGE_LIMIT` set, this mode keeps processing until all known image URLs have been attempted. The model catalog is read in keyset pages of 512 records to avoid buffering all image URLs. Every 100 processed URLs it reports successes, misses, network requests, elapsed time, and estimated remaining work. Previously committed images survive interruption; restarting the same executable resumes from the still-null model image rows.
+
+Temporary network and HTTP 429/500/502/503/504 errors are retried with exponential backoff and support for HTTP `Retry-After`. A URL that exhausts its retry allowance is recorded as failed while the importer continues; the process exits nonzero at the end if any URLs failed, so a later run can retry them. TLS certificate and local database/storage errors stop the process immediately; TLS verification stays enabled. During a long outage the retries may delay progress substantially. Use `--image-probe` for a one-image diagnostic and `--images-offline` for a strictly network-free recovery.
+
+**Safety:** The no-argument default has intentionally changed from `--all` to `--images-only` so an ordinary start cannot erase the already imported model. A complete model rebuild is now opt-in with `--all`.

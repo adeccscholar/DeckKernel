@@ -129,13 +129,13 @@ int main(int argc,char* argv[]) {
 
    try {
       if(argc>2) throw std::runtime_error("Expected one mode: --image-probe, --images-only, --images-offline or --all");
-      std::string_view const svMode=argc==2?std::string_view{argv[1]}:std::string_view{"--all"};
+      std::string_view const svMode=argc==2?std::string_view{argv[1]}:std::string_view{"--images-only"};
       if(svMode=="--help" || svMode=="-h") {
          std::println("Usage: deckkernel_scryfall_postgres_test.exe [--all | --images-only | --image-probe | --images-offline]");
          std::println("--image-probe: one missing image, HTTPS/TLS check, no card reload");
-         std::println("--images-only: restore cache and download missing images, no card reload");
-         std::println("--images-offline: restore from caches, no network and no card reload");
-         std::println("--all: full destructive model import (legacy default)");
+         std::println("--images-only (default): restore caches and fetch all missing images, no card reload");
+         std::println("--images-offline: restore all from caches, no network and no card reload");
+         std::println("--all: explicit full model reset / re-import (default image limit 100)");
          return 0;
          }
       if(svMode!="--all" && svMode!="--images-only" &&
@@ -147,6 +147,7 @@ int main(int argc,char* argv[]) {
          postgres_database_ty aDatabase=RunTimedProcess("Connect",[](){return OpenDatabase();});
          ImageImportOptions aOptions;
          aOptions.bAllowNetwork=(svMode!="--images-offline");
+         aOptions.bContinuous=(svMode=="--images-only" || svMode=="--images-offline");
          if(svMode=="--image-probe") aOptions.uMaxMissing=1;
          RunTimedProcess("Images",[&](){ImportImages(aDatabase,aOptions);});
          std::println("[MODE] image stage completed; card and set tables unchanged");

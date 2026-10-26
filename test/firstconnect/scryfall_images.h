@@ -13,6 +13,7 @@ namespace deckkernel::test {
    */
    struct ImageImportOptions final {
       bool bAllowNetwork { true };
+      bool bContinuous { false }; // --images-only / --images-offline process all by default
       std::optional<std::size_t> uMaxMissing;
    };
 

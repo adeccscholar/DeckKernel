@@ -15,6 +15,9 @@
 #include <openssl/evp.h>
 #include <array>
 #include <charconv>
+#include <algorithm>
+#include <cctype>
+#include <ctime>
 #include <cstdlib>
 #include <format>
 #include <iostream>
@@ -34,12 +37,13 @@ std::string Env(char const* szName,char const* szDefault) {
    return szDefault;
 }
 
-std::size_t ImageLimit() {
-   std::string const strLimit=Env("DECKKERNEL_IMAGE_LIMIT","100");
+std::size_t ImageLimit(bool bContinuous) {
+   // The full rebuild stays bounded; image-only mode needs no external loop.
+   std::string const strLimit=Env("DECKKERNEL_IMAGE_LIMIT",bContinuous?"0":"100");
    std::size_t uLimit{};
    auto const aResult=std::from_chars(strLimit.data(),strLimit.data()+strLimit.size(),uLimit);
-   if(aResult.ec!=std::errc{}||aResult.ptr!=strLimit.data()+strLimit.size()||uLimit>1000000)
-      throw std::runtime_error("invalid DECKKERNEL_IMAGE_LIMIT (0..1000000)");
+   if(aResult.ec!=std::errc{}||aResult.ptr!=strLimit.data()+strLimit.size())
+      throw std::runtime_error("invalid DECKKERNEL_IMAGE_LIMIT (nonnegative integer, 0 = unlimited)");
    return uLimit;
 }
 
@@ -55,12 +59,24 @@ struct CurlDeleter {
 struct ImageDownloadError : std::runtime_error {
    CURLcode eCode;
    long iHttpStatus;
-   ImageDownloadError(CURLcode eNewCode,long iNewHttpStatus,std::string strDetail):
-      std::runtime_error(std::move(strDetail)),eCode(eNewCode),iHttpStatus(iNewHttpStatus) {}
+   std::chrono::seconds aRetryAfter;
+   ImageDownloadError(CURLcode eNewCode,long iNewHttpStatus,
+      std::chrono::seconds aNewRetryAfter,std::string strDetail):
+      std::runtime_error(std::move(strDetail)),eCode(eNewCode),
+      iHttpStatus(iNewHttpStatus),aRetryAfter(aNewRetryAfter) {}
+
    [[nodiscard]] bool IsFatal() const noexcept {
       return eCode==CURLE_PEER_FAILED_VERIFICATION ||
-         eCode==CURLE_SSL_CERTPROBLEM || eCode==CURLE_SSL_CACERT_BADFILE ||
-         eCode==CURLE_SSL_CONNECT_ERROR || iHttpStatus==429 || iHttpStatus==503;
+         eCode==CURLE_SSL_CERTPROBLEM ||
+         eCode==CURLE_SSL_CACERT_BADFILE ||
+         eCode==CURLE_SSL_CONNECT_ERROR;
+   }
+   [[nodiscard]] bool IsTransient() const noexcept {
+      return iHttpStatus==429 || iHttpStatus==500 || iHttpStatus==502 ||
+         iHttpStatus==503 || iHttpStatus==504 ||
+         eCode==CURLE_OPERATION_TIMEDOUT || eCode==CURLE_COULDNT_CONNECT ||
+         eCode==CURLE_COULDNT_RESOLVE_HOST || eCode==CURLE_RECV_ERROR ||
+         eCode==CURLE_SEND_ERROR || eCode==CURLE_GOT_NOTHING;
    }
 };
 using pg_connection_ty=std::unique_ptr<PGconn,PgDeleter>;
@@ -78,12 +94,53 @@ std::size_t Receive(char* pData,std::size_t uSize,std::size_t uCount,void* pStat
    return uBytes;
 }
 
+struct ImageResponseHeaders final {
+   std::chrono::seconds aRetryAfter{};
+};
+
+/** \brief Honor Retry-After on HTTP 429/503 without disabling TLS verification. */
+std::size_t ReceiveHeader(char* pData,std::size_t uSize,std::size_t uCount,
+   void* pUser) {
+   std::size_t const uBytes=uSize*uCount;
+   auto& aHeaders=*static_cast<ImageResponseHeaders*>(pUser);
+   std::string strLine(pData,uBytes);
+   auto const fnLower=[](unsigned char ch){return static_cast<char>(std::tolower(ch));};
+   std::string strLower=strLine;
+   std::transform(strLower.begin(),strLower.end(),strLower.begin(),fnLower);
+   if(!strLower.starts_with("retry-after:")) return uBytes;
+   std::string strValue=strLine.substr(12);
+   std::size_t const uBegin=strValue.find_first_not_of(" \t");
+   if(uBegin==std::string::npos) return uBytes;
+   strValue.erase(0,uBegin);
+   std::size_t const uEnd=strValue.find_last_not_of(" \r\n\t");
+   if(uEnd!=std::string::npos) strValue.resize(uEnd+1);
+   std::uint64_t uDelay{};
+   auto const aParsed=std::from_chars(strValue.data(),
+      strValue.data()+strValue.size(),uDelay);
+   if(aParsed.ec==std::errc{} &&
+      aParsed.ptr==strValue.data()+strValue.size()) {
+      aHeaders.aRetryAfter=std::chrono::seconds{
+         static_cast<std::int64_t>(std::min<std::uint64_t>(uDelay,86400))};
+      }
+   else {
+      std::time_t const iRetry=curl_getdate(strValue.c_str(),nullptr);
+      std::time_t const iNow=std::time(nullptr);
+      if(iRetry>iNow) {
+         aHeaders.aRetryAfter=std::chrono::seconds{
+            std::min<std::int64_t>(
+               static_cast<std::int64_t>(iRetry-iNow),86400)};
+         }
+      }
+   return uBytes;
+}
+
 std::vector<unsigned char> DownloadImage(std::string const& strUrl) {
    if(!strUrl.starts_with("https://cards.scryfall.io/"))
       throw std::runtime_error("unapproved Scryfall image host");
    curl_handle_ty aCurl(curl_easy_init());
    if(!aCurl) throw std::runtime_error("curl_easy_init failed");
    std::vector<unsigned char> vecData;
+   ImageResponseHeaders aHeaders;
    std::array<char,CURL_ERROR_SIZE> arrError{};
    curl_easy_setopt(aCurl.get(),CURLOPT_ERRORBUFFER,arrError.data());
    curl_easy_setopt(aCurl.get(),CURLOPT_URL,strUrl.c_str());
@@ -110,11 +167,13 @@ std::vector<unsigned char> DownloadImage(std::string const& strUrl) {
    curl_easy_setopt(aCurl.get(),CURLOPT_USERAGENT,"adecc-DeckKernel/0.1 (+https://github.com/adeccscholar/DeckKernel)");
    curl_easy_setopt(aCurl.get(),CURLOPT_WRITEFUNCTION,&Receive);
    curl_easy_setopt(aCurl.get(),CURLOPT_WRITEDATA,&vecData);
+   curl_easy_setopt(aCurl.get(),CURLOPT_HEADERFUNCTION,&ReceiveHeader);
+   curl_easy_setopt(aCurl.get(),CURLOPT_HEADERDATA,&aHeaders);
    CURLcode const eCode=curl_easy_perform(aCurl.get());
    long iHttpStatus{};
    curl_easy_getinfo(aCurl.get(),CURLINFO_RESPONSE_CODE,&iHttpStatus);
    if(eCode!=CURLE_OK)
-      throw ImageDownloadError(eCode,iHttpStatus,std::format(
+      throw ImageDownloadError(eCode,iHttpStatus,aHeaders.aRetryAfter,std::format(
          "image HTTPS failed (curl={}, HTTP={}): {}",static_cast<int>(eCode),iHttpStatus,
          arrError[0]?arrError.data():curl_easy_strerror(eCode)));
    if(vecData.empty()) throw std::runtime_error("image server returned an empty body");
@@ -225,82 +284,198 @@ void StoreInCacheAndModel(PGconn* pConn,std::string const& strUrl,
 
 }
 
-/** \brief Incrementally import missing Scryfall images into the asset table.
-    \details Environment variable DECKKERNEL_IMAGE_LIMIT controls work per run;
-    0 imports all pending images. SHA-256 is computed on downloaded bytes.
+/** \brief Import missing images continuously without rebuilding the card model.
+    \details First restore PostgreSQL cache entries in bulk, then process
+    remaining model asset IDs in bounded keyset pages. No card parsing or
+    schema creation occurs here. 0 means unlimited, and --images-only is
+    unlimited by default unless DECKKERNEL_IMAGE_LIMIT is explicitly set.
 */
-void ImportImages(postgres_database_ty const& aDatabase,ImageImportOptions const& aOptions) {
-   (void)aDatabase; // Ensures FirstConnection has established its normal DB context.
-   std::size_t const uLimit=aOptions.uMaxMissing.value_or(ImageLimit());
+void ImportImages(postgres_database_ty const& aDatabase,
+   ImageImportOptions const& aOptions) {
+   (void)aDatabase; // The caller has already opened its normal database context.
+   std::size_t const uLimit=
+      aOptions.uMaxMissing.value_or(ImageLimit(aOptions.bContinuous));
    std::filesystem::path const aCacheRoot=Env("DECKKERNEL_IMAGE_CACHE_ROOT","");
-   deckkernel::scryfall::ImageCache aCache(aCacheRoot.empty()?std::filesystem::path{".cache/scryfall/images"}:aCacheRoot);
-   std::size_t uDiskHits{},uFetched{};
-   auto aNextRequest=std::chrono::steady_clock::now();
+   deckkernel::scryfall::ImageCache aCache(
+      aCacheRoot.empty()?std::filesystem::path{".cache/scryfall/images"}:aCacheRoot);
    pg_connection_ty const aConn=Connect();
-   // Restore every available image into the newly created model before any HTTP.
+
+   // All permanent-cache hits are restored before selecting network candidates.
    pg_result_ty aRestored(PQexec(aConn.get(),
       "UPDATE deckkernel_test.scryfall_image_assets a SET "
-      "image_data=c.image_data,sha256=c.sha256,media_type=c.media_type,downloaded_at=c.cached_at "
+      "image_data=c.image_data,sha256=c.sha256,media_type=c.media_type,"
+      "downloaded_at=c.cached_at "
       "FROM deckkernel_cache.scryfall_images c "
       "WHERE a.image_url=c.url AND a.image_data IS NULL"));
-   if(!aRestored||PQresultStatus(aRestored.get())!=PGRES_COMMAND_OK)
-      throw std::runtime_error("image cache restore failed: "+std::string(PQerrorMessage(aConn.get())));
-   std::println("[IMAGE-CACHE] restored into model: {}",PQcmdTuples(aRestored.get()));
-   std::string const strSql=
-      "SELECT image_url FROM deckkernel_test.scryfall_image_assets "
-      "WHERE image_data IS NULL ORDER BY id"
-      +(uLimit?std::format(" LIMIT {}",uLimit):std::string{});
-   pg_result_ty aRows(PQexec(aConn.get(),strSql.c_str()));
-   if(!aRows||PQresultStatus(aRows.get())!=PGRES_TUPLES_OK)
-      throw std::runtime_error("image catalog query failed: "+std::string(PQerrorMessage(aConn.get())));
+   if(!aRestored || PQresultStatus(aRestored.get())!=PGRES_COMMAND_OK)
+      throw std::runtime_error("image cache restore failed: "+
+         std::string(PQerrorMessage(aConn.get())));
+   std::println("[IMAGE-CACHE] restored into model: {}",
+      PQcmdTuples(aRestored.get()));
+
+   auto const fnCountMissing=[&]() -> std::uint64_t {
+      pg_result_ty aCount(PQexec(aConn.get(),
+         "SELECT count(*) FROM deckkernel_test.scryfall_image_assets "
+         "WHERE image_data IS NULL"));
+      if(!aCount || PQresultStatus(aCount.get())!=PGRES_TUPLES_OK ||
+         PQntuples(aCount.get())!=1)
+         throw std::runtime_error("image count query failed: "+
+            std::string(PQerrorMessage(aConn.get())));
+      std::string_view const svNumber=PQgetvalue(aCount.get(),0,0);
+      std::uint64_t uCount{};
+      auto const aParsed=std::from_chars(svNumber.data(),
+         svNumber.data()+svNumber.size(),uCount);
+      if(aParsed.ec!=std::errc{} || aParsed.ptr!=svNumber.data()+svNumber.size())
+         throw std::runtime_error("image count is not an integer");
+      return uCount;
+   };
+   std::uint64_t const uInitiallyMissing=fnCountMissing();
+   std::println("[IMAGE] missing={}, limit={}, mode={}",
+      uInitiallyMissing,uLimit==0?"unlimited":std::to_string(uLimit),
+      aOptions.bAllowNetwork?"network+cache":"offline cache only");
+   if(uInitiallyMissing==0) {
+      std::println("[IMAGE] all model images already present; no downloads");
+      return;
+   }
+
    if(aOptions.bAllowNetwork && curl_global_init(CURL_GLOBAL_DEFAULT)!=CURLE_OK)
       throw std::runtime_error("image import curl_global_init failed");
+   struct CurlCleanup {
+      bool bInitialized;
+      ~CurlCleanup(){if(bInitialized)curl_global_cleanup();}
+   } aCurlCleanup{aOptions.bAllowNetwork};
    if(aOptions.bAllowNetwork) {
       curl_version_info_data const* pInfo=curl_version_info(CURLVERSION_NOW);
-      std::println("[IMAGE-TLS] backend={}, native CA requested when supported; peer verification ON",
+      std::println("[IMAGE-TLS] backend={}, native CA requested when supported; "
+         "peer verification ON",
          pInfo && pInfo->ssl_version?pInfo->ssl_version:"<unknown>");
    }
-   struct CurlCleanup { bool bInitialized; ~CurlCleanup(){if(bInitialized)curl_global_cleanup();} } aCurlCleanup{aOptions.bAllowNetwork};
-   std::size_t uSaved{},uFailed{};
-   for(int i=0;i<PQntuples(aRows.get());++i) {
-      std::string const strUrl=PQgetvalue(aRows.get(),i,0);
-      try {
-         auto optCached=aCache.Find(strUrl);
-         if(!optCached && !aOptions.bAllowNetwork) {
-            std::println("[IMAGE] offline cache miss: {}",strUrl);
-            continue;
+
+   std::uint64_t uLastId{};
+   std::size_t uProcessed{},uSaved{},uFailed{},uDiskHits{},uFetched{},uOfflineMissing{};
+   auto aNextRequest=std::chrono::steady_clock::now();
+   auto const aStarted=std::chrono::steady_clock::now();
+   constexpr int iPageSize=512;
+
+   // Keyset pagination: keep only 512 URL rows in memory at once, not the
+   // potentially million-row catalog. Failed IDs are skipped until a future run.
+   while(uLimit==0 || uProcessed<uLimit) {
+      std::string const strCursor=std::to_string(uLastId);
+      char const* arrCursor[]={strCursor.c_str()};
+      Oid const arrTypes[]={20}; // PostgreSQL int8 for asset primary key
+      pg_result_ty aPage(PQexecParams(aConn.get(),
+         "SELECT id,image_url FROM deckkernel_test.scryfall_image_assets "
+         "WHERE id > $1 AND image_data IS NULL ORDER BY id LIMIT 512",
+         1,arrTypes,arrCursor,nullptr,nullptr,0));
+      if(!aPage || PQresultStatus(aPage.get())!=PGRES_TUPLES_OK)
+         throw std::runtime_error("image page query failed: "+
+            std::string(PQerrorMessage(aConn.get())));
+      int const iRows=PQntuples(aPage.get());
+      if(iRows==0) break;
+
+      for(int i=0;i<iRows && (uLimit==0 || uProcessed<uLimit);++i) {
+         std::string_view const svId=PQgetvalue(aPage.get(),i,0);
+         std::uint64_t uId{};
+         auto const aParsed=std::from_chars(svId.data(),
+            svId.data()+svId.size(),uId);
+         if(aParsed.ec!=std::errc{} || aParsed.ptr!=svId.data()+svId.size() ||
+            uId<=uLastId)
+            throw std::runtime_error("invalid or unordered image asset ID");
+         uLastId=uId;
+         std::string const strUrl=PQgetvalue(aPage.get(),i,1);
+         ++uProcessed;
+         try {
+            auto optCached=aCache.Find(strUrl);
+            if(!optCached && !aOptions.bAllowNetwork) {
+               ++uOfflineMissing;
+               continue;
+            }
+            if(!optCached) {
+               constexpr unsigned uMaxTransientRetries=12;
+               for(unsigned uAttempt=0;;++uAttempt) {
+                  std::this_thread::sleep_until(aNextRequest);
+                  aNextRequest=std::chrono::steady_clock::now()+
+                     std::chrono::milliseconds(250);
+                  try {
+                     auto vecDownloaded=DownloadImage(strUrl);
+                     optCached=aCache.Store(strUrl,vecDownloaded);
+                     ++uFetched;
+                     break;
+                  }
+                  catch(ImageDownloadError const& ex) {
+                     if(ex.IsFatal()) throw; // TLS trust is not transient.
+                     if(!ex.IsTransient() || uAttempt>=uMaxTransientRetries)
+                        throw;
+                     // Exponential backoff, limited to five minutes unless the
+                     // server explicitly requests a longer Retry-After delay.
+                     std::chrono::seconds const aBackoff{
+                        static_cast<int>(std::min(300U,5U << std::min(uAttempt,6U)))};
+                     std::chrono::seconds const aDelay=
+                        std::max(aBackoff,ex.aRetryAfter);
+                     std::println(std::cerr,
+                        "[IMAGE] transient HTTP={} curl={} retry={}/{} "
+                        "in {}s: {}",
+                        ex.iHttpStatus,static_cast<int>(ex.eCode),
+                        uAttempt+1,uMaxTransientRetries,aDelay.count(),strUrl);
+                     std::this_thread::sleep_for(aDelay);
+                  }
+               }
+            }
+            else ++uDiskHits;
+            // Both PostgreSQL writes share one transaction; the model bytes
+            // are selected from the authoritative permanent-cache row.
+            StoreInCacheAndModel(aConn.get(),strUrl,*optCached);
+            ++uSaved;
          }
-         if(!optCached) {
-            std::this_thread::sleep_until(aNextRequest);
-            aNextRequest=std::chrono::steady_clock::now()+std::chrono::milliseconds(250);
-            auto vecDownloaded=DownloadImage(strUrl);
-            optCached=aCache.Store(strUrl,vecDownloaded);
-            ++uFetched;
+         catch(ImageDownloadError const& ex) {
+            ++uFailed;
+            std::println(std::cerr,"[IMAGE] FAIL {}: {}",strUrl,ex.what());
+            if(ex.IsFatal())
+               throw std::runtime_error(
+                  "TLS certificate or handshake failure; image import stopped "
+                  "without losing previous database commits");
          }
-         else ++uDiskHits;
-         StoreInCacheAndModel(aConn.get(),strUrl,*optCached);
-         ++uSaved;
-      }
-      catch(ImageDownloadError const& ex) {
-         ++uFailed;
-         std::println(std::cerr,"[IMAGE] FAIL {}: {}",strUrl,ex.what());
-         if(ex.IsFatal()) {
-            std::println(std::cerr,"[IMAGE-TLS] FATAL: stopping immediately after first certificate/TLS or rate-limit failure");
+         catch(std::exception const& ex) {
+            ++uFailed;
+            std::println(std::cerr,"[IMAGE] FAIL {}: {}",strUrl,ex.what());
+            // Storage, configuration and database errors must stop immediately,
+            // not repeat blindly across the remaining model.
             throw;
          }
+
+         if(uProcessed%100==0) {
+            double const flElapsed=std::chrono::duration<double>(
+               std::chrono::steady_clock::now()-aStarted).count();
+            std::uint64_t const uEstimateRemaining=
+               uInitiallyMissing>uSaved?uInitiallyMissing-uSaved:0;
+            double const flEtaSeconds=uSaved>0 ?
+               flElapsed*static_cast<double>(uEstimateRemaining)/
+                  static_cast<double>(uSaved):0.0;
+            std::println("[IMAGE] processed={}, saved={}, failed={}, disk_hits={}, "
+               "network={}, remaining~={}, elapsed={:.0f}s, ETA~={:.0f}s",
+               uProcessed,uSaved,uFailed,uDiskHits,uFetched,
+               uEstimateRemaining,flElapsed,flEtaSeconds);
+         }
       }
-      catch(std::exception const& ex) {
-         ++uFailed;
-         std::println(std::cerr,"[IMAGE] FAIL {}: {}",strUrl,ex.what());
-         // Local configuration/database errors must not trigger more downloads.
-         throw;
-      }
-      if((i+1)%100==0) std::println("[IMAGE] {}/{} processed; saved={}, failed={}",
-         i+1,PQntuples(aRows.get()),uSaved,uFailed);
    }
-   std::println("[IMAGE] result: saved={}, failed={}, candidates={}, limit={}",
-      uSaved,uFailed,PQntuples(aRows.get()),uLimit);
-   std::println("[IMAGE-CACHE] disk_hits={}, network_downloads={}, root={}",uDiskHits,uFetched,aCache.Root().string());
-   if(uFailed) throw std::runtime_error(std::format("{} image downloads failed",uFailed));
+
+   std::uint64_t const uStillMissing=fnCountMissing();
+   std::println("[IMAGE] result: processed={}, saved={}, failed={}, "
+      "offline_missing={}, disk_hits={}, network_downloads={}, "
+      "remaining={}, root={}",
+      uProcessed,uSaved,uFailed,uOfflineMissing,uDiskHits,uFetched,
+      uStillMissing,aCache.Root().string());
+   if(uFailed)
+      throw std::runtime_error(std::format(
+         "{} image URLs could not be downloaded; saved images remain in "
+         "both PostgreSQL schemas, rerun --images-only to retry",uFailed));
+   if(uStillMissing==0)
+      std::println("[IMAGE] completed: all known model image URLs populated");
+   else if(uLimit!=0 && uProcessed>=uLimit)
+      std::println("[IMAGE] batch limit reached; use --images-only without "
+         "DECKKERNEL_IMAGE_LIMIT to continue automatically");
+   else if(!aOptions.bAllowNetwork)
+      std::println("[IMAGE] offline cache recovery complete; remaining URLs "
+         "require a network import");
 }
 }
