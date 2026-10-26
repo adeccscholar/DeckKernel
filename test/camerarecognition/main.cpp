@@ -22,6 +22,9 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/geometry.hpp>
 #include <opencv2/imgcodecs.hpp>
+#if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
+#include <libpq-fe.h>
+#endif
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
 #include <tesseract/baseapi.h>
 #endif
@@ -64,6 +67,102 @@ hash_ty DHash(cv::Mat const& source) {
             (small.at<unsigned char>(y,x)>small.at<unsigned char>(y,x+1)?1ULL:0ULL);
    return uResult;
 }
+#if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
+// Offline candidate search, deliberately independent of scryfall_image_features.
+// Reads *only* already downloaded, committed art_crop image bytes.
+class ArtworkMatcher {
+   unsigned m_limit{};
+   static std::string Env(char const* key,char const* fallback) {
+      if(auto const* value=std::getenv(key);value&&*value)return value;
+      return fallback;
+   }
+   struct ConnectionDeleter {
+      void operator()(PGconn* p) const noexcept {if(p)PQfinish(p);}
+   };
+   struct ResultDeleter {
+      void operator()(PGresult* p) const noexcept {if(p)PQclear(p);}
+   };
+   using Conn=std::unique_ptr<PGconn,ConnectionDeleter>;
+   using Rows=std::unique_ptr<PGresult,ResultDeleter>;
+   Conn m_db;
+   static cv::Mat Art(cv::Mat const& source) {
+      if(source.empty())return {};
+      // Standard portrait layout: illustration beneath the title/type band.
+      int const x=source.cols/12,y=source.rows*19/100;
+      int const w=source.cols-x*2,h=source.rows*33/100;
+      return source(cv::Rect(x,y,w,h));
+   }
+public:
+   explicit ArtworkMatcher(unsigned limit):m_limit(limit) {
+      std::array<std::string,7> const fields{
+         Env("DECKKERNEL_PGHOST","localhost"),
+         Env("DECKKERNEL_PGPORT","5432"),
+         Env("DECKKERNEL_PGDATABASE","DeckKernel"),
+         Env("DECKKERNEL_PGUSER","deckkernel_user"),
+         Env("DECKKERNEL_PGPASSWORD",""),
+         Env("DECKKERNEL_PGSSLMODE","prefer"),
+         Env("DECKKERNEL_PG_GSSENCMODE","disable")
+      };
+      char const* keys[]={"host","port","dbname","user","password","sslmode","gssencmode",nullptr};
+      char const* values[]={fields[0].c_str(),fields[1].c_str(),fields[2].c_str(),
+         fields[3].c_str(),fields[4].c_str(),fields[5].c_str(),fields[6].c_str(),nullptr};
+      m_db.reset(PQconnectdbParams(keys,values,0));
+      if(!m_db||PQstatus(m_db.get())!=CONNECTION_OK)
+         throw std::runtime_error("artwork matcher cannot connect to DeckKernel PostgreSQL");
+   }
+   void Search(cv::Mat const& card,unsigned eventNumber) {
+      cv::Mat cropped=Art(card);
+      if(cropped.empty())return;
+      hash_ty const sourceHash=DHash(cropped);
+      std::string const bound=std::to_string(m_limit);
+      char const* values[]={bound.c_str()};
+      Rows rows(PQexecParams(m_db.get(),
+         "SELECT a.id::text, f.name, a.image_data "
+         "FROM deckkernel_test.scryfall_image_assets a "
+         "JOIN deckkernel_test.scryfall_card_image_variants v "
+         "  ON v.asset_id=a.id AND v.variant='art_crop' "
+         "JOIN deckkernel_test.scryfall_card_faces f "
+         "  ON f.card_id=v.card_id AND f.face_id=v.face_id "
+         "WHERE a.image_data IS NOT NULL AND a.image_kind='art_crop' "
+         "ORDER BY a.id LIMIT $1::integer",
+         1,nullptr,values,nullptr,nullptr,0));
+      if(!rows||PQresultStatus(rows.get())!=PGRES_TUPLES_OK)
+         throw std::runtime_error("artwork SQL query failed: "+std::string(PQerrorMessage(m_db.get())));
+      int best=65,second=65;
+      std::string bestName,bestId;
+      unsigned decoded=0;
+      for(int i=0;i<PQntuples(rows.get());++i) {
+         std::size_t length{};
+         std::unique_ptr<unsigned char,void(*)(void*)> bytes(
+            PQunescapeBytea(reinterpret_cast<unsigned char const*>(
+               PQgetvalue(rows.get(),i,2)),&length),
+            [](void* p){if(p)PQfreemem(p);});
+         if(!bytes||!length||length>8*1024*1024)continue;
+         cv::Mat encoded(1,static_cast<int>(length),CV_8UC1,bytes.get());
+         cv::Mat art=cv::imdecode(encoded,cv::IMREAD_COLOR);
+         if(art.empty())continue;
+         ++decoded;
+         int const score=std::popcount(sourceHash^DHash(art));
+         if(score<best) {
+            second=best;
+            best=score;
+            bestName=PQgetvalue(rows.get(),i,1);
+            bestId=PQgetvalue(rows.get(),i,0);
+         } else if(score<second)second=score;
+      }
+      if(decoded==0) {
+         std::println("[CAM-ART] card #{} NO_REFERENCE_ART; candidates=0",eventNumber);
+      } else {
+         std::println("[CAM-ART] card #{} candidate=\"{}\" asset={} distance={}/64 "
+            "runner-up={}/64 scanned={} status={}",
+            eventNumber,bestName,bestId,best,second,decoded,
+            best<=10&&second-best>=4?"POSSIBLE":"UNVERIFIED");
+         std::println("[CAM-ART] artwork only; no definitive printing or edition");
+      }
+   }
+};
+#endif
+
 struct FoundCard {
    cv::Mat rectified;
    hash_ty fingerprint{};
@@ -227,6 +326,9 @@ public:
 class Processor {
    StableCardTrigger m_detector;
    bool m_save{};
+#if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
+   std::unique_ptr<ArtworkMatcher> m_artwork;
+#endif
    unsigned m_removedEvents{};
    unsigned m_liveFrames{},m_ocrAttempts{};
    double m_bestSharpness{};
@@ -243,6 +345,9 @@ public:
          ".cache/camera-recognition") {}
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
    void EnableOcr(std::string const& data){m_ocr=std::make_unique<CardOcr>(data);}
+#endif
+#if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
+   void EnableArtwork(unsigned limit){m_artwork=std::make_unique<ArtworkMatcher>(limit);}
 #endif
    [[nodiscard]] unsigned RemovedEvents() const noexcept {return m_removedEvents;}
    bool Process(cv::Mat const& frame) {
@@ -290,6 +395,9 @@ public:
          m_ocrAttempts=1;
          m_ocrAccepted=m_ocr->Read(event->card,event->number,m_ocrAttempts);
       }
+#endif
+#if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
+      if(m_artwork)m_artwork->Search(event->card,event->number);
 #endif
       if(m_save){
          std::filesystem::create_directories(m_root);
@@ -590,12 +698,14 @@ void Usage() {
    std::println("   or: --camera=0 [--backend=any|dshow|msmf] [--width=640 --height=480 --fps=30 --fourcc=auto|mjpg|yuy2] [--save-events]");
    std::println("   or: --probe-camera=0          test 4 Windows camera delivery modes");
    std::println("   optional: --ocr --tessdata=PATH_TO_TESSDATA (eng.traineddata required)");
+   std::println("   optional: --artwork [--artwork-limit=100] (PostgreSQL art_crop, no scan index)");
 }
 }
 int main(int argc,char** argv) {
    try{
       bool selfTest=false,save=false;
-      bool ocr=false;
+      bool ocr=false,artwork=false;
+      unsigned artworkLimit=100;
       std::string tessdata;
       std::string backend="any";
       std::string fourcc="auto";
@@ -610,6 +720,8 @@ int main(int argc,char** argv) {
          if(arg=="--self-test")selfTest=true;
          else if(arg=="--save-events")save=true;
          else if(arg=="--ocr")ocr=true;
+         else if(arg=="--artwork")artwork=true;
+         else if(arg.starts_with("--artwork-limit="))artworkLimit=static_cast<unsigned>(CameraIndex(arg.substr(16)));
          else if(arg.starts_with("--tessdata="))tessdata=arg.substr(11);
          else if(arg.starts_with("--backend="))backend=arg.substr(10);
          else if(arg.starts_with("--fourcc="))fourcc=arg.substr(9);
@@ -630,6 +742,8 @@ int main(int argc,char** argv) {
          throw std::runtime_error("OpenCV videoio is unavailable");
 #endif
       }
+      if(artworkLimit<1||artworkLimit>1000)
+         throw std::runtime_error("--artwork-limit must be 1..1000");
       if(width<160||height<120||width>3840||height>2160||
          fpsRequested<1||fpsRequested>120)
          throw std::runtime_error("invalid camera width, height or fps");
@@ -646,12 +760,18 @@ int main(int argc,char** argv) {
       if(ocr)throw std::runtime_error("OCR was not enabled at CMake configure time");
 #endif
       if(!imageFile.empty()) {
+#if !defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
+         if(artwork)throw std::runtime_error("artwork matching disabled at CMake configuration");
+#endif
          cv::Mat const image=cv::imread(imageFile,cv::IMREAD_COLOR);
          if(image.empty())
             throw std::runtime_error("cannot decode original image: "+imageFile);
          std::println("[CAM] still image={} size={}x{}",imageFile,image.cols,image.rows);
          auto found=FindCard(image);
          if(found) {
+#if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
+            if(artwork)ArtworkMatcher(artworkLimit).Search(found->rectified,1);
+#endif
             std::println("[CAM] card contour rectified to {}x{}",
                found->rectified.cols,found->rectified.rows);
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
@@ -678,6 +798,11 @@ int main(int argc,char** argv) {
          return 0;
       }
       Processor processor(save);
+#if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
+      if(artwork)processor.EnableArtwork(artworkLimit);
+#else
+      if(artwork)throw std::runtime_error("artwork matching disabled at CMake configuration");
+#endif
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
       if(ocr)processor.EnableOcr(tessdata);
 #endif
