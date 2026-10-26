@@ -306,3 +306,8 @@ Avoid **`DROP DATABASE DeckKernel`** unless the durable schema has been backed u
 Set `DECKKERNEL_IMAGE_CACHE_ROOT` to a stable absolute folder shared by FirstConnection and future Scantest runs. The default is `.cache/scryfall/images` relative to the process working directory. The disk cache and PostgreSQL `bytea` are complementary; never delete the disk cache during routine builds. Requests remain serial with a 250 ms minimum gap for image fetches; local hits trigger no HTTP request. The loader prints cache hit and network-fetch counts. This is conservative etiquette, not a stated Scryfall CDN-specific hard limit.
 
 Scryfall's API guidance asks clients not to exceed ten API requests per second. The public image CDN is outside that endpoint-specific request quota, but this does not authorize aggressive crawling. Stop on 429, honor Retry-After, and avoid repeated failed requests. Binary cache writes use temporary files and SHA-256 validation; Windows BCC64X runtime is not yet verified.
+
+
+### PostgreSQL SQL adapter compatibility
+
+FirstConnection performs schema preflight checks using ordinary scalar `SELECT CASE ... END` queries through `ExecuteOne<int>`. It deliberately does not submit PostgreSQL dollar-quoted `DO $tag$ ... $tag$` blocks to the framework's named-parameter translator, which rejects that syntax before execution. Existing model image bytes are migrated into the persistent cache with an ordinary `INSERT ... SELECT ... ON CONFLICT DO NOTHING` only when the previous model table exists. PostgreSQL administrative setup scripts may still use native `DO` blocks because they are executed directly through `psql`/pgAdmin, outside the application translator.
