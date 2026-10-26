@@ -3,7 +3,8 @@
 This is a second, independent DeckKernel test program. It does NOT recognize a
 specific printing yet: it detects a card-shaped quadrilateral, rectifies it,
 waits for five stable frames, and emits one NEW-STABLE-CARD event. Removal for
-six frames rearms detection, including when the same card is reinserted.
+45 consecutively absent frames rearms detection, including when the same card
+is reinserted, and emits one CARD-NO-LONGER-DETECTED log event.
 
 The test never calls Scryfall, never reads or writes the card database and
 cannot interrupt the multi-day image download. Snapshot writing is opt-in.
@@ -176,3 +177,14 @@ implemented; `edition=UNKNOWN` is expected.
 The synthetic self-test now includes alternating image-content jitter, brief
 contour dropouts, and removal/reentry. Physical camera behavior remains to be
 verified on the Windows BCC64X target.
+
+## Card disappearance log
+
+Each confirmed presentation emits `NEW-STABLE-CARD #N`. After the contour is
+absent for 45 consecutive valid video frames, the same card session emits
+`CARD-NO-LONGER-DETECTED #N fingerprint=...; absent-frames=45;
+ready-for-next-card`. The message deliberately describes *detection*, not
+proof of physical removal: occlusions, reflections and background changes can
+also hide a contour. No message is emitted on an empty startup scene, on a
+short dropout, or repeatedly while the view remains empty. Synthetic smoke
+checks these transitions and reentry.
