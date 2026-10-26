@@ -121,6 +121,75 @@ pg_connection_ty Connect() {
          std::string(aConnection?PQerrorMessage(aConnection.get()):"PQconnectdbParams failed"));
    return aConnection;
 }
+/** \brief Execute a libpq command and fail with the PostgreSQL diagnostic. */
+pg_result_ty Command(PGconn* pConn,char const* szSql) {
+   pg_result_ty aResult(PQexec(pConn,szSql));
+   if(!aResult || PQresultStatus(aResult.get())!=PGRES_COMMAND_OK)
+      throw std::runtime_error("image SQL command failed: "+
+         std::string(PQerrorMessage(pConn)));
+   return aResult;
+}
+
+/** \brief One transaction covers both writes, including image bytes.
+    \details The durable PostgreSQL cache is the source of truth. The model
+    upsert copies the bytes from the cache rather than re-encoding or
+    uploading an independent blob.
+*/
+void StoreInCacheAndModel(PGconn* pConn,std::string const& strUrl,
+   deckkernel::scryfall::CachedImage const& aImage) {
+   Command(pConn,"BEGIN");
+   bool bCommitted=false;
+   try {
+      std::array<char const*,4> arrValues{
+         strUrl.c_str(),aImage.strSha256.c_str(),
+         reinterpret_cast<char const*>(aImage.vecBytes.data()),aImage.strMediaType.c_str()};
+      std::array<int,4> arrLengths{
+         0,0,static_cast<int>(aImage.vecBytes.size()),0};
+      std::array<int,4> arrFormats{0,0,1,0};
+      std::array<Oid,4> arrTypes{25,25,17,25}; // text, text, bytea, text
+      pg_result_ty aCacheWrite(PQexecParams(pConn,
+         "INSERT INTO deckkernel_cache.scryfall_images(url,sha256,image_data,media_type) "
+         "VALUES($1,$2,$3,$4) ON CONFLICT(url) DO NOTHING",
+         4,arrTypes.data(),arrValues.data(),
+         arrLengths.data(),arrFormats.data(),0));
+      if(!aCacheWrite||PQresultStatus(aCacheWrite.get())!=PGRES_COMMAND_OK)
+         throw std::runtime_error("cache image INSERT failed: "+
+            std::string(PQerrorMessage(pConn)));
+
+      // Insert an asset when absent; update the existing URL-only placeholder.
+      // Both branches use exactly the original bytes of the persistent cache.
+      // The face/printing links and image_kind are left untouched.
+      char const* arrModelValues[]={strUrl.c_str()};
+      Oid const arrModelTypes[]={25};
+      pg_result_ty aModelWrite(PQexecParams(pConn,
+         "INSERT INTO deckkernel_test.scryfall_image_assets "
+         "(image_url,sha256,image_data,media_type,downloaded_at) "
+         "SELECT url,sha256,image_data,media_type,cached_at "
+         "FROM deckkernel_cache.scryfall_images WHERE url=$1 "
+         "ON CONFLICT(image_url) DO UPDATE SET "
+         "sha256=EXCLUDED.sha256,image_data=EXCLUDED.image_data,"
+         "media_type=EXCLUDED.media_type,downloaded_at=EXCLUDED.downloaded_at "
+         "WHERE deckkernel_test.scryfall_image_assets.image_data IS NULL",
+         1,arrModelTypes,arrModelValues,nullptr,nullptr,0));
+      if(!aModelWrite||PQresultStatus(aModelWrite.get())!=PGRES_COMMAND_OK)
+         throw std::runtime_error("model image INSERT/UPSERT failed: "+
+            std::string(PQerrorMessage(pConn)));
+      if(std::string_view(PQcmdTuples(aModelWrite.get()))!="1")
+         throw std::runtime_error(
+            "model image INSERT/UPSERT did not insert or fill a missing asset");
+
+      Command(pConn,"COMMIT");
+      bCommitted=true;
+   }
+   catch(...) {
+      if(!bCommitted) {
+         // Ignore a secondary rollback error; preserve the primary exception.
+         pg_result_ty aRollback(PQexec(pConn,"ROLLBACK"));
+      }
+      throw;
+   }
+}
+
 }
 
 /** \brief Incrementally import missing Scryfall images into the asset table.
@@ -132,7 +201,7 @@ void ImportImages(postgres_database_ty const& aDatabase) {
    std::size_t const uLimit=ImageLimit();
    std::filesystem::path const aCacheRoot=Env("DECKKERNEL_IMAGE_CACHE_ROOT","");
    deckkernel::scryfall::ImageCache aCache(aCacheRoot.empty()?std::filesystem::path{".cache/scryfall/images"}:aCacheRoot);
-   std::size_t uHits{},uFetched{};
+   std::size_t uDiskHits{},uFetched{};
    auto aNextRequest=std::chrono::steady_clock::now();
    pg_connection_ty const aConn=Connect();
    // Restore every available image into the newly created model before any HTTP.
@@ -166,38 +235,8 @@ void ImportImages(postgres_database_ty const& aDatabase) {
             optCached=aCache.Store(strUrl,vecDownloaded);
             ++uFetched;
          }
-         else ++uHits;
-         auto const& vecBytes=optCached->vecBytes;
-         std::string const& strSha=optCached->strSha256;
-         // Durable PostgreSQL cache is the authority, model tables are disposable.
-         std::array<char const*,4> arrCacheValues{
-            strUrl.c_str(),strSha.c_str(),
-            reinterpret_cast<char const*>(vecBytes.data()),optCached->strMediaType.c_str()};
-         std::array<int,4> arrCacheLengths{0,0,static_cast<int>(vecBytes.size()),0};
-         std::array<int,4> arrCacheFormats{0,0,1,0};
-         std::array<Oid,4> arrCacheTypes{25,25,17,25};
-         pg_result_ty aCacheWrite(PQexecParams(aConn.get(),
-            "INSERT INTO deckkernel_cache.scryfall_images(url,sha256,image_data,media_type) "
-            "VALUES($1,$2,$3,$4) ON CONFLICT(url) DO NOTHING",
-            4,arrCacheTypes.data(),arrCacheValues.data(),
-            arrCacheLengths.data(),arrCacheFormats.data(),0));
-         if(!aCacheWrite||PQresultStatus(aCacheWrite.get())!=PGRES_COMMAND_OK)
-            throw std::runtime_error("durable PostgreSQL cache write failed");
-
-         // libpq binary parameter format 1 stores the original bytes directly.
-         std::array<char const*,4> arrValues{
-            strUrl.c_str(),strSha.c_str(),reinterpret_cast<char const*>(vecBytes.data()),optCached->strMediaType.c_str()};
-         std::array<int,4> arrLengths{0,0,static_cast<int>(vecBytes.size()),0};
-         std::array<int,4> arrFormats{0,0,1,0};
-         std::array<Oid,4> arrTypes{25,25,17,25}; // text, text, bytea
-         pg_result_ty aUpdate(PQexecParams(aConn.get(),
-            "UPDATE deckkernel_test.scryfall_image_assets "
-            "SET sha256=$2, media_type=$4, image_data=$3, downloaded_at=now() "
-            "WHERE image_url=$1 AND image_data IS NULL",
-            4,arrTypes.data(),arrValues.data(),arrLengths.data(),arrFormats.data(),0));
-         if(!aUpdate||PQresultStatus(aUpdate.get())!=PGRES_COMMAND_OK)
-            throw std::runtime_error("PostgreSQL bytea update failed: "+
-               std::string(PQerrorMessage(aConn.get())));
+         else ++uDiskHits;
+         StoreInCacheAndModel(aConn.get(),strUrl,*optCached);
          ++uSaved;
       }
       catch(std::exception const& ex) {
@@ -209,7 +248,7 @@ void ImportImages(postgres_database_ty const& aDatabase) {
    }
    std::println("[IMAGE] result: saved={}, failed={}, candidates={}, limit={}",
       uSaved,uFailed,PQntuples(aRows.get()),uLimit);
-   std::println("[IMAGE-CACHE] hits={}, fetched={}, root={}",uHits,uFetched,aCache.Root().string());
+   std::println("[IMAGE-CACHE] disk_hits={}, network_downloads={}, root={}",uDiskHits,uFetched,aCache.Root().string());
    if(uFailed) throw std::runtime_error(std::format("{} image downloads failed",uFailed));
 }
 }
