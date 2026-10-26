@@ -67,7 +67,7 @@ function(adecc_install_pinned_runtime target component)
    # Only these source roots are eligible to supply copied runtime DLLs.
    # The operating system's own DLLs remain host-provided and are not installed.
    set(ADECC_RUNTIME_ALLOWED_ROOTS
-      "${ADECC_REPOSITORY_ROOT}/ThirdParty;${_adecc_toolchain_dirs}")
+      "${ADECC_REPOSITORY_ROOT}/ThirdParty;${_adecc_toolchain_dirs};$<TARGET_FILE_DIR:${target}>")
 
    set(_script_template [=[
 # Generated for @ADECC_RUNTIME_EXE@ by adecc_install_pinned_runtime.
@@ -123,4 +123,73 @@ message(STATUS "[RUNTIME] Installed ${_adecc_count} required DLLs")
    set(_script_file "${CMAKE_CURRENT_BINARY_DIR}/adecc_runtime_${target}_${component}.cmake")
    file(GENERATE OUTPUT "${_script_file}" CONTENT "${_script}")
    install(SCRIPT "${_script_file}" COMPONENT "${component}")
+endfunction()
+
+
+# Runs immediately after linking so CTest can start without an install.
+# The only DLL sources are the pinned ThirdParty packages and BCC64X SDK.
+function(adecc_stage_pinned_runtime target)
+   if(NOT TARGET "${target}")
+      message(FATAL_ERROR "Unknown runtime staging target: ${target}")
+   endif()
+   adecc_runtime_search_directories(_adecc_dirs _adecc_toolchain_dirs)
+   set(ADECC_RUNTIME_EXE "$<TARGET_FILE:${target}>")
+   set(ADECC_RUNTIME_OUTPUT "$<TARGET_FILE_DIR:${target}>")
+   set(ADECC_RUNTIME_DIRS "${_adecc_dirs}")
+   set(ADECC_RUNTIME_ALLOWED_ROOTS
+      "${ADECC_REPOSITORY_ROOT}/ThirdParty;${_adecc_toolchain_dirs}")
+
+   set(_template [=[
+set(_exe [==[@ADECC_RUNTIME_EXE@]==])
+set(_output [==[@ADECC_RUNTIME_OUTPUT@]==])
+set(_dirs [==[@ADECC_RUNTIME_DIRS@]==])
+set(_roots [==[@ADECC_RUNTIME_ALLOWED_ROOTS@]==])
+file(GET_RUNTIME_DEPENDENCIES
+   EXECUTABLES "${_exe}"
+   RESOLVED_DEPENDENCIES_VAR _resolved
+   UNRESOLVED_DEPENDENCIES_VAR _unresolved
+   CONFLICTING_DEPENDENCIES_PREFIX _conflict
+   DIRECTORIES ${_dirs}
+   PRE_EXCLUDE_REGEXES "^[Aa][Pp][Ii]-[Mm][Ss]-" "^[Ee][Xx][Tt]-[Mm][Ss]-"
+   POST_EXCLUDE_REGEXES "[/\\\\][Ww]indows[/\\\\][Ss]ystem32[/\\\\]")
+if(_unresolved)
+   message(FATAL_ERROR "Missing runtime imports for ${_exe}: ${_unresolved}")
+endif()
+if(_conflict_FILENAMES)
+   message(FATAL_ERROR "Conflicting runtime imports: ${_conflict_FILENAMES}")
+endif()
+set(_count 0)
+foreach(_dll IN LISTS _resolved)
+   file(REAL_PATH "${_dll}" _real)
+   file(TO_CMAKE_PATH "${_real}" _normalized)
+   string(TOLOWER "${_normalized}" _dll_lower)
+   set(_allowed FALSE)
+   foreach(_root IN LISTS _roots)
+      file(REAL_PATH "${_root}" _root_real)
+      file(TO_CMAKE_PATH "${_root_real}" _root_normalized)
+      string(TOLOWER "${_root_normalized}" _root_lower)
+      string(FIND "${_dll_lower}" "${_root_lower}/" _start)
+      if(_start EQUAL 0)
+         set(_allowed TRUE)
+         break()
+      endif()
+   endforeach()
+   if(_allowed)
+      get_filename_component(_name "${_real}" NAME)
+      file(COPY_FILE "${_real}" "${_output}/${_name}" ONLY_IF_DIFFERENT)
+      message(STATUS "[RUNTIME] Staged ${_name}")
+      math(EXPR _count "${_count}+1")
+   else()
+      message(STATUS "[RUNTIME] Host provided: ${_real}")
+   endif()
+endforeach()
+message(STATUS "[RUNTIME] Staged ${_count} DLLs beside ${_exe}")
+]=])
+   string(CONFIGURE "${_template}" _script @ONLY)
+   set(_script_file "${CMAKE_CURRENT_BINARY_DIR}/adecc_stage_${target}.cmake")
+   file(GENERATE OUTPUT "${_script_file}" CONTENT "${_script}")
+   add_custom_command(TARGET "${target}" POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" -P "${_script_file}"
+      COMMENT "Stage pinned runtime dependencies for ${target}"
+      VERBATIM)
 endfunction()

@@ -22,6 +22,16 @@ installed OpenCV 5 CMake package. No new or static OpenCV build is used.
     ctest --test-dir test/camerarecognition/build/Release --output-on-failure
     cmake --install test/camerarecognition/build/Release
 
+Runtime dependencies are now staged immediately after linking, directly beside
+the build-tree executable for CTest. The shared pinned runtime install helper
+also copies the same dependency closure into apps/Release. This replaces the
+optional directory-copy rule, which could silently skip missing DLLs.
+The staging resolution is limited to the current BuildEngine packages and
+the active BCC64X runtime; missing imports cause an explicit failure.
+
+After switching to this CMake rule, perform a clean rebuild once to ensure
+the POST_BUILD step executes even when the EXE was already up-to-date.
+
 Usage:
 
     apps\Release\deckkernel_camera_recognition_test.exe --self-test
