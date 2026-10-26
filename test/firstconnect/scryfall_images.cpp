@@ -37,6 +37,19 @@ std::string Env(char const* szName,char const* szDefault) {
    return szDefault;
 }
 
+std::chrono::milliseconds ImageInterval() {
+   std::string const strInterval=Env("DECKKERNEL_IMAGE_INTERVAL_MS","250");
+   unsigned uMilliseconds{};
+   auto const aParsed=std::from_chars(strInterval.data(),
+      strInterval.data()+strInterval.size(),uMilliseconds);
+   if(aParsed.ec!=std::errc{} ||
+      aParsed.ptr!=strInterval.data()+strInterval.size() ||
+      uMilliseconds<100 || uMilliseconds>60000)
+      throw std::runtime_error(
+         "DECKKERNEL_IMAGE_INTERVAL_MS must be between 100 and 60000");
+   return std::chrono::milliseconds{uMilliseconds};
+}
+
 std::size_t ImageLimit(bool bContinuous) {
    // The full rebuild stays bounded; image-only mode needs no external loop.
    std::string const strLimit=Env("DECKKERNEL_IMAGE_LIMIT",bContinuous?"0":"100");
@@ -213,73 +226,51 @@ pg_connection_ty Connect() {
          std::string(aConnection?PQerrorMessage(aConnection.get()):"PQconnectdbParams failed"));
    return aConnection;
 }
-/** \brief Execute a libpq command and fail with the PostgreSQL diagnostic. */
-pg_result_ty Command(PGconn* pConn,char const* szSql) {
-   pg_result_ty aResult(PQexec(pConn,szSql));
-   if(!aResult || PQresultStatus(aResult.get())!=PGRES_COMMAND_OK)
-      throw std::runtime_error("image SQL command failed: "+
-         std::string(PQerrorMessage(pConn)));
-   return aResult;
-}
-
-/** \brief One transaction covers both writes, including image bytes.
-    \details The durable PostgreSQL cache is the source of truth. The model
-    upsert copies the bytes from the cache rather than re-encoding or
-    uploading an independent blob.
+/** \brief One PostgreSQL statement atomically inserts into both schemas.
+    \details The writable CTE returns the newly inserted cache row, avoiding
+    a second read of that row from the table in the same statement snapshot.
+    When the URL is already cached, the existing cache row supplies the
+    identical binary payload. Implicit transaction means one network roundtrip
+    and one synchronous commit, not BEGIN + 2 INSERTs + COMMIT.
 */
 void StoreInCacheAndModel(PGconn* pConn,std::string const& strUrl,
    deckkernel::scryfall::CachedImage const& aImage) {
-   Command(pConn,"BEGIN");
-   bool bCommitted=false;
-   try {
-      std::array<char const*,4> arrValues{
-         strUrl.c_str(),aImage.strSha256.c_str(),
-         reinterpret_cast<char const*>(aImage.vecBytes.data()),aImage.strMediaType.c_str()};
-      std::array<int,4> arrLengths{
-         0,0,static_cast<int>(aImage.vecBytes.size()),0};
-      std::array<int,4> arrFormats{0,0,1,0};
-      std::array<Oid,4> arrTypes{25,25,17,25}; // text, text, bytea, text
-      pg_result_ty aCacheWrite(PQexecParams(pConn,
-         "INSERT INTO deckkernel_cache.scryfall_images(url,sha256,image_data,media_type) "
-         "VALUES($1,$2,$3,$4) ON CONFLICT(url) DO NOTHING",
-         4,arrTypes.data(),arrValues.data(),
-         arrLengths.data(),arrFormats.data(),0));
-      if(!aCacheWrite||PQresultStatus(aCacheWrite.get())!=PGRES_COMMAND_OK)
-         throw std::runtime_error("cache image INSERT failed: "+
-            std::string(PQerrorMessage(pConn)));
+   std::array<char const*,4> arrValues{
+      strUrl.c_str(),aImage.strSha256.c_str(),
+      reinterpret_cast<char const*>(aImage.vecBytes.data()),aImage.strMediaType.c_str()};
+   std::array<int,4> arrLengths{0,0,static_cast<int>(aImage.vecBytes.size()),0};
+   std::array<int,4> arrFormats{0,0,1,0};
+   std::array<Oid,4> arrTypes{25,25,17,25}; // text, text, bytea, text
 
-      // Insert an asset when absent; update the existing URL-only placeholder.
-      // Both branches use exactly the original bytes of the persistent cache.
-      // The face/printing links and image_kind are left untouched.
-      char const* arrModelValues[]={strUrl.c_str()};
-      Oid const arrModelTypes[]={25};
-      pg_result_ty aModelWrite(PQexecParams(pConn,
-         "INSERT INTO deckkernel_test.scryfall_image_assets "
-         "(image_url,sha256,image_data,media_type,downloaded_at) "
-         "SELECT url,sha256,image_data,media_type,cached_at "
-         "FROM deckkernel_cache.scryfall_images WHERE url=$1 "
-         "ON CONFLICT(image_url) DO UPDATE SET "
-         "sha256=EXCLUDED.sha256,image_data=EXCLUDED.image_data,"
-         "media_type=EXCLUDED.media_type,downloaded_at=EXCLUDED.downloaded_at "
-         "WHERE deckkernel_test.scryfall_image_assets.image_data IS NULL",
-         1,arrModelTypes,arrModelValues,nullptr,nullptr,0));
-      if(!aModelWrite||PQresultStatus(aModelWrite.get())!=PGRES_COMMAND_OK)
-         throw std::runtime_error("model image INSERT/UPSERT failed: "+
-            std::string(PQerrorMessage(pConn)));
-      if(std::string_view(PQcmdTuples(aModelWrite.get()))!="1")
-         throw std::runtime_error(
-            "model image INSERT/UPSERT did not insert or fill a missing asset");
-
-      Command(pConn,"COMMIT");
-      bCommitted=true;
-   }
-   catch(...) {
-      if(!bCommitted) {
-         // Ignore a secondary rollback error; preserve the primary exception.
-         pg_result_ty aRollback(PQexec(pConn,"ROLLBACK"));
-      }
-      throw;
-   }
+   pg_result_ty aResult(PQexecParams(pConn,
+      "WITH newly_cached AS ("
+      "  INSERT INTO deckkernel_cache.scryfall_images "
+      "  (url,sha256,image_data,media_type) VALUES($1,$2,$3,$4) "
+      "  ON CONFLICT(url) DO NOTHING "
+      "  RETURNING url,sha256,image_data,media_type,cached_at"
+      "), cache_source AS ("
+      "  SELECT url,sha256,image_data,media_type,cached_at FROM newly_cached "
+      "  UNION ALL "
+      "  SELECT url,sha256,image_data,media_type,cached_at "
+      "  FROM deckkernel_cache.scryfall_images "
+      "  WHERE url=$1 AND NOT EXISTS(SELECT 1 FROM newly_cached)"
+      ") "
+      "INSERT INTO deckkernel_test.scryfall_image_assets "
+      "(image_url,sha256,image_data,media_type,downloaded_at) "
+      "SELECT url,sha256,image_data,media_type,cached_at "
+      "FROM cache_source WHERE true "
+      "ON CONFLICT(image_url) DO UPDATE SET "
+      "sha256=EXCLUDED.sha256,image_data=EXCLUDED.image_data,"
+      "media_type=EXCLUDED.media_type,downloaded_at=EXCLUDED.downloaded_at "
+      "WHERE deckkernel_test.scryfall_image_assets.image_data IS NULL",
+      4,arrTypes.data(),arrValues.data(),
+      arrLengths.data(),arrFormats.data(),0));
+   if(!aResult || PQresultStatus(aResult.get())!=PGRES_COMMAND_OK)
+      throw std::runtime_error("atomic cache/model image INSERT failed: "+
+         std::string(PQerrorMessage(pConn)));
+   if(std::string_view(PQcmdTuples(aResult.get()))!="1")
+      throw std::runtime_error(
+         "atomic cache/model image INSERT did not fill the model asset");
 }
 
 }
@@ -290,11 +281,22 @@ void StoreInCacheAndModel(PGconn* pConn,std::string const& strUrl,
     schema creation occurs here. 0 means unlimited, and --images-only is
     unlimited by default unless DECKKERNEL_IMAGE_LIMIT is explicitly set.
 */
+struct ImageImportMetrics final {
+   double flHttpSeconds{};
+   double flDiskLookupSeconds{};
+   double flDiskWriteSeconds{};
+   double flDatabaseSeconds{};
+   double flThrottleSeconds{};
+   double flRetrySeconds{};
+   std::uint64_t uHttpBytes{};
+};
+
 void ImportImages(postgres_database_ty const& aDatabase,
    ImageImportOptions const& aOptions) {
    (void)aDatabase; // The caller has already opened its normal database context.
    std::size_t const uLimit=
       aOptions.uMaxMissing.value_or(ImageLimit(aOptions.bContinuous));
+   std::chrono::milliseconds const aInterval=ImageInterval();
    std::filesystem::path const aCacheRoot=Env("DECKKERNEL_IMAGE_CACHE_ROOT","");
    deckkernel::scryfall::ImageCache aCache(
       aCacheRoot.empty()?std::filesystem::path{".cache/scryfall/images"}:aCacheRoot);
@@ -330,9 +332,10 @@ void ImportImages(postgres_database_ty const& aDatabase,
       return uCount;
    };
    std::uint64_t const uInitiallyMissing=fnCountMissing();
-   std::println("[IMAGE] missing={}, limit={}, mode={}",
+   std::println("[IMAGE] missing={}, limit={}, mode={}, interval={}ms",
       uInitiallyMissing,uLimit==0?"unlimited":std::to_string(uLimit),
-      aOptions.bAllowNetwork?"network+cache":"offline cache only");
+      aOptions.bAllowNetwork?"network+cache":"offline cache only",
+      aInterval.count());
    if(uInitiallyMissing==0) {
       std::println("[IMAGE] all model images already present; no downloads");
       return;
@@ -353,6 +356,11 @@ void ImportImages(postgres_database_ty const& aDatabase,
 
    std::uint64_t uLastId{};
    std::size_t uProcessed{},uSaved{},uFailed{},uDiskHits{},uFetched{},uOfflineMissing{};
+   ImageImportMetrics aMetrics;
+   auto const fnSeconds=[](std::chrono::steady_clock::time_point const aBegin) {
+      return std::chrono::duration<double>(
+         std::chrono::steady_clock::now()-aBegin).count();
+   };
    auto aNextRequest=std::chrono::steady_clock::now();
    auto const aStarted=std::chrono::steady_clock::now();
    constexpr int iPageSize=512;
@@ -385,7 +393,9 @@ void ImportImages(postgres_database_ty const& aDatabase,
          std::string const strUrl=PQgetvalue(aPage.get(),i,1);
          ++uProcessed;
          try {
+            auto const aLookupStarted=std::chrono::steady_clock::now();
             auto optCached=aCache.Find(strUrl);
+            aMetrics.flDiskLookupSeconds+=fnSeconds(aLookupStarted);
             if(!optCached && !aOptions.bAllowNetwork) {
                ++uOfflineMissing;
                continue;
@@ -393,16 +403,23 @@ void ImportImages(postgres_database_ty const& aDatabase,
             if(!optCached) {
                constexpr unsigned uMaxTransientRetries=12;
                for(unsigned uAttempt=0;;++uAttempt) {
+                  auto const aThrottleStarted=std::chrono::steady_clock::now();
                   std::this_thread::sleep_until(aNextRequest);
-                  aNextRequest=std::chrono::steady_clock::now()+
-                     std::chrono::milliseconds(250);
+                  aMetrics.flThrottleSeconds+=fnSeconds(aThrottleStarted);
+                  aNextRequest=std::chrono::steady_clock::now()+aInterval;
+                  auto const aHttpStarted=std::chrono::steady_clock::now();
                   try {
                      auto vecDownloaded=DownloadImage(strUrl);
+                     aMetrics.flHttpSeconds+=fnSeconds(aHttpStarted);
+                     aMetrics.uHttpBytes+=vecDownloaded.size();
+                     auto const aDiskWriteStarted=std::chrono::steady_clock::now();
                      optCached=aCache.Store(strUrl,vecDownloaded);
+                     aMetrics.flDiskWriteSeconds+=fnSeconds(aDiskWriteStarted);
                      ++uFetched;
                      break;
                   }
                   catch(ImageDownloadError const& ex) {
+                     aMetrics.flHttpSeconds+=fnSeconds(aHttpStarted);
                      if(ex.IsFatal()) throw; // TLS trust is not transient.
                      if(!ex.IsTransient() || uAttempt>=uMaxTransientRetries)
                         throw;
@@ -417,14 +434,17 @@ void ImportImages(postgres_database_ty const& aDatabase,
                         "in {}s: {}",
                         ex.iHttpStatus,static_cast<int>(ex.eCode),
                         uAttempt+1,uMaxTransientRetries,aDelay.count(),strUrl);
+                     auto const aRetryStarted=std::chrono::steady_clock::now();
                      std::this_thread::sleep_for(aDelay);
+                     aMetrics.flRetrySeconds+=fnSeconds(aRetryStarted);
                   }
                }
             }
             else ++uDiskHits;
-            // Both PostgreSQL writes share one transaction; the model bytes
-            // are selected from the authoritative permanent-cache row.
+            // Both inserts are one SQL statement and one atomic transaction.
+            auto const aDatabaseStarted=std::chrono::steady_clock::now();
             StoreInCacheAndModel(aConn.get(),strUrl,*optCached);
+            aMetrics.flDatabaseSeconds+=fnSeconds(aDatabaseStarted);
             ++uSaved;
          }
          catch(ImageDownloadError const& ex) {
@@ -451,10 +471,25 @@ void ImportImages(postgres_database_ty const& aDatabase,
             double const flEtaSeconds=uSaved>0 ?
                flElapsed*static_cast<double>(uEstimateRemaining)/
                   static_cast<double>(uSaved):0.0;
+            double const flHttpMbitSec=flElapsed>0.0?
+               static_cast<double>(aMetrics.uHttpBytes)*8.0/
+                  (flElapsed*1000000.0):0.0;
+            double const flDbMsPerImage=uSaved>0?
+               aMetrics.flDatabaseSeconds*1000.0/
+                  static_cast<double>(uSaved):0.0;
             std::println("[IMAGE] processed={}, saved={}, failed={}, disk_hits={}, "
                "network={}, remaining~={}, elapsed={:.0f}s, ETA~={:.0f}s",
                uProcessed,uSaved,uFailed,uDiskHits,uFetched,
                uEstimateRemaining,flElapsed,flEtaSeconds);
+            std::println("[IMAGE-PERF] HTTP={:.1f}s ({:.2f} Mbit/s overall), "
+               "PG={:.1f}s ({:.1f} ms/image), disk_read={:.1f}s, "
+               "disk_write={:.1f}s, throttle={:.1f}s, retries={:.1f}s, "
+               "received={} MiB",
+               aMetrics.flHttpSeconds,flHttpMbitSec,
+               aMetrics.flDatabaseSeconds,flDbMsPerImage,
+               aMetrics.flDiskLookupSeconds,aMetrics.flDiskWriteSeconds,
+               aMetrics.flThrottleSeconds,aMetrics.flRetrySeconds,
+               aMetrics.uHttpBytes/(1024*1024));
          }
       }
    }
@@ -465,6 +500,13 @@ void ImportImages(postgres_database_ty const& aDatabase,
       "remaining={}, root={}",
       uProcessed,uSaved,uFailed,uOfflineMissing,uDiskHits,uFetched,
       uStillMissing,aCache.Root().string());
+   std::println("[IMAGE-PERF] total: HTTP={:.1f}s, PG={:.1f}s, "
+      "disk_read={:.1f}s, disk_write={:.1f}s, throttle={:.1f}s, "
+      "retry_wait={:.1f}s, received={} MiB",
+      aMetrics.flHttpSeconds,aMetrics.flDatabaseSeconds,
+      aMetrics.flDiskLookupSeconds,aMetrics.flDiskWriteSeconds,
+      aMetrics.flThrottleSeconds,aMetrics.flRetrySeconds,
+      aMetrics.uHttpBytes/(1024*1024));
    if(uFailed)
       throw std::runtime_error(std::format(
          "{} image URLs could not be downloaded; saved images remain in "
