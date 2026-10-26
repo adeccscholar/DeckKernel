@@ -7,17 +7,21 @@
 */
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/geometry.hpp>
 #include <opencv2/imgcodecs.hpp>
 #if defined(DECKKERNEL_CAMERA_HAS_VIDEOIO)
 #include <opencv2/videoio.hpp>
 #endif
 #include <algorithm>
+#include <array>
 #include <bit>
+#include <cmath>
 #include <charconv>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <format>
+#include <iostream>
 #include <limits>
 #include <optional>
 #include <print>

@@ -11,6 +11,11 @@ cannot interrupt the multi-day image download. Snapshot writing is opt-in.
 ## Build
 
 The same bootstrapped BCC64X/CMake/Ninja toolchain as scantest is required.
+OpenCV 5 moves `contourArea`, `approxPolyDP`, `arcLength`,
+`isContourConvex`, `minAreaRect`, and `getPerspectiveTransform` from
+`imgproc` into the **geometry** component. The test includes
+`opencv2/geometry.hpp` and explicitly requires `geometry` from the
+installed OpenCV 5 CMake package. No new or static OpenCV build is used.
 
     cmake -S test/camerarecognition -B test/camerarecognition/build/Release -G Ninja -DCMAKE_BUILD_TYPE=Release
     cmake --build test/camerarecognition/build/Release
