@@ -37,6 +37,7 @@
 #include <cmath>
 #include <charconv>
 #include <cstdint>
+#include <cwchar>
 #include <cstdlib>
 #include <filesystem>
 #include <chrono>
