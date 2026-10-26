@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
 #pragma once
 #include "scryfall_database.h"
+#include <cstddef>
+#include <optional>
 
 namespace deckkernel::test {
    /** \brief Download and persist Scryfall artwork images into PostgreSQL bytea.
@@ -9,5 +11,11 @@ namespace deckkernel::test {
        \param aDatabase Established DeckKernel database context.
        \throw std::runtime_error for transport or storage errors.
    */
-   void ImportImages(postgres_database_ty const& aDatabase);
+   struct ImageImportOptions final {
+      bool bAllowNetwork { true };
+      std::optional<std::size_t> uMaxMissing;
+   };
+
+   void ImportImages(postgres_database_ty const& aDatabase,
+      ImageImportOptions const& aOptions = {});
 }

@@ -124,10 +124,36 @@ void EvaluateProcess(postgres_database_ty const& aDatabase) {
 } // namespace deckkernel::test
 
 
-int main() {
+int main(int argc,char* argv[]) {
    using namespace deckkernel::test;
 
    try {
+      if(argc>2) throw std::runtime_error("Expected one mode: --image-probe, --images-only, --images-offline or --all");
+      std::string_view const svMode=argc==2?std::string_view{argv[1]}:std::string_view{"--all"};
+      if(svMode=="--help" || svMode=="-h") {
+         std::println("Usage: deckkernel_scryfall_postgres_test.exe [--all | --images-only | --image-probe | --images-offline]");
+         std::println("--image-probe: one missing image, HTTPS/TLS check, no card reload");
+         std::println("--images-only: restore cache and download missing images, no card reload");
+         std::println("--images-offline: restore from caches, no network and no card reload");
+         std::println("--all: full destructive model import (legacy default)");
+         return 0;
+         }
+      if(svMode!="--all" && svMode!="--images-only" &&
+         svMode!="--image-probe" && svMode!="--images-offline")
+         throw std::runtime_error("Unknown test mode; use --help");
+
+      if(svMode!="--all") {
+         std::println("[MODE] {}: reuse existing model; Load/Parse/Store are SKIPPED",svMode);
+         postgres_database_ty aDatabase=RunTimedProcess("Connect",[](){return OpenDatabase();});
+         ImageImportOptions aOptions;
+         aOptions.bAllowNetwork=(svMode!="--images-offline");
+         if(svMode=="--image-probe") aOptions.uMaxMissing=1;
+         RunTimedProcess("Images",[&](){ImportImages(aDatabase,aOptions);});
+         std::println("[MODE] image stage completed; card and set tables unchanged");
+         return 0;
+         }
+
+      std::println("[MODE] --all: full Load/Parse/Store with model reset");
       LoadedBulkData aLoaded = RunTimedProcess(
          "Load",
          []() {

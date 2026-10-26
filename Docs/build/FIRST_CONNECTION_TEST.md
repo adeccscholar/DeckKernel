@@ -320,3 +320,21 @@ FirstConnection first restores **all** URLs already present in `deckkernel_cache
 For a remaining model URL, the importer checks the persistent on-disk image cache and only then makes a rate-limited Scryfall image request if the local disk copy is missing. A newly acquired image is written in **one PostgreSQL transaction** by (1) `INSERT ... ON CONFLICT DO NOTHING` into the durable URL-keyed cache and (2) `INSERT ... SELECT ... ON CONFLICT DO UPDATE` into the disposable model. The model upsert copies the binary payload directly from the database cache. If either write fails, both database changes are rolled back. The model's existing `image_kind`, `illustration_id`, and card/face/variant links remain unchanged. Re-running the test with cached URLs does not redownload their images.
 
 The limit `DECKKERNEL_IMAGE_LIMIT` counts only missing model image URLs considered for this pass; an empty durable cache and disk cache will still require an initial download of those images. This mechanism has not yet been verified with a native Windows BCC64X runtime and PostgreSQL test execution.
+
+
+## Fast recovery after an image download failure
+
+The 546,767-card initial import takes significant time. **Do not rerun the default full import to diagnose image HTTPS problems.** The existing executable now offers independent command modes, using the already stored `deckkernel_test` model, without executing Load, Parse, Store, or resetting any tables:
+
+```cmd
+apps\Release\deckkernel_scryfall_postgres_test.exe --image-probe
+apps\Release\deckkernel_scryfall_postgres_test.exe --images-only
+apps\Release\deckkernel_scryfall_postgres_test.exe --images-offline
+```
+
+- `--image-probe`: one unresolved image URL (after restoring all PostgreSQL cache hits), with at most one HTTPS attempt. Test this first.
+- `--images-only`: restore all permanent PostgreSQL cache hits, then process only missing URLs, bounded by `DECKKERNEL_IMAGE_LIMIT` (default 100, 0 for all).
+- `--images-offline`: restore images from the PostgreSQL cache and local disk cache only; **never contact Scryfall**. Disk-only recovery is bounded by `DECKKERNEL_IMAGE_LIMIT`.
+- `--all` (or no argument): the original full Load/Parse/Store/import workflow; **this resets the model**.
+
+The separate image downloader now matches the bulk downloader's libcurl configuration by requesting Windows native CA certificates through `CURLSSLOPT_NATIVE_CA` when available, with peer/host verification enabled. When required, set `DECKKERNEL_CURL_CA_BUNDLE` to an existing trusted PEM certificate-bundle file. **Never disable `CURLOPT_SSL_VERIFYPEER` or `CURLOPT_SSL_VERIFYHOST`.** It prints the active libcurl TLS backend and uses the CURL error buffer to reveal certificate issues. Certificate/TLS failures and HTTP 429/503 now immediately abort the image stage, preventing repeated doomed downloads. Compilation and runtime behavior still require verification on Windows/BCC64X.

@@ -9,6 +9,7 @@
 #include "../../src/scryfall/image_cache.h"
 #include <chrono>
 #include <thread>
+#include <filesystem>
 #include <curl/curl.h>
 #include <libpq-fe.h>
 #include <openssl/evp.h>
@@ -51,6 +52,17 @@ struct PgResultDeleter {
 struct CurlDeleter {
    void operator()(CURL* pCurl) const noexcept { if(pCurl) curl_easy_cleanup(pCurl); }
 };
+struct ImageDownloadError : std::runtime_error {
+   CURLcode eCode;
+   long iHttpStatus;
+   ImageDownloadError(CURLcode eNewCode,long iNewHttpStatus,std::string strDetail):
+      std::runtime_error(std::move(strDetail)),eCode(eNewCode),iHttpStatus(iNewHttpStatus) {}
+   [[nodiscard]] bool IsFatal() const noexcept {
+      return eCode==CURLE_PEER_FAILED_VERIFICATION ||
+         eCode==CURLE_SSL_CERTPROBLEM || eCode==CURLE_SSL_CACERT_BADFILE ||
+         eCode==CURLE_SSL_CONNECT_ERROR || iHttpStatus==429 || iHttpStatus==503;
+   }
+};
 using pg_connection_ty=std::unique_ptr<PGconn,PgDeleter>;
 using pg_result_ty=std::unique_ptr<PGresult,PgResultDeleter>;
 using curl_handle_ty=std::unique_ptr<CURL,CurlDeleter>;
@@ -72,6 +84,8 @@ std::vector<unsigned char> DownloadImage(std::string const& strUrl) {
    curl_handle_ty aCurl(curl_easy_init());
    if(!aCurl) throw std::runtime_error("curl_easy_init failed");
    std::vector<unsigned char> vecData;
+   std::array<char,CURL_ERROR_SIZE> arrError{};
+   curl_easy_setopt(aCurl.get(),CURLOPT_ERRORBUFFER,arrError.data());
    curl_easy_setopt(aCurl.get(),CURLOPT_URL,strUrl.c_str());
    curl_easy_setopt(aCurl.get(),CURLOPT_FOLLOWLOCATION,0L);
    curl_easy_setopt(aCurl.get(),CURLOPT_FAILONERROR,1L);
@@ -79,12 +93,31 @@ std::vector<unsigned char> DownloadImage(std::string const& strUrl) {
    curl_easy_setopt(aCurl.get(),CURLOPT_CONNECTTIMEOUT,10L);
    curl_easy_setopt(aCurl.get(),CURLOPT_SSL_VERIFYPEER,1L);
    curl_easy_setopt(aCurl.get(),CURLOPT_SSL_VERIFYHOST,2L);
+   curl_easy_setopt(aCurl.get(),CURLOPT_SSLVERSION,CURL_SSLVERSION_TLSv1_2);
+#if defined(CURLSSLOPT_NATIVE_CA)
+   // Match the working Scryfall bulk downloader: use Windows trusted roots.
+   curl_easy_setopt(aCurl.get(),CURLOPT_SSL_OPTIONS,static_cast<long>(CURLSSLOPT_NATIVE_CA));
+#endif
+   // Optional explicit CA bundle for OpenSSL deployments with no native trust.
+   std::string const strCaBundle=Env("DECKKERNEL_CURL_CA_BUNDLE","");
+   if(!strCaBundle.empty()) {
+      if(!std::filesystem::is_regular_file(strCaBundle))
+         throw std::runtime_error("DECKKERNEL_CURL_CA_BUNDLE points to a missing file");
+      curl_easy_setopt(aCurl.get(),CURLOPT_CAINFO,strCaBundle.c_str());
+   }
+   curl_easy_setopt(aCurl.get(),CURLOPT_PROTOCOLS_STR,"https");
+   curl_easy_setopt(aCurl.get(),CURLOPT_REDIR_PROTOCOLS_STR,"https");
    curl_easy_setopt(aCurl.get(),CURLOPT_USERAGENT,"adecc-DeckKernel/0.1 (+https://github.com/adeccscholar/DeckKernel)");
    curl_easy_setopt(aCurl.get(),CURLOPT_WRITEFUNCTION,&Receive);
    curl_easy_setopt(aCurl.get(),CURLOPT_WRITEDATA,&vecData);
    CURLcode const eCode=curl_easy_perform(aCurl.get());
-   if(eCode!=CURLE_OK||vecData.empty())
-      throw std::runtime_error(std::format("image download failed: {}",curl_easy_strerror(eCode)));
+   long iHttpStatus{};
+   curl_easy_getinfo(aCurl.get(),CURLINFO_RESPONSE_CODE,&iHttpStatus);
+   if(eCode!=CURLE_OK)
+      throw ImageDownloadError(eCode,iHttpStatus,std::format(
+         "image HTTPS failed (curl={}, HTTP={}): {}",static_cast<int>(eCode),iHttpStatus,
+         arrError[0]?arrError.data():curl_easy_strerror(eCode)));
+   if(vecData.empty()) throw std::runtime_error("image server returned an empty body");
    return vecData;
 }
 
@@ -196,9 +229,9 @@ void StoreInCacheAndModel(PGconn* pConn,std::string const& strUrl,
     \details Environment variable DECKKERNEL_IMAGE_LIMIT controls work per run;
     0 imports all pending images. SHA-256 is computed on downloaded bytes.
 */
-void ImportImages(postgres_database_ty const& aDatabase) {
+void ImportImages(postgres_database_ty const& aDatabase,ImageImportOptions const& aOptions) {
    (void)aDatabase; // Ensures FirstConnection has established its normal DB context.
-   std::size_t const uLimit=ImageLimit();
+   std::size_t const uLimit=aOptions.uMaxMissing.value_or(ImageLimit());
    std::filesystem::path const aCacheRoot=Env("DECKKERNEL_IMAGE_CACHE_ROOT","");
    deckkernel::scryfall::ImageCache aCache(aCacheRoot.empty()?std::filesystem::path{".cache/scryfall/images"}:aCacheRoot);
    std::size_t uDiskHits{},uFetched{};
@@ -220,14 +253,23 @@ void ImportImages(postgres_database_ty const& aDatabase) {
    pg_result_ty aRows(PQexec(aConn.get(),strSql.c_str()));
    if(!aRows||PQresultStatus(aRows.get())!=PGRES_TUPLES_OK)
       throw std::runtime_error("image catalog query failed: "+std::string(PQerrorMessage(aConn.get())));
-   if(curl_global_init(CURL_GLOBAL_DEFAULT)!=CURLE_OK)
+   if(aOptions.bAllowNetwork && curl_global_init(CURL_GLOBAL_DEFAULT)!=CURLE_OK)
       throw std::runtime_error("image import curl_global_init failed");
-   struct CurlCleanup { ~CurlCleanup(){curl_global_cleanup();} } aCurlCleanup;
+   if(aOptions.bAllowNetwork) {
+      curl_version_info_data const* pInfo=curl_version_info(CURLVERSION_NOW);
+      std::println("[IMAGE-TLS] backend={}, native CA requested when supported; peer verification ON",
+         pInfo && pInfo->ssl_version?pInfo->ssl_version:"<unknown>");
+   }
+   struct CurlCleanup { bool bInitialized; ~CurlCleanup(){if(bInitialized)curl_global_cleanup();} } aCurlCleanup{aOptions.bAllowNetwork};
    std::size_t uSaved{},uFailed{};
    for(int i=0;i<PQntuples(aRows.get());++i) {
       std::string const strUrl=PQgetvalue(aRows.get(),i,0);
       try {
          auto optCached=aCache.Find(strUrl);
+         if(!optCached && !aOptions.bAllowNetwork) {
+            std::println("[IMAGE] offline cache miss: {}",strUrl);
+            continue;
+         }
          if(!optCached) {
             std::this_thread::sleep_until(aNextRequest);
             aNextRequest=std::chrono::steady_clock::now()+std::chrono::milliseconds(250);
@@ -239,9 +281,19 @@ void ImportImages(postgres_database_ty const& aDatabase) {
          StoreInCacheAndModel(aConn.get(),strUrl,*optCached);
          ++uSaved;
       }
+      catch(ImageDownloadError const& ex) {
+         ++uFailed;
+         std::println(std::cerr,"[IMAGE] FAIL {}: {}",strUrl,ex.what());
+         if(ex.IsFatal()) {
+            std::println(std::cerr,"[IMAGE-TLS] FATAL: stopping immediately after first certificate/TLS or rate-limit failure");
+            throw;
+         }
+      }
       catch(std::exception const& ex) {
          ++uFailed;
          std::println(std::cerr,"[IMAGE] FAIL {}: {}",strUrl,ex.what());
+         // Local configuration/database errors must not trigger more downloads.
+         throw;
       }
       if((i+1)%100==0) std::println("[IMAGE] {}/{} processed; saved={}, failed={}",
          i+1,PQntuples(aRows.get()),uSaved,uFailed);
