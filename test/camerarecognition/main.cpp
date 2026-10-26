@@ -249,6 +249,148 @@ void SelfTest() {
    if(events!=2)throw std::runtime_error("reinserted card must emit second event");
    std::println("SMOKE|RESULT|PASS|stable card, no duplicates, removal and reentry");
 }
+
+#if defined(DECKKERNEL_CAMERA_HAS_VIDEOIO)
+/** \brief Translate a Windows camera's FOURCC to readable characters. */
+std::string FourccName(double code) {
+   if(!std::isfinite(code)||code<=0)return "unspecified";
+   std::uint32_t const number=static_cast<std::uint32_t>(code);
+   std::string out;
+   for(unsigned shift=0;shift<32;shift+=8) {
+      char const ch=static_cast<char>((number>>shift)&0xff);
+      if(ch<32||ch>126)return std::format("0x{:08x}",number);
+      out.push_back(ch);
+   }
+   return out;
+}
+
+int Api(std::string_view backend) {
+   if(backend=="any")return cv::CAP_ANY;
+   if(backend=="dshow")return cv::CAP_DSHOW;
+   if(backend=="msmf")return cv::CAP_MSMF;
+   throw std::runtime_error("backend must be any, dshow or msmf");
+}
+
+int CameraFourcc(std::string_view value) {
+   if(value=="mjpg")return cv::VideoWriter::fourcc('M','J','P','G');
+   if(value=="yuy2")return cv::VideoWriter::fourcc('Y','U','Y','2');
+   throw std::runtime_error("FOURCC must be auto, mjpg or yuy2");
+}
+
+void ConfigureCapture(cv::VideoCapture& capture,int width,int height,int fps,
+   std::string_view fourcc) {
+   // Drivers may restart their capture graph when these properties change.
+   // The requested mode is not necessarily the mode ultimately negotiated.
+   if(fourcc!="auto") {
+      bool const result=capture.set(cv::CAP_PROP_FOURCC,CameraFourcc(fourcc));
+      std::println("[CAM] FOURCC request={} accepted={}",fourcc,result);
+   }
+   bool const w=capture.set(cv::CAP_PROP_FRAME_WIDTH,width);
+   bool const h=capture.set(cv::CAP_PROP_FRAME_HEIGHT,height);
+   bool const f=capture.set(cv::CAP_PROP_FPS,fps);
+   std::println("[CAM] mode request={}x{} @{}fps accepted={}/{}/{}",
+      width,height,fps,w,h,f);
+   std::println("[CAM] negotiated={}x{} @{}fps FOURCC={}",
+      capture.get(cv::CAP_PROP_FRAME_WIDTH),
+      capture.get(cv::CAP_PROP_FRAME_HEIGHT),
+      capture.get(cv::CAP_PROP_FPS),
+      FourccName(capture.get(cv::CAP_PROP_FOURCC)));
+}
+
+struct FrameSignal {
+   double brightness{};
+   double maximum{};
+   double minimum{};
+   bool nonblack{};
+};
+
+/** \brief Measure real pixel values, not merely successful VideoCapture.read(). */
+FrameSignal MeasureFrame(cv::Mat const& frame) {
+   if(frame.empty())return {};
+   cv::Mat thumbnail;
+   cv::resize(frame,thumbnail,cv::Size(80,60),0,0,cv::INTER_AREA);
+   cv::Mat const oneChannel=thumbnail.reshape(1);
+   FrameSignal signal;
+   cv::minMaxLoc(oneChannel,&signal.minimum,&signal.maximum);
+   cv::Scalar const mean=cv::mean(thumbnail);
+   if(frame.channels()>=3)
+      signal.brightness=(mean[0]+mean[1]+mean[2])/3.0;
+   else signal.brightness=mean[0];
+   signal.nonblack=signal.maximum>5.0;
+   return signal;
+}
+
+struct ProbeProfile {
+   char const* name{};
+   int backend{};
+   int width{},height{},fps{};
+   char const* fourcc{};
+};
+
+/** \brief Try several normal camera delivery modes without touching the DB.
+    \returns True if any mode yielded nonblack image pixels.
+*/
+bool ProbeCamera(int index) {
+   std::array<ProbeProfile,4> const modes{{
+      {"DirectShow MJPG",cv::CAP_DSHOW,640,480,30,"mjpg"},
+      {"DirectShow YUY2",cv::CAP_DSHOW,640,480,30,"yuy2"},
+      {"MediaFoundation auto",cv::CAP_MSMF,640,480,30,"auto"},
+      {"MediaFoundation MJPG",cv::CAP_MSMF,640,480,30,"mjpg"}
+   }};
+   unsigned successful=0;
+   for(auto const& mode:modes) {
+      std::println("[CAM-PROBE] START index={} mode={}",index,mode.name);
+      try {
+         cv::VideoCapture capture;
+         if(!capture.open(index,mode.backend)||!capture.isOpened()) {
+            std::println("[CAM-PROBE] UNAVAILABLE {}",mode.name);
+            continue;
+         }
+         ConfigureCapture(capture,mode.width,mode.height,mode.fps,mode.fourcc);
+         unsigned received=0,bright=0,black=0,changed=0,empty=0;
+         cv::Mat previous,frame;
+         double maximum=0;
+         auto const beginning=std::chrono::steady_clock::now();
+         for(unsigned n=0;n<45;++n) {
+            if(!capture.read(frame)||frame.empty()){
+               ++empty;
+            } else {
+               ++received;
+               auto const signal=MeasureFrame(frame);
+               maximum=std::max(maximum,signal.maximum);
+               if(signal.nonblack)++bright;else ++black;
+               cv::Mat small;
+               cv::resize(frame,small,cv::Size(80,60),0,0,cv::INTER_AREA);
+               if(!previous.empty()&&cv::norm(previous,small,cv::NORM_L1)>50)
+                  ++changed;
+               previous=std::move(small);
+            }
+            if(std::chrono::duration<double>(
+               std::chrono::steady_clock::now()-beginning).count()>=5.0)
+               break;
+         }
+         double const seconds=std::chrono::duration<double>(
+            std::chrono::steady_clock::now()-beginning).count();
+         std::println("[CAM-PROBE] RESULT {} backend={} frames={} empty={} "
+            "nonblack={} black={} changed={} maxPixel={:.0f} elapsed={:.1f}s",
+            mode.name,capture.getBackendName(),received,empty,bright,black,
+            changed,maximum,seconds);
+         if(bright>0)++successful;
+         capture.release();
+      } catch(cv::Exception const& ex) {
+         std::println(std::cerr,
+            "[CAM-PROBE] BACKEND ERROR {}: {}",mode.name,ex.what());
+      }
+   }
+   std::println("SMOKE|CHECK|camera-pixels|{}|camera={} valid_modes={}/4",
+      successful?"PASS":"FAIL",index,successful);
+   if(!successful)
+      std::println("[CAM-PROBE] No usable image data. Check the camera in the "
+         "Windows Camera application before changing the card recognition algorithm.");
+   return successful>0;
+}
+#endif
+
 int CameraIndex(std::string_view str) {
    int n{};
    auto const r=std::from_chars(str.data(),str.data()+str.size(),n);
@@ -259,13 +401,17 @@ int CameraIndex(std::string_view str) {
 void Usage() {
    std::println("Usage: deckkernel_camera_recognition_test --self-test");
    std::println("   or: --sequence=folder [--save-events]");
-   std::println("   or: --camera=0 [--backend=any|dshow|msmf] [--save-events]");
+   std::println("   or: --camera=0 [--backend=any|dshow|msmf] [--width=640 --height=480 --fps=30 --fourcc=auto|mjpg|yuy2] [--save-events]");
+   std::println("   or: --probe-camera=0          test 4 Windows camera delivery modes");
 }
 }
 int main(int argc,char** argv) {
    try{
       bool selfTest=false,save=false;
       std::string backend="any";
+      std::string fourcc="auto";
+      int width=640,height=480,fpsRequested=30;
+      std::optional<int> probeCamera;
       std::string folder;
       std::optional<int> camera;
       for(int i=1;i<argc;++i){
@@ -274,11 +420,26 @@ int main(int argc,char** argv) {
          if(arg=="--self-test")selfTest=true;
          else if(arg=="--save-events")save=true;
          else if(arg.starts_with("--backend="))backend=arg.substr(10);
+         else if(arg.starts_with("--fourcc="))fourcc=arg.substr(9);
+         else if(arg.starts_with("--width="))width=CameraIndex(arg.substr(8));
+         else if(arg.starts_with("--height="))height=CameraIndex(arg.substr(9));
+         else if(arg.starts_with("--fps="))fpsRequested=CameraIndex(arg.substr(6));
+         else if(arg.starts_with("--probe-camera="))probeCamera=CameraIndex(arg.substr(15));
          else if(arg.starts_with("--sequence="))folder=arg.substr(11);
          else if(arg.starts_with("--camera="))camera=CameraIndex(arg.substr(9));
          else throw std::runtime_error("unknown argument (use --help)");
       }
       if(selfTest){SelfTest();return 0;}
+      if(probeCamera) {
+#if defined(DECKKERNEL_CAMERA_HAS_VIDEOIO)
+         return ProbeCamera(*probeCamera)?0:1;
+#else
+         throw std::runtime_error("OpenCV videoio is unavailable");
+#endif
+      }
+      if(width<160||height<120||width>3840||height>2160||
+         fpsRequested<1||fpsRequested>120)
+         throw std::runtime_error("invalid camera width, height or fps");
       if(folder.empty()==!camera)
          throw std::runtime_error("select one of --sequence or --camera");
       Processor processor(save);
@@ -301,45 +462,54 @@ int main(int argc,char** argv) {
          return 0;
       }
 #if defined(DECKKERNEL_CAMERA_HAS_VIDEOIO)
-      int api=cv::CAP_ANY;
-      if(backend=="dshow")api=cv::CAP_DSHOW;
-      else if(backend=="msmf")api=cv::CAP_MSMF;
-      else if(backend!="any")throw std::runtime_error("use --backend=any|dshow|msmf");
+      int api=Api(backend);
       std::println("[CAM] opening camera={} backend-request={}",*camera,backend);
       cv::VideoCapture capture(*camera,api);
       if(!capture.isOpened())
          throw std::runtime_error("cannot open camera: try another index/backend or Windows camera privacy settings");
       std::println("[CAM] opened camera={} backend={}",*camera,capture.getBackendName());
+      ConfigureCapture(capture,width,height,fpsRequested,fourcc);
       CameraWindow preview(*camera);
       cv::Mat frame;
       unsigned long long count=0;
-      unsigned failures=0;
+      unsigned failures=0,blackFrames=0;
       auto interval=std::chrono::steady_clock::now();
       double fps=0.0;
+      auto const beginning=interval;
       while(preview.Messages()){
          if(!capture.read(frame)||frame.empty()){
             if(++failures==1 || failures%30==0)
                std::println(std::cerr,"[CAM] no frame returned, consecutive failures={}",failures);
-            if(failures>=90)throw std::runtime_error("camera open but no frames received");
+            if(failures>=90)throw std::runtime_error("camera opened but produced no frames");
             continue;
          }
          failures=0;
          ++count;
-         cv::Scalar const mean=cv::mean(frame);
-         double const brightness=frame.channels()==3?
-            (mean[0]+mean[1]+mean[2])/3.0:mean[0];
-         processor.Process(frame);
-         preview.Show(frame,*camera,fps,brightness);
+         FrameSignal const signal=MeasureFrame(frame);
+         if(signal.nonblack) {
+            blackFrames=0;
+            processor.Process(frame);
+         } else {
+            ++blackFrames;
+         }
+         preview.Show(frame,*camera,fps,signal.brightness);
          auto now=std::chrono::steady_clock::now();
-         double seconds=std::chrono::duration<double>(now-interval).count();
+         double const seconds=std::chrono::duration<double>(now-interval).count();
          if(seconds>=2.0){
             fps=count/seconds;
-            std::println("[CAM] backend={} frames={} size={}x{} fps={:.1f} brightness={:.0f}",
-               capture.getBackendName(),count,frame.cols,frame.rows,fps,brightness);
-            if(brightness<8)
-               std::println("[CAM] nearly black frames: check lens/privacy shutter");
+            std::println("[CAM] backend={} frames={} size={}x{} fps={:.1f} "
+               "mean={:.2f} min={:.0f} max={:.0f} black-frames={}",
+               capture.getBackendName(),count,frame.cols,frame.rows,fps,
+               signal.brightness,signal.minimum,signal.maximum,blackFrames);
             count=0;interval=now;
          }
+         // Do not keep silently treating all-zero placeholder frames as
+         // successful camera acquisition or running contour recognition.
+         if(blackFrames>=5 &&
+            std::chrono::duration<double>(now-beginning).count()>=5.0)
+            throw std::runtime_error("VIDEO SIGNAL ABSENT: camera device opened, "
+               "but returned at least five nearly black frames. "
+               "Run --probe-camera=N and check the device in Windows Camera.");
       }
       std::println("[CAM] preview closed");
       return 0;
