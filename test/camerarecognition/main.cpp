@@ -545,8 +545,11 @@ public:
       m_ocrAttempts=0;
       m_liveFrames=90;
       m_bestSharpness=0;
-      m_ocrCard.reset();
-      m_displayCard.release();
+      // Keep the active presentation event: a manual rotation must cause
+      // another OCR pass without requiring the user to remove the card.
+      m_autoFlipped=false;
+      if(!m_displayCard.empty())
+         cv::rotate(m_displayCard,m_displayCard,cv::ROTATE_180);
       m_strOrientation="Manual 180 deg correction requested";
    }
    bool Process(cv::Mat const& frame) {return Process(FindCard(frame));}
