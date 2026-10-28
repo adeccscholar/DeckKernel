@@ -430,6 +430,7 @@ class StableCardTrigger {
    static constexpr unsigned removalFrames=18;
    static constexpr unsigned replacementFrames=6;
    std::optional<cv::Rect> m_previousBox;
+   std::optional<cv::Rect> m_activeBox;
    cv::Mat m_bestFrame;
    double m_bestScore{-1.0};
    std::optional<unsigned> m_activeNumber;
@@ -450,6 +451,7 @@ public:
    };
 private:
    std::optional<Event> m_queuedPresentation;
+   std::optional<cv::Rect> m_queuedBox;
 
    [[nodiscard]] static hash_ty ArtHash(cv::Mat const& card) {
       if(card.empty())return 0;
@@ -486,8 +488,21 @@ public:
       // A confirmed swap emits Removed, then Presented on successive calls.
       // The second event is already backed by the accepted replacement image.
       if(m_queuedPresentation) {
+         // A pending presentation must still exist in the current frame:
+         // never resurrect an already removed card from the queue.
+         if(!found || !m_queuedBox ||
+            !Near(cv::boundingRect(found->corners),*m_queuedBox) ||
+            !SameVisual(found->fingerprint,ArtHash(found->rectified),
+               m_queuedPresentation->fingerprint,
+               ArtHash(m_queuedPresentation->card))) {
+            m_queuedPresentation.reset();
+            m_queuedBox.reset();
+            return std::nullopt;
+         }
          auto event=std::move(*m_queuedPresentation);
          m_queuedPresentation.reset();
+         m_activeBox=m_queuedBox;
+         m_queuedBox.reset();
          m_activeNumber=event.number;
          m_activeFingerprint=event.fingerprint;
          m_activeArtwork=ArtHash(event.card);
@@ -507,19 +522,26 @@ public:
             Event const removal{EventKind::Removed,*m_activeNumber,
                m_activeFingerprint,{}};
             m_activeNumber.reset();
+            m_activeBox.reset();
             return removal;
          }
          return std::nullopt;
       }
-      m_absent=0;
       cv::Rect const box=cv::boundingRect(found->corners);
       hash_ty const artHash=ArtHash(found->rectified);
       if(m_activeNumber) {
-         if(SameVisual(found->fingerprint,artHash,
-            m_activeFingerprint,m_activeArtwork)) {
+         if(m_activeBox && Near(box,*m_activeBox) &&
+            SameVisual(found->fingerprint,artHash,
+               m_activeFingerprint,m_activeArtwork)) {
+            m_absent=0;
+            m_activeBox=box;
             ResetReplacement();
             return std::nullopt;
          }
+         // A different outline is not continued presence of the active card.
+         // Count this as active-card absence while independently confirming
+         // a possible replacement; background shapes cannot pin it forever.
+         if(m_absent<removalFrames)++m_absent;
          bool const consistent=m_replacementStable!=0 && m_replacementBox &&
             Near(box,*m_replacementBox) &&
             SameVisual(found->fingerprint,artHash,
@@ -532,15 +554,28 @@ public:
          // Store the confirmed replacement, not a frame from the old card.
          if(m_replacementStable==1 || m_replacementStable==replacementFrames)
             m_replacementFrame=found->rectified.clone();
-         if(m_replacementStable<replacementFrames)return std::nullopt;
+         if(m_replacementStable<replacementFrames) {
+            if(m_absent<removalFrames)return std::nullopt;
+            Event const removed{EventKind::Removed,*m_activeNumber,
+               m_activeFingerprint,{}};
+            m_activeNumber.reset();
+            m_activeBox.reset();
+            ResetReplacement();
+            m_previousBox=box;
+            m_stable=1;
+            return removed;
+         }
          Event const removed{EventKind::Removed,*m_activeNumber,
             m_activeFingerprint,{}};
          m_activeNumber.reset();
+         m_activeBox.reset();
+         m_queuedBox=box;
          m_queuedPresentation=Event{EventKind::Presented,
             ++m_events,m_replacementFingerprint,m_replacementFrame.clone()};
          ResetReplacement();
          return removed;
       }
+      m_absent=0;
       bool const sameGeometry=m_previousBox && Near(box,*m_previousBox);
       if(sameGeometry)++m_stable;
       else {
@@ -556,6 +591,7 @@ public:
       m_previousBox=box;
       if(m_stable<stableFrames)return std::nullopt;
       m_activeNumber=++m_events;
+      m_activeBox=box;
       m_activeFingerprint=found->fingerprint;
       m_activeArtwork=artHash;
       return Event{EventKind::Presented,*m_activeNumber,
@@ -849,10 +885,13 @@ public:
          ++m_removedEvents;
          m_ocrCard.reset();m_ocrAccepted=false;m_ocrAttempts=0;
          m_liveFrames=0;m_bestSharpness=0;m_autoFlipped=false;
-         m_strStatus="Card removed - last OCR result retained";
+         m_strStatus="Card removed - waiting for next card";
+         m_strName="--";m_strType="--";m_strRules="--";
+         m_strMana="No mana evidence";
+         m_strOrientation="Waiting for card orientation";
          m_displayCard.release();
          std::println("[CAM] CARD-NO-LONGER-DETECTED #{} fingerprint={:016x}; "
-            "absent-frames=45; ready-for-next-card",
+            "ready-for-next-card",
             event->number,event->fingerprint);
          return false;
       }
@@ -1570,8 +1609,9 @@ int main(int argc,char** argv) {
             flip?"Manual 180 deg / "+processor.Orientation():processor.Orientation(),
             qualityStatus);
 #endif
-         preview.Show(annotated,processor.DisplayCard().empty()?
-            (found?found->rectified:cv::Mat{}):processor.DisplayCard(),
+         // Only a confirmed card belongs in the right panel. Do not show
+         // a transient candidate or a different contour after removal.
+         preview.Show(annotated,processor.DisplayCard(),
             *camera,fps,signal.brightness);
          auto now=std::chrono::steady_clock::now();
          double const seconds=std::chrono::duration<double>(now-interval).count();
