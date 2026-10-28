@@ -35,6 +35,8 @@ class CameraDashboard {
    SDL_Texture* m_pCard{};
    bool m_bRunning{true};
    bool m_bFlip{};
+   float m_cardZoom{1.0f};
+   std::string m_qualityStatus{"Waiting for card"};
    std::string m_strName{"--"};
    std::string m_strType{"--"};
    std::string m_strRules{"--"};
@@ -90,7 +92,8 @@ class CameraDashboard {
       if(pTexture)SDL_UpdateTexture(pTexture,nullptr,aRgba.data,
          static_cast<int>(aRgba.step));
    }
-   void Image(SDL_Texture* pTexture,SDL_Rect aArea,bool rotated=false) {
+   void Image(SDL_Texture* pTexture,SDL_Rect aArea,bool rotated=false,
+      float zoom=1.0f) {
       if(!pTexture)return;
       int iW{},iH{};
       SDL_QueryTexture(pTexture,nullptr,nullptr,&iW,&iH);
@@ -100,7 +103,14 @@ class CameraDashboard {
       SDL_Rect const aDest{aArea.x+(aArea.w-static_cast<int>(iW*flScale))/2,
          aArea.y+(aArea.h-static_cast<int>(iH*flScale))/2,
          static_cast<int>(iW*flScale),static_cast<int>(iH*flScale)};
-      SDL_RenderCopyEx(m_pRenderer,pTexture,nullptr,&aDest,
+      SDL_Rect source{0,0,iW,iH};
+      if(zoom>1.01f) {
+         source.w=std::max(1,static_cast<int>(iW/zoom));
+         source.h=std::max(1,static_cast<int>(iH/zoom));
+         source.x=(iW-source.w)/2;
+         source.y=(iH-source.h)/2;
+      }
+      SDL_RenderCopyEx(m_pRenderer,pTexture,&source,&aDest,
          rotated?180.0:0.0,nullptr,SDL_FLIP_NONE);
    }
 public:
@@ -131,6 +141,13 @@ public:
          if(aEvent.type==SDL_KEYDOWN) {
             if(aEvent.key.keysym.sym==SDLK_ESCAPE)m_bRunning=false;
             if(aEvent.key.keysym.sym==SDLK_r)m_bFlip=!m_bFlip;
+            if(aEvent.key.keysym.sym==SDLK_PLUS ||
+               aEvent.key.keysym.sym==SDLK_EQUALS ||
+               aEvent.key.keysym.sym==SDLK_KP_PLUS)
+               m_cardZoom=std::min(4.0f,m_cardZoom+0.5f);
+            if(aEvent.key.keysym.sym==SDLK_MINUS ||
+               aEvent.key.keysym.sym==SDLK_KP_MINUS)
+               m_cardZoom=std::max(1.0f,m_cardZoom-0.5f);
          }
       }
       return m_bRunning;
@@ -139,7 +156,8 @@ public:
    void SetFields(std::string strName,std::string strType,std::string strRules,
       std::string strMana,std::string strStatus,
       std::string strIdentity="No verified identity",
-      std::string strOrientation="Automatic orientation pending") {
+      std::string strOrientation="Automatic orientation pending",
+      std::string strQuality="Waiting for card") {
       m_strName=std::move(strName);
       m_strType=std::move(strType);
       m_strRules=std::move(strRules);
@@ -147,6 +165,7 @@ public:
       m_strStatus=std::move(strStatus);
       m_strIdentity=std::move(strIdentity);
       m_strOrientation=std::move(strOrientation);
+      m_qualityStatus=std::move(strQuality);
    }
    void Show(cv::Mat const& aRaw,cv::Mat const& aCard,
       int iCamera,double flFps,double flBrightness) {
@@ -197,9 +216,10 @@ public:
       Text(pCanvas,32,flBottom+179,"Recognition: "+m_strStatus,16,0xffffcc79);
       Text(pCanvas,32,flBottom+204,"Identity: "+m_strIdentity,15,0xff9dddb9);
       Text(pCanvas,32,flBottom+229,"Orientation: "+m_strOrientation,15,0xffc9d9e2);
-      Text(pCanvas,32,flBottom+257,
-         std::format("Camera {} | {:.1f} fps | brightness {:.0f} | R: 180 deg | Esc: exit",
-            iCamera,flFps,flBrightness),14,0xff8fa5b2);
+      Text(pCanvas,32,flBottom+253,"Image: "+m_qualityStatus,14,0xff9dddb9);
+      Text(pCanvas,32,flBottom+276,
+         std::format("Camera {} | {:.1f} fps | brightness {:.0f} | Zoom {:.1f}x (+/-) | R rotate | Esc",
+            iCamera,flFps,flBrightness,m_cardZoom),14,0xff8fa5b2);
       SkPixmap aPixels;
       if(aSurface->peekPixels(&aPixels)) {
          SDL_Texture* pBackground=SDL_CreateTexture(m_pRenderer,
@@ -215,7 +235,7 @@ public:
          static_cast<int>((iWidth-48)*0.56f)-28,static_cast<int>(iHeight*0.57f)-54},m_bFlip);
       Image(m_pCard,SDL_Rect{
          static_cast<int>(46+(iWidth-48)*0.56f),98,
-         static_cast<int>((iWidth-48)*0.44f)-30,static_cast<int>(iHeight*0.57f)-54});
+         static_cast<int>((iWidth-48)*0.44f)-30,static_cast<int>(iHeight*0.57f)-54},false,m_cardZoom);
       SDL_RenderPresent(m_pRenderer);
    }
 };
