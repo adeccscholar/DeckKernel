@@ -29,6 +29,18 @@ function(adecc_runtime_search_directories output_dirs output_toolchain_dirs)
             list(APPEND _adecc_dirs "${_dir}")
          endif()
       endforeach()
+      # Imported shared libraries can have a runtime directory other than the
+      # conventional bin/win64/<configuration>. Enumerate *installed* DLLs
+      # under each locked package, then add their actual parent directories.
+      # No PATH/system fallback, no copied binaries from arbitrary locations.
+      file(GLOB_RECURSE _adecc_installed_dlls LIST_DIRECTORIES FALSE
+         "${_root}/*.dll" "${_root}/*.DLL")
+      foreach(_dll IN LISTS _adecc_installed_dlls)
+         get_filename_component(_dll_dir "${_dll}" DIRECTORY)
+         if(NOT _dll_dir IN_LIST _adecc_dirs)
+            list(APPEND _adecc_dirs "${_dll_dir}")
+         endif()
+      endforeach()
    endforeach()
    if(NOT _adecc_dirs)
       message(FATAL_ERROR
