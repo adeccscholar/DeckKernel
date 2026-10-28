@@ -17,10 +17,18 @@ function(adecc_runtime_search_directories output_dirs output_toolchain_dirs)
 
    set(_adecc_dirs)
    foreach(_root IN LISTS ADECC_THIRDPARTY_PACKAGE_ROOTS)
-      set(_dir "${_root}/bin/win64/${CMAKE_BUILD_TYPE}")
-      if(IS_DIRECTORY "${_dir}")
-         list(APPEND _adecc_dirs "${_dir}")
-      endif()
+      # StackBuilder packages may contain variant-specific directories or
+      # published flat Release runtimes (bin/). Both are project-pinned.
+      # Search variant-specific paths first to avoid Debug/Release mixing.
+      foreach(_suffix IN ITEMS
+         "bin/win64/${CMAKE_BUILD_TYPE}"
+         "bin/${CMAKE_BUILD_TYPE}"
+         "bin")
+         set(_dir "${_root}/${_suffix}")
+         if(IS_DIRECTORY "${_dir}")
+            list(APPEND _adecc_dirs "${_dir}")
+         endif()
+      endforeach()
    endforeach()
    if(NOT _adecc_dirs)
       message(FATAL_ERROR
