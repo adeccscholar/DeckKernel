@@ -249,6 +249,51 @@ struct CardDetectionDiagnostics {
    bool recoveredRectangle{};
 };
 
+/** Refine only interior, finite corners on the detection image.
+    Border and out-of-frame points can arise from contour approximation:
+    OpenCV cornerSubPix rejects them as initial points. Keep those corners
+    unchanged; any failure of optional refinement must not lose the card.
+*/
+[[nodiscard]] std::array<cv::Point2f,4> RefineCardCorners(
+   cv::Mat const& gray,std::array<cv::Point2f,4> const& points,
+   double scale) {
+   auto result=points;
+   if(gray.empty()||gray.channels()!=1||gray.cols<16||gray.rows<16 ||
+      !std::isfinite(scale)||scale<=0.0)return result;
+   constexpr int border=6; // 5-pixel search window + one pixel clearance
+   std::vector<cv::Point2f> valid;
+   std::vector<unsigned> indices;
+   for(unsigned i=0;i<4;++i) {
+      cv::Point2f const p(static_cast<float>(points[i].x*scale),
+         static_cast<float>(points[i].y*scale));
+      if(!std::isfinite(p.x)||!std::isfinite(p.y)||
+         p.x<border||p.y<border||
+         p.x>=gray.cols-border||p.y>=gray.rows-border)continue;
+      valid.push_back(p);
+      indices.push_back(i);
+   }
+   if(valid.empty())return result;
+   auto refined=valid;
+   try {
+      cv::cornerSubPix(gray,refined,cv::Size(5,5),cv::Size(-1,-1),
+         cv::TermCriteria(cv::TermCriteria::COUNT|
+            cv::TermCriteria::EPS,12,0.05));
+   } catch(cv::Exception const&) {
+      // Refinement is optional. Never abort card capture on a bad corner.
+      return result;
+   }
+   for(std::size_t j=0;j<indices.size();++j) {
+      auto const& p=refined[j];
+      if(!std::isfinite(p.x)||!std::isfinite(p.y)||
+         p.x<border||p.y<border||
+         p.x>=gray.cols-border||p.y>=gray.rows-border||
+         cv::norm(p-valid[j])>3.0)continue;
+      result[indices[j]]=cv::Point2f(
+         static_cast<float>(p.x/scale),static_cast<float>(p.y/scale));
+   }
+   return result;
+}
+
 std::optional<FoundCard> FindCard(cv::Mat const& frame,
    CardDetectionDiagnostics* diagnostics=nullptr) {
    if(diagnostics)*diagnostics={};
@@ -395,23 +440,8 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
    if(cv::norm(pts[0]-pts[1])>cv::norm(pts[1]-pts[2]))
       std::rotate(pts.begin(),pts.begin()+1,pts.end());
 
-   // Subpixel refinement on the bounded detection image only. Reject
-   // movements greater than 3 detection pixels: a strong interior artwork
-   // edge must not pull an exterior corner away from its original position.
-   std::vector<cv::Point2f> cornersSmall;
-   for(auto const& p:pts)
-      cornersSmall.emplace_back(static_cast<float>(p.x*scale),
-         static_cast<float>(p.y*scale));
-   auto refined=cornersSmall;
-   cv::cornerSubPix(gray,refined,cv::Size(5,5),cv::Size(-1,-1),
-      cv::TermCriteria(cv::TermCriteria::COUNT|cv::TermCriteria::EPS,12,0.05));
-   for(unsigned i=0;i<4;++i) {
-      if(cv::norm(refined[i]-cornersSmall[i])<=3.0 &&
-         refined[i].x>=1 && refined[i].y>=1 &&
-         refined[i].x<gray.cols-1 && refined[i].y<gray.rows-1)
-         pts[i]=cv::Point2f(static_cast<float>(refined[i].x/scale),
-            static_cast<float>(refined[i].y/scale));
-   }
+   // Optional subpixel refinement must never invalidate the detected card.
+   pts=RefineCardCorners(gray,pts,scale);
 
    std::array<cv::Point2f,4> const target{{
       {0,0},{479,0},{479,671},{0,671}
