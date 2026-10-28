@@ -9,6 +9,11 @@
 #include <SDL.h>
 #include "include/core/SkCanvas.h"
 #include "include/core/SkFont.h"
+#include "include/core/SkFontMgr.h"
+#include "include/core/SkTypeface.h"
+#include "include/core/SkFontStyle.h"
+#include "include/ports/SkTypeface_win.h"
+#include "CameraTypography.h"
 #include "include/core/SkImageInfo.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkRect.h"
@@ -36,14 +41,28 @@ class CameraDashboard {
    std::string m_strStatus{"Waiting for card"};
    std::string m_strIdentity{"No verified identity"};
    std::string m_strOrientation{"Automatic orientation pending"};
-   static void Text(SkCanvas* pCanvas,float flX,float flY,
-      std::string const& strText,float flSize,SkColor uColor) {
-      SkPaint aPaint;
-      aPaint.setAntiAlias(true);
-      aPaint.setColor(uColor);
-      SkFont aFont(nullptr,flSize);
-      pCanvas->drawSimpleText(strText.data(),strText.size(),SkTextEncoding::kUTF8,
-         flX,flY,aFont,aPaint);
+   static sk_sp<SkTypeface>& Typeface() {
+      static sk_sp<SkTypeface> face=[] {
+         auto manager=SkFontMgr_New_DirectWrite();
+         if(manager) return manager->matchFamilyStyle("Segoe UI",SkFontStyle());
+         return sk_sp<SkTypeface>{};
+      }();
+      return face;
+   }
+   static void Text(SkCanvas* canvas,float x,float y,
+      std::string const& value,float size,SkColor color) {
+      if(value.empty())return;
+      if(!Typeface()) {
+         deckkernel_camera::typography::Draw(canvas,x,y,value,size,color);
+         return;
+      }
+      SkPaint paint;
+      paint.setAntiAlias(true);
+      paint.setColor(color);
+      SkFont font(Typeface(),size);
+      font.setEdging(SkFont::Edging::kSubpixelAntiAlias);
+      canvas->drawSimpleText(value.data(),value.size(),SkTextEncoding::kUTF8,
+         x,y,font,paint);
    }
    static void Fill(SkCanvas* pCanvas,SkRect const& aRect,SkColor uColor) {
       SkPaint aPaint;
