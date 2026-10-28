@@ -629,6 +629,7 @@ class CardOcr {
    tesseract::TessBaseAPI m_api;
    bool m_ready{};
    bool m_verbose{};
+   bool m_lastAutoFlipped{};
    static std::string Clean(std::string text) {
       for(char& ch:text)if(ch=='\n'||ch=='\r'||ch=='\t')ch=' ';
       auto start=text.find_first_not_of(' ');
@@ -701,6 +702,7 @@ public:
    int m_typeConfidence{};
    int m_nameConfidence{};
    int m_rulesConfidence{};
+   [[nodiscard]] bool LastAutoFlipped() const noexcept{return m_lastAutoFlipped;}
    [[nodiscard]] int NameConfidence() const noexcept{return m_nameConfidence;}
    [[nodiscard]] int RulesConfidence() const noexcept{return m_rulesConfidence;}
    [[nodiscard]] int TypeConfidence() const noexcept{return m_typeConfidence;}
@@ -784,6 +786,7 @@ public:
    // must not win based solely on a plausible-looking name.
    bool ReadBest(cv::Mat& card,unsigned event,unsigned attempt,
       bool allowAutoFlip) {
+      m_lastAutoFlipped=false;
       if(!allowAutoFlip)return Read(card,event,attempt);
       bool const original=Read(card,event,attempt);
       std::string name=m_strLastName,type=m_strLastType,rules=m_strLastRules;
@@ -804,6 +807,7 @@ public:
       bool const accepted=alternative && rotated>=initial+25 &&
          deckkernel_camera::ocr::LooksLikeType(m_strLastType);
       if(accepted) {
+         m_lastAutoFlipped=true;
          card=std::move(reversed);
          if(m_verbose)std::println("[CAM-ROT] selected 180 score {}>{}",
             rotated,initial);
@@ -865,6 +869,7 @@ class Processor {
    bool m_ocrAccepted{};
    bool m_autoFlipped{};
    bool m_manualOrientation{};
+   int m_bestNameConfidence{},m_bestTypeConfidence{},m_bestRulesConfidence{};
    std::string m_strName{"--"};
    std::string m_strRules{"--"};
    std::string m_strType{"--"};
@@ -898,6 +903,32 @@ public:
    [[nodiscard]] std::string const& Orientation() const noexcept{return m_strOrientation;}
    [[nodiscard]] cv::Mat const& DisplayCard() const noexcept{return m_displayCard;}
    void ClearDisplayCard() {m_displayCard.release();}
+   void MergeOcr() {
+#if defined(DECKKERNEL_CAMERA_HAS_OCR)
+      if(!m_ocr)return;
+      auto merge=[](std::string& current,int& best,
+         std::string const& candidate,int confidence) {
+         if(candidate.empty() || confidence<45)return;
+         if(current=="--" || confidence>best+3 ||
+            (confidence>=best && candidate.size()>current.size() &&
+               candidate.size()<=current.size()+20)) {
+            current=candidate;
+            best=confidence;
+         }
+      };
+      merge(m_strName,m_bestNameConfidence,
+         m_ocr->LastName(),m_ocr->NameConfidence());
+      if(deckkernel_camera::ocr::LooksLikeType(m_ocr->LastType()))
+         merge(m_strType,m_bestTypeConfidence,
+            m_ocr->LastType(),m_ocr->TypeConfidence());
+      merge(m_strRules,m_bestRulesConfidence,
+         m_ocr->LastRules(),m_ocr->RulesConfidence());
+      m_strStatus=std::format("Best OCR name {}% type {}% rules {}% ({} scans)",
+         m_bestNameConfidence,m_bestTypeConfidence,
+         m_bestRulesConfidence,m_ocrAttempts);
+#endif
+   }
+
    void ReevaluateOcrAfterRotation(bool manualFlip) noexcept {
       m_manualOrientation=manualFlip;
       // Changing the orientation must be allowed to rerun OCR even when a
@@ -917,9 +948,9 @@ public:
    bool Process(std::optional<FoundCard> const& found,
       cv::Mat const& sourceFrame={}) {
       auto event=m_detector.Accept(found);
-      if(found && m_ocrCard && !m_ocrAccepted) {
+      if(found && m_ocrCard) {
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
-         if(m_ocr && m_ocrAttempts<8) {
+         if(m_ocr && m_ocrAttempts<4) {
             ++m_liveFrames;
             if(m_liveFrames>=30) {
                cv::Mat gray;
@@ -933,13 +964,16 @@ public:
                   m_liveFrames=0;
                   m_bestSharpness=std::max(m_bestSharpness,sharpness);
                   ++m_ocrAttempts;
-                  cv::Mat aCandidate=found->rectified.clone();
-                  if(m_autoFlipped)cv::rotate(aCandidate,aCandidate,cv::ROTATE_180);
-                  m_ocrAccepted=m_ocr->Read(aCandidate,*m_ocrCard,m_ocrAttempts);
-                  m_strName=m_ocr->LastName();m_strType=m_ocr->LastType();m_strRules=m_ocr->LastRules();
-                  m_strStatus=std::format("OCR name {}% type {}% text {}% - unverified",
-                     m_ocr->NameConfidence(),m_ocr->TypeConfidence(),m_ocr->RulesConfidence());
-                  if(m_ocrAccepted)std::println("[CAM-OCR] card #{} accepted after {} attempts",*m_ocrCard,m_ocrAttempts);
+                  cv::Mat aCandidate;
+                  if(!sourceFrame.empty())
+                     aCandidate=RectifyForOcr(sourceFrame,found->corners,
+                        m_manualOrientation);
+                  else aCandidate=found->rectified.clone();
+                  if(m_autoFlipped)
+                     cv::rotate(aCandidate,aCandidate,cv::ROTATE_180);
+                  m_ocrAccepted=m_ocr->Read(aCandidate,
+                     *m_ocrCard,m_ocrAttempts);
+                  MergeOcr();
                }
             }
          }
@@ -949,6 +983,8 @@ public:
       if(event->kind==StableCardTrigger::EventKind::Removed) {
          ++m_removedEvents;
          m_ocrCard.reset();m_ocrAccepted=false;m_ocrAttempts=0;
+         m_bestNameConfidence=0;m_bestTypeConfidence=0;
+         m_bestRulesConfidence=0;
          m_liveFrames=0;m_bestSharpness=0;m_autoFlipped=false;
          m_strStatus="Card removed - waiting for next card";
          m_strName="--";m_strType="--";m_strRules="--";
@@ -966,7 +1002,8 @@ public:
          event->card=RectifyForOcr(sourceFrame,found->corners,m_manualOrientation);
       m_ocrCard=event->number;
       m_strStatus="Card detected - identity unverified";
-      m_strMana=ReportManaColorCandidates(event->card,event->number,m_verbose);
+      m_strName="--";m_strType="--";m_strRules="--";
+      m_bestNameConfidence=0;m_bestTypeConfidence=0;m_bestRulesConfidence=0;
       m_liveFrames=0;m_bestSharpness=0;m_ocrAttempts=0;m_ocrAccepted=false;
       m_autoFlipped=false;
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
@@ -974,13 +1011,13 @@ public:
          m_ocrAttempts=1;
          m_ocrAccepted=m_ocr->ReadBest(event->card,event->number,
             m_ocrAttempts,!m_manualOrientation);
+         m_autoFlipped=m_ocr->LastAutoFlipped();
          m_strOrientation=m_manualOrientation?"Manual orientation":
-            "OCR checked 0 and 180 degrees";
-         m_strName=m_ocr->LastName();m_strType=m_ocr->LastType();m_strRules=m_ocr->LastRules();
-         m_strStatus=std::format("OCR name {}% type {}% text {}% - unverified",
-            m_ocr->NameConfidence(),m_ocr->TypeConfidence(),m_ocr->RulesConfidence());
+            (m_autoFlipped?"Auto 180 deg (both tested)":"Auto 0 deg (both tested)");
+         MergeOcr();
       }
 #endif
+      m_strMana=ReportManaColorCandidates(event->card,event->number,m_verbose);
       m_displayCard=event->card.clone();
       if(m_save) {
          auto const zones=deckkernel_camera::ocr::Detect(event->card);
