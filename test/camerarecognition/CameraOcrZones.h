@@ -106,6 +106,62 @@ struct Separator {
    return peaks;
 }
 
+/** Locate the circular mana-cost cluster in the name bar. A group of mana
+    symbols may extend far to the left; its leftmost boundary, not a fixed
+    title width, determines where name OCR must stop. When no cluster can be
+    trusted, use a conservative name width rather than OCR the symbols.
+*/
+[[nodiscard]] inline int ManaLeft(cv::Mat const& card) {
+   int const fallback=card.cols*64/100;
+   cv::Rect const area=Relative(card.size(),520,28,967,145);
+   cv::Mat gray,filtered;
+   cv::cvtColor(card(area),gray,
+      card.channels()==4?cv::COLOR_BGRA2GRAY:cv::COLOR_BGR2GRAY);
+   cv::GaussianBlur(gray,filtered,cv::Size(5,5),1.3);
+   std::vector<cv::Vec3f> circles;
+   cv::HoughCircles(filtered,circles,cv::HOUGH_GRADIENT,1.2,
+      static_cast<double>(std::max(12,card.cols/30)),
+      110,17,
+      std::max(6,card.cols/85),std::max(14,card.cols/25));
+   struct Circle {int x{},y{},radius{};};
+   std::vector<Circle> candidates;
+   for(auto const& circle:circles) {
+      int const x=area.x+cvRound(circle[0]);
+      int const y=area.y+cvRound(circle[1]);
+      int const radius=cvRound(circle[2]);
+      if(x<card.cols*55/100 || y<card.rows*35/1000 ||
+         y>card.rows*138/1000)continue;
+      candidates.push_back({x,y,radius});
+   }
+   // Mana clusters are right-aligned: start at the rightmost symbol and
+   // accept neighboring circles only if they share the same title baseline.
+   auto rightmost=std::max_element(candidates.begin(),candidates.end(),
+      [](Circle const& a,Circle const& b){return a.x<b.x;});
+   if(rightmost==candidates.end()||rightmost->x<card.cols*80/100)
+      return fallback;
+   int left=rightmost->x-rightmost->radius;
+   int previous=rightmost->x;
+   int const row=rightmost->y;
+   std::vector<bool> used(candidates.size(),false);
+   for(;;) {
+      int nearest=-1;
+      int nearestX=-1;
+      for(std::size_t i=0;i<candidates.size();++i) {
+         auto const& c=candidates[i];
+         if(used[i] || c.x>=previous || c.x<previous-card.cols*9/100 ||
+            std::abs(c.y-row)>std::max(9,card.rows/35))continue;
+         if(c.x>nearestX){nearest=static_cast<int>(i);nearestX=c.x;}
+      }
+      if(nearest<0)break;
+      used[static_cast<std::size_t>(nearest)]=true;
+      auto const& c=candidates[static_cast<std::size_t>(nearest)];
+      previous=c.x;
+      left=std::min(left,c.x-c.radius);
+   }
+   return std::clamp(left-std::max(5,card.cols/80),
+      card.cols*54/100,card.cols*88/100);
+}
+
 /** Find both borders of the typeline; never return overlapping OCR regions.
     The type bar position and height may vary among card layouts.
 */
@@ -113,12 +169,18 @@ struct Separator {
    if(card.empty()||card.cols<100||card.rows<200)
       throw std::invalid_argument("rectified card is too small for OCR zones");
    cv::Size const size=card.size();
+   int const manaLeft=ManaLeft(card);
+   int const titleLeft=size.width*54/1000;
+   int const manaRight=size.width*964/1000;
+   int const titleRight=std::clamp(manaLeft,titleLeft+50,manaRight-15);
    Zones result {
-      Relative(size,  54,  35, 745, 133), // Name excludes mana symbols
-      Relative(size, 745,  35, 964, 133), // Mana graphics are handled separately
-      Relative(size,  57, 552, 837, 636), // Standard-frame fallback typeline
-      Relative(size, 837, 552, 964, 636), // Separate set-symbol area
-      Relative(size,  70, 660, 930, 880), // Rules fallback, independent of type
+      cv::Rect(titleLeft,size.height*35/1000,titleRight-titleLeft,
+         size.height*133/1000-size.height*35/1000),
+      cv::Rect(titleRight,size.height*35/1000,manaRight-titleRight,
+         size.height*133/1000-size.height*35/1000),
+      Relative(size,  57, 545, 837, 625), // fallback type, no mana/set symbol
+      Relative(size, 837, 545, 964, 625),
+      Relative(size,  70, 643, 930, 880), // independent rules fallback
       false,0.f
    };
    auto const peaks=HorizontalRules(card);
