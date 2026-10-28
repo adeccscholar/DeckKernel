@@ -337,7 +337,27 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
          // may be rectangular too; penalize candidates significantly smaller
          // than the card expected at this camera distance, but do not impose
          // the old 4% minimum-area exclusion.
-         double const score=area*fill*(0.7+0.3*ratioFitness);
+         // A second card-frame cue: compare the RGB intensity immediately
+         // inside and outside the contour's minimum-area rectangle. Card
+         // borders often separate distinctly from the desk; interior artwork
+         // and fabric creases typically do not have this external boundary.
+         cv::Rect const bounds=cv::boundingRect(contour);
+         int const margin=std::max(4,image.cols/260);
+         cv::Rect const expanded(bounds.x-margin,bounds.y-margin,
+            bounds.width+2*margin,bounds.height+2*margin);
+         double boundaryContrast=0.0;
+         if(expanded.x>=0&&expanded.y>=0 &&
+            expanded.br().x<gray.cols&&expanded.br().y<gray.rows) {
+            cv::Scalar inside=cv::mean(gray(bounds));
+            cv::Mat outsideMask(expanded.height,expanded.width,CV_8UC1,
+               cv::Scalar(255));
+            cv::rectangle(outsideMask,cv::Rect(margin,margin,
+               bounds.width,bounds.height),cv::Scalar(0),-1);
+            cv::Scalar outside=cv::mean(gray(expanded),outsideMask);
+            boundaryContrast=std::abs(inside[0]-outside[0]);
+         }
+         double const score=area*fill*(0.7+0.3*ratioFitness)*
+            (0.7+0.3*std::min(1.0,boundaryContrast/35.0));
          if(score<=bestScore)continue;
          bestScore=score;
          bestArea=area;
