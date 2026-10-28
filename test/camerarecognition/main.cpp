@@ -333,6 +333,10 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
          // Favor the rectangular printed card over partial inner borders.
          double const ratioFitness=std::max(0.0,
             1.0-std::abs(ratio-1.40)/0.50);
+         // A card is an outer, physical object. Tiny interior art boxes
+         // may be rectangular too; penalize candidates significantly smaller
+         // than the card expected at this camera distance, but do not impose
+         // the old 4% minimum-area exclusion.
          double const score=area*fill*(0.7+0.3*ratioFitness);
          if(score<=bestScore)continue;
          bestScore=score;
@@ -755,6 +759,47 @@ public:
       }
       return !title.text.empty();
    }
+   // OCR is performed in both orientations on accepted cards. The score
+   // combines independent name/type/rules results; an upside-down fragment
+   // must not win based solely on a plausible-looking name.
+   bool ReadBest(cv::Mat& card,unsigned event,unsigned attempt,
+      bool allowAutoFlip) {
+      if(!allowAutoFlip)return Read(card,event,attempt);
+      bool const original=Read(card,event,attempt);
+      std::string name=m_strLastName,type=m_strLastType,rules=m_strLastRules;
+      int const nameConf=m_nameConfidence,typeConf=m_typeConfidence,
+         rulesConf=m_rulesConfidence;
+      auto score=[](std::string const& n,int nc,
+         std::string const& t,int tc,std::string const& r,int rc) {
+         return (n.empty()?0:nc)+
+            (deckkernel_camera::ocr::LooksLikeType(t)?120+tc:0)+
+            (r.empty()?0:rc/2);
+      };
+      int const initial=score(name,nameConf,type,typeConf,rules,rulesConf);
+      cv::Mat reversed;
+      cv::rotate(card,reversed,cv::ROTATE_180);
+      bool const alternative=Read(reversed,event,attempt);
+      int const rotated=score(m_strLastName,m_nameConfidence,
+         m_strLastType,m_typeConfidence,m_strLastRules,m_rulesConfidence);
+      bool const accepted=alternative && rotated>=initial+25 &&
+         deckkernel_camera::ocr::LooksLikeType(m_strLastType);
+      if(accepted) {
+         card=std::move(reversed);
+         if(m_verbose)std::println("[CAM-ROT] selected 180 score {}>{}",
+            rotated,initial);
+         return alternative;
+      }
+      m_strLastName=std::move(name);
+      m_strLastType=std::move(type);
+      m_strLastRules=std::move(rules);
+      m_nameConfidence=nameConf;
+      m_typeConfidence=typeConf;
+      m_rulesConfidence=rulesConf;
+      if(m_verbose)std::println("[CAM-ROT] selected 0 score {} vs {}",
+         initial,rotated);
+      return original;
+   }
+
 };
 #endif
 
@@ -906,11 +951,11 @@ public:
       m_autoFlipped=false;
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
       if(m_ocr) {
-         m_autoFlipped=!m_manualOrientation && m_ocr->Orient(event->card);
-         m_strOrientation=m_manualOrientation?"Manual orientation":
-            (m_autoFlipped?"Auto rotated 180 deg":"Auto 0 deg / uncertain");
          m_ocrAttempts=1;
-         m_ocrAccepted=m_ocr->Read(event->card,event->number,m_ocrAttempts);
+         m_ocrAccepted=m_ocr->ReadBest(event->card,event->number,
+            m_ocrAttempts,!m_manualOrientation);
+         m_strOrientation=m_manualOrientation?"Manual orientation":
+            "OCR checked 0 and 180 degrees";
          m_strName=m_ocr->LastName();m_strType=m_ocr->LastType();m_strRules=m_ocr->LastRules();
          m_strStatus=std::format("OCR name {}% type {}% text {}% - unverified",
             m_ocr->NameConfidence(),m_ocr->TypeConfidence(),m_ocr->RulesConfidence());
