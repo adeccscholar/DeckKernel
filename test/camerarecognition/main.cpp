@@ -1278,9 +1278,18 @@ int main(int argc,char** argv) {
                cv::FONT_HERSHEY_SIMPLEX,0.7,cv::Scalar(0,170,240),2,cv::LINE_AA);
          }
 #if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
+         std::string qualityStatus="No card";
+         if(found) {
+            auto const metrics=deckkernel_camera::quality::Measure(found->rectified);
+            qualityStatus=std::format("light {:.0f}/255 | clipped {:.1f}% | {}",
+               metrics.brightness,metrics.clippedPercent,
+               metrics.GlareRisk()?"GLARE - reposition light":
+               metrics.LowLight()?"LOW LIGHT - add diffuse light":"OK");
+         }
          preview.SetFields(processor.Name(),processor.Type(),processor.Rules(),
             processor.Mana(),processor.Status(),"Edition not verified",
-            flip?"Manual 180 deg / "+processor.Orientation():processor.Orientation());
+            flip?"Manual 180 deg / "+processor.Orientation():processor.Orientation(),
+            qualityStatus);
 #endif
          preview.Show(annotated,processor.DisplayCard().empty()?
             (found?found->rectified:cv::Mat{}):processor.DisplayCard(),
