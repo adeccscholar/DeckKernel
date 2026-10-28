@@ -2,24 +2,31 @@
 // SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
 #pragma once
 /** \file CameraOcrZones.h
-    \brief Separate OCR text from Magic card symbols in rectified modern frames.
-    \details Ratios refer to the perspective-corrected portrait card (480x672).
-             This is a modern-frame profile, not a general layout classifier.
+    \brief Image-derived text and symbol zones for rectified MTG cards.
+    \details Detect the type bar from its real horizontal borders instead of
+             using a fixed percentage. If no reliable bar is found, type and
+             rules must not be sent to OCR (unknown layout).
 */
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <algorithm>
-#include <array>
+#include <cmath>
+#include <cctype>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace deckkernel_camera::ocr {
+
 struct Zones {
    cv::Rect name;
    cv::Rect mana;
    cv::Rect type;
    cv::Rect setSymbol;
    cv::Rect rules;
+   bool typeSeparated{};
+   float separationConfidence{};
 };
 
 [[nodiscard]] inline cv::Rect Relative(cv::Size size,
@@ -30,20 +37,135 @@ struct Zones {
       std::max(1,y(y1)-y(y0))};
 }
 
+/** A second check on the detected type bar, not a substitute for geometry.
+    Names, symbols and decorative text must not be treated as card types.
+*/
+[[nodiscard]] inline bool LooksLikeType(std::string_view text) {
+   std::string lower;
+   lower.reserve(text.size());
+   for(unsigned char c:text)
+      lower.push_back(static_cast<char>(std::tolower(c)));
+   for(std::string_view const token:{"creature","land","artifact",
+      "enchantment","instant","sorcery","planeswalker","battle",
+      "summon","enchant","kindred","tribal","vanguard",
+      "scheme","dungeon","conspiracy"})
+      if(lower.find(token)!=std::string::npos)return true;
+   return false;
+}
+
+struct Separator {
+   int y{};
+   float coverage{};
+   int first{};
+   int last{};
+};
+
+/** Detect long horizontal frame boundaries in a wide central image strip.
+    Percentage limits only define a broad search area; the actual start of
+    rules is determined by the detected lower border of the type bar.
+*/
+[[nodiscard]] inline std::vector<Separator> HorizontalRules(cv::Mat const& card) {
+   cv::Mat gray,edges,lines;
+   if(card.channels()==3)
+      cv::cvtColor(card,gray,cv::COLOR_BGR2GRAY);
+   else if(card.channels()==4)
+      cv::cvtColor(card,gray,cv::COLOR_BGRA2GRAY);
+   else
+      gray=card;
+   cv::Canny(gray,edges,60,150);
+   int const left=card.cols*75/1000;
+   int const right=card.cols*925/1000;
+   cv::Rect const interior(left,0,right-left,card.rows);
+   cv::Mat const core=edges(interior);
+   cv::morphologyEx(core,lines,cv::MORPH_CLOSE,
+      cv::getStructuringElement(cv::MORPH_RECT,
+         cv::Size(std::max(3,card.cols/65),1)));
+   cv::morphologyEx(lines,lines,cv::MORPH_OPEN,
+      cv::getStructuringElement(cv::MORPH_RECT,
+         cv::Size(std::max(10,card.cols/10),1)));
+   std::vector<Separator> peaks;
+   int const searchStart=card.rows*30/100;
+   int const searchEnd=card.rows*82/100;
+   int lastAccepted=-100;
+   for(int y=searchStart;y<searchEnd;++y) {
+      float const coverage=static_cast<float>(cv::countNonZero(lines.row(y)))/
+         static_cast<float>(interior.width);
+      if(coverage<0.40f)continue;
+      // Thick/double strokes of the same physical border form one separator.
+      if(!peaks.empty() && y-lastAccepted<=7) {
+         peaks.back().last=y;
+         if(coverage>peaks.back().coverage) {
+            peaks.back().y=y;
+            peaks.back().coverage=coverage;
+         }
+      } else {
+         peaks.push_back({y,coverage,y,y});
+      }
+      lastAccepted=y;
+   }
+   return peaks;
+}
+
+/** Find both borders of the typeline; never return overlapping OCR regions.
+    The type bar position and height may vary among card layouts.
+*/
 [[nodiscard]] inline Zones Detect(cv::Mat const& card) {
-   if(card.empty() || card.cols<100 || card.rows<200)
+   if(card.empty()||card.cols<100||card.rows<200)
       throw std::invalid_argument("rectified card is too small for OCR zones");
-   // Strict non-overlapping text/symbol boundaries:
-   //  - title text ends before the right-hand mana-cost symbols
-   //  - typeline text ends before the edition/set symbol
-   //  - rules start below the typeline; never include type or edition.
-   return {
-      Relative(card.size(),  54,  35, 745, 133), // name only
-      Relative(card.size(), 745,  35, 964, 133), // mana/cost only
-      Relative(card.size(),  57, 520, 837, 600), // type + supertypes
-      Relative(card.size(), 837, 520, 964, 600), // set symbol only
-      Relative(card.size(),  70, 610, 930, 846)  // rules/flavour text
+   cv::Size const size=card.size();
+   Zones result {
+      Relative(size,  54,  35, 745, 133), // Name excludes mana symbols
+      Relative(size, 745,  35, 964, 133), // Mana graphics are handled separately
+      Relative(size,  57, 540, 837, 590), // Preview only when unclassified
+      Relative(size, 837, 540, 964, 590), // Set-symbol preview only
+      Relative(size,  70, 720, 930, 840), // Preview only (not OCR) when unknown
+      false,0.f
    };
+   auto const peaks=HorizontalRules(card);
+   float best=-1.f;
+   Separator top{},bottom{};
+   bool separated=false;
+   int const minGap=std::max(18,card.rows*35/1000);
+   int const maxGap=std::max(minGap+1,card.rows*105/1000);
+   for(auto const& a:peaks) {
+      for(auto const& b:peaks) {
+         int const gap=b.y-a.y;
+         if(gap<minGap||gap>maxGap)continue;
+         if(a.y<card.rows*39/100||b.y>card.rows*80/100)continue;
+         if(a.coverage<0.52f||b.coverage<0.52f)continue;
+         float const ideal=static_cast<float>(card.rows)*0.06f;
+         float const widthScore=std::max(0.f,
+            1.f-std::abs(static_cast<float>(gap)-ideal)/(ideal+10.f));
+         float const score=a.coverage+b.coverage+0.30f*widthScore;
+         if(score>best) {
+            best=score;
+            top=a;
+            bottom=b;
+            separated=true;
+         }
+      }
+   }
+   if(!separated)return result;
+   // Skip the border thickness and leave a safety gap after the type bar.
+   int const margin=std::max(3,card.rows/180);
+   int const typeTop=top.last+margin;
+   int const typeBottom=bottom.first-margin;
+   int const rulesTop=bottom.last+std::max(8,card.rows/84);
+   int const rulesBottom=std::min(card.rows*89/100,
+      bottom.last+card.rows*39/100);
+   if(typeBottom<=typeTop+8||rulesBottom<=rulesTop+15)
+      return result;
+   auto band=[&](int x0,int x1,int y0,int y1) {
+      int const l=size.width*x0/1000;
+      int const r=size.width*x1/1000;
+      return cv::Rect(l,y0,r-l,y1-y0);
+   };
+   result.type=band(57,837,typeTop,typeBottom);
+   result.setSymbol=band(837,964,typeTop,typeBottom);
+   result.rules=band(70,930,rulesTop,rulesBottom);
+   result.typeSeparated=true;
+   result.separationConfidence=std::clamp((best-1.f)/1.30f,0.f,1.f);
+   return result;
 }
 
 [[nodiscard]] inline bool Valid(Zones const& z,cv::Size size) {
@@ -66,9 +188,9 @@ struct Zones {
    };
    draw(z.name,cv::Scalar(40,220,40),"NAME");
    draw(z.mana,cv::Scalar(230,180,40),"MANA");
-   draw(z.type,cv::Scalar(20,230,230),"TYPE");
+   draw(z.type,cv::Scalar(20,230,230),z.typeSeparated?"TYPE":"TYPE?");
    draw(z.setSymbol,cv::Scalar(230,70,230),"SET");
-   draw(z.rules,cv::Scalar(40,140,240),"RULES");
+   draw(z.rules,cv::Scalar(40,140,240),z.typeSeparated?"RULES":"RULES?");
    return annotated;
 }
-}
+} // namespace deckkernel_camera::ocr
