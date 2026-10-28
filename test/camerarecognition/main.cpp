@@ -373,6 +373,7 @@ public:
 class CardOcr {
    tesseract::TessBaseAPI m_api;
    bool m_ready{};
+   bool m_verbose{};
    static std::string Clean(std::string text) {
       for(char& ch:text)if(ch=='\n'||ch=='\r'||ch=='\t')ch=' ';
       auto start=text.find_first_not_of(' ');
@@ -398,7 +399,7 @@ class CardOcr {
       return {std::move(cleaned),confidence};
    }
 public:
-   explicit CardOcr(std::string const& tessdata) {
+   explicit CardOcr(std::string const& tessdata,bool verbose=false):m_verbose(verbose) {
       if(m_api.Init(tessdata.c_str(),"eng",tesseract::OEM_LSTM_ONLY)!=0)
          throw std::runtime_error("Tesseract could not initialize eng.traineddata at "+tessdata);
       m_ready=true;
@@ -406,23 +407,40 @@ public:
    ~CardOcr(){if(m_ready)m_api.End();}
    bool Orient(cv::Mat& aCard) {
       if(aCard.empty())return false;
-      cv::Rect const aTitle(aCard.cols/20,aCard.rows/30,
+      cv::Rect const title(aCard.cols/20,aCard.rows/30,
          aCard.cols*9/10,aCard.rows/9);
-      auto const aNormal=ReadRegion(aCard,aTitle,tesseract::PSM_SINGLE_LINE);
-      cv::Mat aReversed;
-      cv::rotate(aCard,aReversed,cv::ROTATE_180);
-      auto const aFlipped=ReadRegion(aReversed,aTitle,tesseract::PSM_SINGLE_LINE);
-      // Never assert orientation when scores are ambiguous.
-      if(aFlipped.text.empty() ||
-         (!aNormal.text.empty()&&aFlipped.confidence<=aNormal.confidence+8))
-         return false;
-      aCard=std::move(aReversed);
-      std::println("[CAM-ROT] orientation=180; confidence={}/{}",
-         aNormal.confidence,aFlipped.confidence);
-      return true;
+      cv::Rect const rules(aCard.cols/15,aCard.rows*58/100,
+         aCard.cols*13/15,aCard.rows*27/100);
+      auto const normalName=ReadRegion(aCard,title,tesseract::PSM_SINGLE_LINE);
+      auto const normalText=ReadRegion(aCard,rules,tesseract::PSM_AUTO);
+      cv::Mat reversed;
+      cv::rotate(aCard,reversed,cv::ROTATE_180);
+      auto const reversedName=ReadRegion(reversed,title,tesseract::PSM_SINGLE_LINE);
+      auto const reversedText=ReadRegion(reversed,rules,tesseract::PSM_AUTO);
+      // Compare title and rules evidence. A single upside-down title fragment
+      // can receive an artificially high OCR confidence.
+      auto score=[](OcrResult const& name,OcrResult const& body) {
+         return (name.text.empty()?0:name.confidence/2)+
+            (body.text.empty()?0:body.confidence);
+      };
+      int const normalScore=score(normalName,normalText);
+      int const reversedScore=score(reversedName,reversedText);
+      bool const flip=!reversedName.text.empty() &&
+         reversedScore>=normalScore+22 &&
+         (reversedText.confidence>=60 || reversedName.confidence>=65);
+      if(m_verbose)
+         std::println("[CAM-ROT] title normal={} reversed={} body normal={} reversed={} chosen={}",
+            normalName.confidence,reversedName.confidence,
+            normalText.confidence,reversedText.confidence,flip?180:0);
+      if(flip)aCard=std::move(reversed);
+      return flip;
    }
    std::string m_strLastName;
    std::string m_strLastRules;
+   int m_nameConfidence{};
+   int m_rulesConfidence{};
+   [[nodiscard]] int NameConfidence() const noexcept{return m_nameConfidence;}
+   [[nodiscard]] int RulesConfidence() const noexcept{return m_rulesConfidence;}
    [[nodiscard]] std::string const& LastName() const noexcept{return m_strLastName;}
    [[nodiscard]] std::string const& LastRules() const noexcept{return m_strLastRules;}
    bool Read(cv::Mat const& card,unsigned eventNumber,unsigned attempt) {
@@ -437,11 +455,13 @@ public:
             card.rows*27/100),tesseract::PSM_AUTO);
       m_strLastName=title.text;
       m_strLastRules=rules.text;
-      std::println("[CAM-OCR] card #{} attempt={} name=\"{}\" confidence={} status={}",
+      m_nameConfidence=title.confidence;
+      m_rulesConfidence=rules.confidence;
+      if(m_verbose)std::println("[CAM-OCR] card #{} attempt={} name=\"{}\" confidence={} status={}",
          eventNumber,attempt,title.text,title.confidence,title.text.empty()?"UNREADABLE":"UNVERIFIED");
-      std::println("[CAM-OCR] card #{} attempt={} text=\"{}\" confidence={} status={}",
+      if(m_verbose)std::println("[CAM-OCR] card #{} attempt={} text=\"{}\" confidence={} status={}",
          eventNumber,attempt,rules.text,rules.confidence,rules.text.empty()?"UNREADABLE":"UNVERIFIED");
-      std::println("[CAM-OCR] unverified OCR, not an edition or Oracle identity");
+      if(m_verbose)std::println("[CAM-OCR] unverified OCR, not an edition or Oracle identity");
       return !title.text.empty();
    }
 };
@@ -451,8 +471,8 @@ public:
 // Coarse visual candidate detection only, NOT a definitive mana symbol reader.
 // Hue distinguishes chromatic candidates; white/colorless and hybrid symbols
 // require template verification against known Scryfall symbol graphics.
-void ReportManaColorCandidates(cv::Mat const& aCard,unsigned uEvent) {
-   if(aCard.empty())return;
+std::string ReportManaColorCandidates(cv::Mat const& aCard,unsigned uEvent,bool verbose=false) {
+   if(aCard.empty())return "No mana evidence";
    cv::Rect const aBand(aCard.cols*56/100,aCard.rows/35,
       aCard.cols*39/100,aCard.rows/9);
    cv::Mat aHsv;
@@ -470,8 +490,10 @@ void ReportManaColorCandidates(cv::Mat const& aCard,unsigned uEvent) {
          else ++arrHits[4]; // purple/other
       }
    }
-   std::println("[CAM-MANA] card #{} RGB hue candidate pixels R={} Y={} G={} U={} other={} status=UNVERIFIED",
+   if(verbose)std::println("[CAM-MANA] card #{} RGB hue candidate pixels R={} Y={} G={} U={} other={} status=UNVERIFIED",
       uEvent,arrHits[0],arrHits[1],arrHits[2],arrHits[3],arrHits[4]);
+   return std::format("Color pixels (unverified) R:{} Y:{} G:{} U:{} other:{}",
+      arrHits[0],arrHits[1],arrHits[2],arrHits[3],arrHits[4]);
 }
 
 class Processor {
