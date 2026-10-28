@@ -22,6 +22,8 @@
    <package name="openssl" version="3.5.8" release="2026.09.26-1"/>
    <package name="openxlsx" version="0.5.1" release="2026.09.26-1"/>
    <package name="pugixml" version="1.16" release="2026.09.26-1"/>
+   <package name="sdl2" version="2.32.10" release="2026.09.26-1"/>
+   <package name="skia" version="153" release="2026.09.26-1"/>
    <package name="sqlite" version="3.53.4" release="2026.09.26-1"/>
    <package name="tesseract" version="5.5.3" release="2026.09.26-1"/>
    <package name="xz" version="5.8.3" release="2026.09.26-1"/>
