@@ -1,10 +1,12 @@
 <?xml version="1.0"?>
-<thirdPartyLock schemaVersion="2" toolchain="bcc64x" selectionSha256="5ea2c9f59d712d44e6566467f8ee7b6145d64978777437a9a0b37d7d00a15e77" disclaimer="DISCLAIMER.md">
+<thirdPartyLock schemaVersion="2" toolchain="bcc64x" selectionSha256="57280833634e4b7a026beafb2db430ff41774fe5c5e9722e9124866ca61ae447" disclaimer="DISCLAIMER.md">
    <package name="boost" version="1.92.0" release="2026.09.26-1" archive="packages/boost-1.92.0-bcc64x.zip" size="57898831" sha256="961be5259b2db56bb309b17f46fdfa999a12b68e5c06161b07a4e3c662fdf4f7" />
    <package name="brotli" version="1.2.0" release="2026.09.26-1" archive="packages/brotli-1.2.0-bcc64x.zip" size="1017574" sha256="22d61b1fd9a09683b7084159d9b9cd4444cae924f9038e15e25da4b062a71408" />
    <package name="bzip2" version="1.0.8" release="2026.09.26-1" archive="packages/bzip2-1.0.8-bcc64x.zip" size="90307" sha256="527c77eb2319303b39796762bb4868639c4b094e5d78492d58e5eac0833875b2" />
    <package name="cmark-gfm" version="0.29.0.gfm.13" release="2026.09.26-1" archive="packages/cmark-gfm-0.29.0.gfm.13-bcc64x.zip" size="297796" sha256="0571c5c971a7fcfb62e436f953719c55d5b5eee4e7708db6e354631f191eb0a2" />
    <package name="curl" version="8.21.0" release="2026.09.26-1" archive="packages/curl-8.21.0-bcc64x.zip" size="1005859" sha256="14f207757c166766210288704ade40f3f59068fd2963af6e38000d97c1fb1acf" />
+   <package name="freetype" version="2.14.3" release="2026.09.26-1" archive="packages/freetype-2.14.3-bcc64x.zip" size="1097291" sha256="f4469d4c53bc17f4623fa9f13f59cd3d5cc5f567eb60976cb00ae4110bea3319" />
+   <package name="harfbuzz" version="14.4.0" release="2026.09.26-1" archive="packages/harfbuzz-14.4.0-bcc64x.zip" size="4255415" sha256="bd3fcf73df0ca82374d86d0a2e916820edfed04558faa64ea370ba046856dc2c" />
    <package name="leptonica" version="1.87.0" release="2026.09.26-1" archive="packages/leptonica-1.87.0-bcc64x.zip" size="2791072" sha256="2c13cd353e9753654fbf070b433686d7d147687bc8c56bc22832208b01e08427" />
    <package name="libarchive" version="3.8.9" release="2026.09.26-1" archive="packages/libarchive-3.8.9-bcc64x.zip" size="2687908" sha256="bbfc78b0f4ae162a2a2a6e93becb14d040fbb0b5b07a90baff5b189544bb545d" />
    <package name="libjpeg-turbo" version="3.2.0" release="2026.09.26-1" archive="packages/libjpeg-turbo-3.2.0-bcc64x.zip" size="1831407" sha256="f2ea79757a98b34e6d07e5b4bbba70e76ca6d86ca0f264c9b10321dc65c1492e" />
@@ -17,9 +19,12 @@
    <package name="nlohmann-json" version="3.12.0" release="2026.09.26-1" archive="packages/nlohmann-json-3.12.0-bcc64x.zip" size="179760" sha256="196388c23498bfea25d690c321e1820f218b71c556d98e2123db6b7cf999260e" />
    <package name="onetbb" version="2023.1.0" release="2026.09.26-1" archive="packages/onetbb-2023.1.0-bcc64x.zip" size="956610" sha256="3a045884272be108d7b4804296d2663c928f9cd227437737b5a6617a36c8ac38" />
    <package name="opencv" version="5.0.0" release="2026.09.26-1" archive="packages/opencv-5.0.0-bcc64x.zip" size="37621996" sha256="624c26993a290fd6d24ee244d93d978502e84efc3ef4142c6a2a4a8b17212182" />
+   <package name="opengl" version="26.2.1" release="2026.09.26-1" archive="packages/opengl-26.2.1-bcc64x.zip" size="10427521" sha256="40d39b6585b98908509d9cdabf58cd8c18313f8a60864c55572a91ae2b76e274" />
    <package name="openssl" version="3.5.8" release="2026.09.26-1" archive="packages/openssl-3.5.8-bcc64x.zip" size="10947200" sha256="751c56ba069ace0d8ddd0cd2a70d3abbb87b4b647ccbe675229aad52ea282abe" />
    <package name="openxlsx" version="0.5.1" release="2026.09.26-1" archive="packages/openxlsx-0.5.1-bcc64x.zip" size="1131064" sha256="b3262babaed729d6ec768e03df3dee6679f43187127011c8ffa7a8653fda0ef1" />
    <package name="pugixml" version="1.16" release="2026.09.26-1" archive="packages/pugixml-1.16-bcc64x.zip" size="995650" sha256="f86e784f5a2c53e6ae65affae43691a51ad54189a6ced917cc6b933f2d6ed6c0" />
+   <package name="sdl2" version="2.32.10" release="2026.09.26-1" archive="packages/sdl2-2.32.10-bcc64x.zip" size="1985163" sha256="1ea04626b77cebe42ef0d817d72c67072d87eac4098168094daae59358b48f57" />
+   <package name="skia" version="153" release="2026.09.26-1" archive="packages/skia-153-bcc64x.zip" size="42666615" sha256="25e49be5583ade01e62ca6e6f62482966b8ea1d8a4a1124cfaedbbb6a2751a93" />
    <package name="sqlite" version="3.53.4" release="2026.09.26-1" archive="packages/sqlite-3.53.4-bcc64x.zip" size="1354457" sha256="16833cee059afb14d2bbe1616e4604054dbcdd2e3cf45f29efd2cc521fa96aaf" />
    <package name="tesseract" version="5.5.3" release="2026.09.26-1" archive="packages/tesseract-5.5.3-bcc64x.zip" size="9471134" sha256="9e1c9661ee21cffaa96afeb038c19aa59e490d36ad4a26bcb7a1b749b59e016e" />
    <package name="xz" version="5.8.3" release="2026.09.26-1" archive="packages/xz-5.8.3-bcc64x.zip" size="716494" sha256="3bfa5e02392df7ba45eda1cd1512da465998d1692218e891dca5d280b1c15bc1" />
