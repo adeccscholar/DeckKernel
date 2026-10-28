@@ -283,23 +283,44 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame) {
    // decided independently by OCR.
    if(cv::norm(pts[0]-pts[1])>cv::norm(pts[1]-pts[2]))
       std::rotate(pts.begin(),pts.begin()+1,pts.end());
-   // Preserve actual card detail from 4K input for small OCR glyphs.
-   // Keep a bounded working resolution to avoid excessive allocations.
-   double const sourceWidth=std::max(cv::norm(pts[0]-pts[1]),
-      cv::norm(pts[2]-pts[3]));
-   int const outputWidth=std::clamp(static_cast<int>(sourceWidth),480,1120);
-   int const outputHeight=outputWidth*7/5;
+   // Detection always uses fixed 480x672 geometry. A variable-size warp
+   // on every 4K frame destabilizes dHash and consumes capture time.
    std::array<cv::Point2f,4> target{{
-      {0,0},{static_cast<float>(outputWidth-1),0},
-      {static_cast<float>(outputWidth-1),static_cast<float>(outputHeight-1)},
-      {0,static_cast<float>(outputHeight-1)}
+      {0,0},{479,0},{479,671},{0,671}
    }};
-   cv::Mat homography=cv::getPerspectiveTransform(pts.data(),target.data());
+   cv::Mat const homography=cv::getPerspectiveTransform(pts.data(),target.data());
    cv::Mat rectified;
-   cv::warpPerspective(frame,rectified,homography,cv::Size(outputWidth,outputHeight));
+   cv::warpPerspective(frame,rectified,homography,cv::Size(480,672));
    std::array<cv::Point,4> quad{};
    for(unsigned i=0;i<4;++i)quad[i]=cv::Point(cvRound(pts[i].x),cvRound(pts[i].y));
    return FoundCard{rectified,DHash(rectified),quad};
+}
+/** High-resolution OCR warp only for an accepted card presentation.
+    Corners are the ordered source-frame positions found by FindCard.
+    Do not perform this full-resolution operation on every camera frame.
+*/
+[[nodiscard]] cv::Mat RectifyForOcr(cv::Mat const& source,
+   std::array<cv::Point,4> const& corners,bool flip180) {
+   if(source.empty())return {};
+   std::array<cv::Point2f,4> pts{};
+   for(std::size_t i=0;i<4;++i)
+      pts[i]=cv::Point2f(static_cast<float>(corners[i].x),
+         static_cast<float>(corners[i].y));
+   double const width=std::max(cv::norm(pts[0]-pts[1]),
+      cv::norm(pts[2]-pts[3]));
+   int const outWidth=std::clamp(static_cast<int>(width),480,1120);
+   int const outHeight=outWidth*7/5;
+   std::array<cv::Point2f,4> const target{{
+      {0,0},{static_cast<float>(outWidth-1),0},
+      {static_cast<float>(outWidth-1),static_cast<float>(outHeight-1)},
+      {0,static_cast<float>(outHeight-1)}
+   }};
+   cv::Mat result;
+   cv::warpPerspective(source,result,
+      cv::getPerspectiveTransform(pts.data(),target.data()),
+      cv::Size(outWidth,outHeight));
+   if(flip180)cv::rotate(result,result,cv::ROTATE_180);
+   return result;
 }
 // Manual 180-degree correction of an upside-down card. Use the same pixels
 // for OCR, artwork matching, saved evidence and the diagnostic preview.
@@ -314,14 +335,17 @@ void FlipRectifiedCard(FoundCard& card) {
 // and, after sustained absence, exactly one removal event.
 // dHash fluctuations must NOT produce either event on their own.
 class StableCardTrigger {
-   std::optional<hash_ty> m_previous;
+   std::optional<cv::Rect> m_previousBox;
    cv::Mat m_bestFrame;
    double m_bestScore{-1.0};
    std::optional<unsigned> m_activeNumber;
    hash_ty m_activeFingerprint{};
    unsigned m_stable{},m_absent{},m_events{};
+   static constexpr unsigned stableFrames=4;
    bool m_armed{true};
 public:
+   [[nodiscard]] unsigned StableCount() const noexcept {return m_stable;}
+   [[nodiscard]] static constexpr unsigned RequiredFrames() noexcept{return stableFrames;}
    enum class EventKind { Presented, Removed };
    struct Event {
       EventKind kind;
@@ -330,10 +354,9 @@ public:
       cv::Mat card;
    };
    std::optional<Event> Accept(std::optional<FoundCard> const& found) {
-      constexpr unsigned stableFrames=5;
       constexpr unsigned removalFrames=45; // 1.5 seconds at 30 FPS
       if(!found) {
-         m_previous.reset();
+         m_previousBox.reset();
          m_stable=0;
          m_bestFrame.release();
          m_bestScore=-1.0;
@@ -351,8 +374,21 @@ public:
       }
       m_absent=0;
       if(!m_armed)return std::nullopt;
-      if(m_previous && std::popcount(*m_previous^found->fingerprint)<=8)
-         ++m_stable;
+      cv::Rect const box=cv::boundingRect(found->corners);
+      bool sameCard=false;
+      if(m_previousBox) {
+         cv::Rect const& previous=*m_previousBox;
+         cv::Point2f const center(box.x+box.width*0.5f,box.y+box.height*0.5f);
+         cv::Point2f const earlier(previous.x+previous.width*0.5f,
+            previous.y+previous.height*0.5f);
+         double const allowedMotion=std::max(12.0,
+            0.09*std::max(box.width,box.height));
+         double const a=static_cast<double>(box.area());
+         double const b=static_cast<double>(previous.area());
+         sameCard=cv::norm(center-earlier)<=allowedMotion &&
+            b>0.0 && std::abs(a-b)/b<=0.22;
+      }
+      if(sameCard)++m_stable;
       else {
          m_stable=1;
          m_bestFrame.release();
@@ -363,7 +399,7 @@ public:
          m_bestScore=quality.score;
          m_bestFrame=found->rectified.clone();
       }
-      m_previous=found->fingerprint;
+      m_previousBox=box;
       if(m_stable<stableFrames)return std::nullopt;
       m_armed=false;
       m_activeNumber=++m_events;
