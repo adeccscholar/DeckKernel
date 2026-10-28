@@ -395,6 +395,24 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
    if(cv::norm(pts[0]-pts[1])>cv::norm(pts[1]-pts[2]))
       std::rotate(pts.begin(),pts.begin()+1,pts.end());
 
+   // Subpixel refinement on the bounded detection image only. Reject
+   // movements greater than 3 detection pixels: a strong interior artwork
+   // edge must not pull an exterior corner away from its original position.
+   std::vector<cv::Point2f> cornersSmall;
+   for(auto const& p:pts)
+      cornersSmall.emplace_back(static_cast<float>(p.x*scale),
+         static_cast<float>(p.y*scale));
+   auto refined=cornersSmall;
+   cv::cornerSubPix(gray,refined,cv::Size(5,5),cv::Size(-1,-1),
+      cv::TermCriteria(cv::TermCriteria::COUNT|cv::TermCriteria::EPS,12,0.05));
+   for(unsigned i=0;i<4;++i) {
+      if(cv::norm(refined[i]-cornersSmall[i])<=3.0 &&
+         refined[i].x>=1 && refined[i].y>=1 &&
+         refined[i].x<gray.cols-1 && refined[i].y<gray.rows-1)
+         pts[i]=cv::Point2f(static_cast<float>(refined[i].x/scale),
+            static_cast<float>(refined[i].y/scale));
+   }
+
    std::array<cv::Point2f,4> const target{{
       {0,0},{479,0},{479,671},{0,671}
    }};
