@@ -23,7 +23,7 @@ if(NOT DEFINED ADECC_TP_SDL2_ROOT OR NOT DEFINED ADECC_TP_SKIA_ROOT)
 endif()
 find_package(SDL2 CONFIG REQUIRED PATHS "${ADECC_TP_SDL2_ROOT}" NO_DEFAULT_PATH)
 find_package(Skia CONFIG REQUIRED PATHS "${ADECC_TP_SKIA_ROOT}" NO_DEFAULT_PATH)
-add_executable(deckkernel_camera_recognition_test main.cpp CameraDashboard.h)
+add_executable(deckkernel_camera_recognition_test main.cpp CameraDashboard.h CameraOcrZones.h CameraTypography.h)
 if(TARGET SDL2::SDL2 AND TARGET Skia::skia)
    target_link_libraries(deckkernel_camera_recognition_test PRIVATE SDL2::SDL2 Skia::skia)
    target_compile_definitions(deckkernel_camera_recognition_test PRIVATE
