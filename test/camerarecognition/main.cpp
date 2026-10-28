@@ -930,6 +930,17 @@ void SelfTest() {
    // on two successive toggles. Both panels and downstream consumers use it.
    auto sample=FindCard(card);
    if(!sample)throw std::runtime_error("synthetic card contour missing");
+   cv::Mat const highRes=RectifyForOcr(card,sample->corners,false);
+   if(highRes.empty() || highRes.cols<480 || highRes.rows<672)
+      throw std::runtime_error("high-resolution card extraction failed");
+   cv::Mat upscaled;
+   cv::resize(card,upscaled,cv::Size(3840,2160));
+   auto full=FindCard(upscaled);
+   if(!full || full->rectified.size()!=cv::Size(480,672))
+      throw std::runtime_error("4K camera detection must remain at fixed resolution");
+   cv::Mat const fullOcr=RectifyForOcr(upscaled,full->corners,false);
+   if(fullOcr.cols<=480 || fullOcr.rows<=672)
+      throw std::runtime_error("4K accepted card did not preserve source details");
    cv::Mat const before=sample->rectified.clone();
    hash_ty const hashBefore=sample->fingerprint;
    FlipRectifiedCard(*sample);
