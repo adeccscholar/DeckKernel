@@ -499,6 +499,7 @@ std::string ReportManaColorCandidates(cv::Mat const& aCard,unsigned uEvent,bool 
 class Processor {
    StableCardTrigger m_detector;
    bool m_save{};
+   bool m_verbose{};
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
    std::unique_ptr<ArtworkMatcher> m_artwork;
 #endif
@@ -510,18 +511,21 @@ class Processor {
    bool m_autoFlipped{};
    std::string m_strName{"--"};
    std::string m_strRules{"--"};
+   std::string m_strMana{"No mana evidence"};
+   std::string m_strOrientation{"Automatic orientation pending"};
+   cv::Mat m_displayCard;
    std::string m_strStatus{"Waiting for card"};
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
    std::unique_ptr<CardOcr> m_ocr;
 #endif
    std::filesystem::path m_root;
 public:
-   explicit Processor(bool save):m_save(save),
+   explicit Processor(bool save,bool verbose=false):m_save(save),m_verbose(verbose),
       m_root(std::getenv("DECKKERNEL_CAMERA_EVIDENCE_ROOT")?
          std::getenv("DECKKERNEL_CAMERA_EVIDENCE_ROOT"):
          ".cache/camera-recognition") {}
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
-   void EnableOcr(std::string const& data){m_ocr=std::make_unique<CardOcr>(data);}
+   void EnableOcr(std::string const& data){m_ocr=std::make_unique<CardOcr>(data,m_verbose);}
 #endif
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
    void EnableArtwork(unsigned limit){m_artwork=std::make_unique<ArtworkMatcher>(limit);}
@@ -530,6 +534,10 @@ public:
    [[nodiscard]] std::string const& Name() const noexcept {return m_strName;}
    [[nodiscard]] std::string const& Rules() const noexcept {return m_strRules;}
    [[nodiscard]] std::string const& Status() const noexcept {return m_strStatus;}
+   [[nodiscard]] std::string const& Mana() const noexcept {return m_strMana;}
+   [[nodiscard]] std::string const& Orientation() const noexcept{return m_strOrientation;}
+   [[nodiscard]] cv::Mat const& DisplayCard() const noexcept{return m_displayCard;}
+   void ClearDisplayCard() {m_displayCard.release();}
    void ReevaluateOcrAfterRotation() noexcept {
       // Changing the orientation must be allowed to rerun OCR even when a
       // previous, wrong-side-up title passed the provisional confidence test.
@@ -537,6 +545,9 @@ public:
       m_ocrAttempts=0;
       m_liveFrames=90;
       m_bestSharpness=0;
+      m_ocrCard.reset();
+      m_displayCard.release();
+      m_strOrientation="Manual 180 deg correction requested";
    }
    bool Process(cv::Mat const& frame) {return Process(FindCard(frame));}
    bool Process(std::optional<FoundCard> const& found) {
@@ -573,7 +584,8 @@ public:
          ++m_removedEvents;
          m_ocrCard.reset();m_ocrAccepted=false;m_ocrAttempts=0;
          m_liveFrames=0;m_bestSharpness=0;m_autoFlipped=false;
-         m_strName="--";m_strRules="--";m_strStatus="Waiting for card";
+         m_strStatus="Card removed - last OCR result retained";
+         m_displayCard.release();
          std::println("[CAM] CARD-NO-LONGER-DETECTED #{} fingerprint={:016x}; "
             "absent-frames=45; ready-for-next-card",
             event->number,event->fingerprint);
@@ -583,18 +595,21 @@ public:
          event->number,event->fingerprint);
       m_ocrCard=event->number;
       m_strStatus="Card detected - identity unverified";
-      ReportManaColorCandidates(event->card,event->number);
+      m_strMana=ReportManaColorCandidates(event->card,event->number,m_verbose);
       m_liveFrames=0;m_bestSharpness=0;m_ocrAttempts=0;m_ocrAccepted=false;
       m_autoFlipped=false;
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
       if(m_ocr) {
          m_autoFlipped=m_ocr->Orient(event->card);
+         m_strOrientation=m_autoFlipped?"Auto rotated 180 deg":"Auto 0 deg / uncertain";
          m_ocrAttempts=1;
          m_ocrAccepted=m_ocr->Read(event->card,event->number,m_ocrAttempts);
          m_strName=m_ocr->LastName();m_strRules=m_ocr->LastRules();
-         m_strStatus=m_ocrAccepted?"OCR read - unverified":"OCR unreadable";
+         m_strStatus=std::format("OCR name {}%, rules {}% - unverified",
+            m_ocr->NameConfidence(),m_ocr->RulesConfidence());
       }
 #endif
+      m_displayCard=event->card.clone();
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
       if(m_artwork)m_artwork->Search(event->card,event->number);
 #endif
@@ -960,11 +975,12 @@ void Usage() {
    std::println("   or: --probe-camera=0          test 4 Windows camera delivery modes");
    std::println("   optional: --ocr --tessdata=PATH_TO_TESSDATA (eng.traineddata required)");
    std::println("   optional: --artwork [--artwork-limit=100] (PostgreSQL art_crop, no scan index)");
+   std::println("   optional: --verbose (periodic camera and OCR console diagnostics)");
 }
 }
 int main(int argc,char** argv) {
    try{
-      bool selfTest=false,save=false;
+      bool selfTest=false,save=false,verbose=false;
       bool ocr=false,artwork=false;
       unsigned artworkLimit=100;
       std::string tessdata;
@@ -979,6 +995,7 @@ int main(int argc,char** argv) {
          std::string_view arg(argv[i]);
          if(arg=="--help"){Usage();return 0;}
          if(arg=="--self-test")selfTest=true;
+         else if(arg=="--verbose")verbose=true;
          else if(arg=="--save-events")save=true;
          else if(arg=="--ocr")ocr=true;
          else if(arg=="--artwork")artwork=true;
@@ -1059,7 +1076,7 @@ int main(int argc,char** argv) {
          }
          return 0;
       }
-      Processor processor(save);
+      Processor processor(save,verbose);
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
       if(artwork)processor.EnableArtwork(artworkLimit);
 #else
@@ -1150,15 +1167,17 @@ int main(int argc,char** argv) {
          }
 #if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
          preview.SetFields(processor.Name(),processor.Rules(),
-            "Color candidates: diagnostic only",processor.Status());
+            processor.Mana(),processor.Status(),"Edition not verified",
+            flip?"Manual 180 deg / "+processor.Orientation():processor.Orientation());
 #endif
-         preview.Show(annotated,found?found->rectified:cv::Mat{},
+         preview.Show(annotated,processor.DisplayCard().empty()?
+            (found?found->rectified:cv::Mat{}):processor.DisplayCard(),
             *camera,fps,signal.brightness);
          auto now=std::chrono::steady_clock::now();
          double const seconds=std::chrono::duration<double>(now-interval).count();
          if(seconds>=2.0){
             fps=count/seconds;
-            std::println("[CAM] backend={} frames={} size={}x{} fps={:.1f} "
+            if(verbose)std::println("[CAM] backend={} frames={} size={}x{} fps={:.1f} "
                "mean={:.2f} min={:.0f} max={:.0f} black-frames={}",
                capture.getBackendName(),count,frame.cols,frame.rows,fps,
                signal.brightness,signal.minimum,signal.maximum,blackFrames);
