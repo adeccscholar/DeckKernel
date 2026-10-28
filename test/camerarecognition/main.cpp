@@ -1325,6 +1325,24 @@ void SelfTest() {
    auto const rotatedCard=FindCard(rotatedScene,&rotatedStats);
    if(!rotatedCard || rotatedStats.aspectCandidates==0)
       throw std::runtime_error("rotated printed card not detected");
+   // Out-of-frame and border-adjacent corners are valid contour estimates
+   // but illegal cornerSubPix starting points. They must survive unchanged.
+   cv::Mat cornerGray(100,120,CV_8UC1,cv::Scalar(96));
+   std::array<cv::Point2f,4> const edgePoints{{
+      {-1.f,35.f},{119.f,60.f},{60.f,99.f},{0.f,0.f}
+   }};
+   auto const edgeResult=RefineCardCorners(cornerGray,edgePoints,1.0);
+   for(std::size_t i=0;i<edgePoints.size();++i)
+      if(edgeResult[i]!=edgePoints[i])
+         throw std::runtime_error("border corner must remain unchanged");
+   std::array<cv::Point2f,4> const mixedPoints{{
+      {2.f,3.f},{50.f,40.f},{119.f,99.f},{20.f,0.f}
+   }};
+   auto const mixedResult=RefineCardCorners(cornerGray,mixedPoints,1.0);
+   if(mixedResult[0]!=mixedPoints[0] ||
+      mixedResult[2]!=mixedPoints[2] ||
+      mixedResult[3]!=mixedPoints[3])
+      throw std::runtime_error("invalid corner changed during subpixel refinement");
    cv::Mat const before=sample->rectified.clone();
    hash_ty const hashBefore=sample->fingerprint;
    FlipRectifiedCard(*sample);
