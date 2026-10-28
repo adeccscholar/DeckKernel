@@ -273,6 +273,11 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame) {
       if(sum>largest){largest=sum;pts[2]=point;}
       if(diff<smallDiff){smallDiff=diff;pts[3]=point;}
    }
+   // The short edge must be horizontal after rectification, including
+   // cards presented sideways. Orientation of the printed content is
+   // decided independently by OCR.
+   if(cv::norm(pts[0]-pts[1])>cv::norm(pts[1]-pts[2]))
+      std::rotate(pts.begin(),pts.begin()+1,pts.end());
    std::array<cv::Point2f,4> target{{
       {0,0},{479,0},{479,671},{0,671}
    }};
@@ -297,6 +302,8 @@ void FlipRectifiedCard(FoundCard& card) {
 // dHash fluctuations must NOT produce either event on their own.
 class StableCardTrigger {
    std::optional<hash_ty> m_previous;
+   cv::Mat m_bestFrame;
+   double m_bestScore{-1.0};
    std::optional<unsigned> m_activeNumber;
    hash_ty m_activeFingerprint{};
    unsigned m_stable{},m_absent{},m_events{};
@@ -315,6 +322,8 @@ public:
       if(!found) {
          m_previous.reset();
          m_stable=0;
+         m_bestFrame.release();
+         m_bestScore=-1.0;
          if(m_absent<removalFrames)++m_absent;
          if(m_absent==removalFrames) {
             m_armed=true;
@@ -331,15 +340,29 @@ public:
       if(!m_armed)return std::nullopt;
       if(m_previous && std::popcount(*m_previous^found->fingerprint)<=8)
          ++m_stable;
-      else
+      else {
          m_stable=1;
+         m_bestFrame.release();
+         m_bestScore=-1.0;
+      }
+      cv::Mat aGray,aLap;
+      cv::cvtColor(found->rectified,aGray,cv::COLOR_BGR2GRAY);
+      cv::Laplacian(aGray,aLap,CV_32F);
+      cv::Scalar aMean,aStd;
+      cv::meanStdDev(aLap,aMean,aStd);
+      double const flSharpness=aStd[0]*aStd[0];
+      if(flSharpness>m_bestScore) {
+         m_bestScore=flSharpness;
+         m_bestFrame=found->rectified.clone();
+      }
       m_previous=found->fingerprint;
       if(m_stable<stableFrames)return std::nullopt;
       m_armed=false;
       m_activeNumber=++m_events;
       m_activeFingerprint=found->fingerprint;
       return Event{EventKind::Presented,*m_activeNumber,
-         m_activeFingerprint,found->rectified.clone()};
+         m_activeFingerprint,m_bestFrame.empty()?
+            found->rectified.clone():m_bestFrame.clone()};
    }
 };
 
@@ -378,6 +401,23 @@ public:
       m_ready=true;
    }
    ~CardOcr(){if(m_ready)m_api.End();}
+   bool Orient(cv::Mat& aCard) {
+      if(aCard.empty())return false;
+      cv::Rect const aTitle(aCard.cols/20,aCard.rows/30,
+         aCard.cols*9/10,aCard.rows/9);
+      auto const aNormal=ReadRegion(aCard,aTitle,tesseract::PSM_SINGLE_LINE);
+      cv::Mat aReversed;
+      cv::rotate(aCard,aReversed,cv::ROTATE_180);
+      auto const aFlipped=ReadRegion(aReversed,aTitle,tesseract::PSM_SINGLE_LINE);
+      // Never assert orientation when scores are ambiguous.
+      if(aFlipped.text.empty() ||
+         (!aNormal.text.empty()&&aFlipped.confidence<=aNormal.confidence+8))
+         return false;
+      aCard=std::move(aReversed);
+      std::println("[CAM-ROT] orientation=180; confidence={}/{}",
+         aNormal.confidence,aFlipped.confidence);
+      return true;
+   }
    bool Read(cv::Mat const& card,unsigned eventNumber,unsigned attempt) {
       if(card.empty()||card.cols<100||card.rows<200)return false;
       // The upper title band is the most useful first-pass OCR target.
@@ -398,6 +438,33 @@ public:
 };
 #endif
 
+
+// Coarse visual candidate detection only, NOT a definitive mana symbol reader.
+// Hue distinguishes chromatic candidates; white/colorless and hybrid symbols
+// require template verification against known Scryfall symbol graphics.
+void ReportManaColorCandidates(cv::Mat const& aCard,unsigned uEvent) {
+   if(aCard.empty())return;
+   cv::Rect const aBand(aCard.cols*56/100,aCard.rows/35,
+      aCard.cols*39/100,aCard.rows/9);
+   cv::Mat aHsv;
+   cv::cvtColor(aCard(aBand),aHsv,cv::COLOR_BGR2HSV);
+   std::array<unsigned,5> arrHits{};
+   for(int y=0;y<aHsv.rows;++y) {
+      for(int x=0;x<aHsv.cols;++x) {
+         auto const aPixel=aHsv.at<cv::Vec3b>(y,x);
+         int const iHue=aPixel[0],iSat=aPixel[1],iValue=aPixel[2];
+         if(iSat<65||iValue<65)continue;
+         if(iHue<11||iHue>171)++arrHits[0]; // red
+         else if(iHue>=11&&iHue<36)++arrHits[1]; // yellow/gold, not W!
+         else if(iHue>=36&&iHue<85)++arrHits[2]; // green
+         else if(iHue>=85&&iHue<132)++arrHits[3]; // blue
+         else ++arrHits[4]; // purple/other
+      }
+   }
+   std::println("[CAM-MANA] card #{} RGB hue candidate pixels R={} Y={} G={} U={} other={} status=UNVERIFIED",
+      uEvent,arrHits[0],arrHits[1],arrHits[2],arrHits[3],arrHits[4]);
+}
+
 class Processor {
    StableCardTrigger m_detector;
    bool m_save{};
@@ -409,6 +476,7 @@ class Processor {
    double m_bestSharpness{};
    std::optional<unsigned> m_ocrCard;
    bool m_ocrAccepted{};
+   bool m_autoFlipped{};
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
    std::unique_ptr<CardOcr> m_ocr;
 #endif
@@ -452,7 +520,9 @@ public:
                   m_liveFrames=0;
                   m_bestSharpness=std::max(m_bestSharpness,sharpness);
                   ++m_ocrAttempts;
-                  m_ocrAccepted=m_ocr->Read(found->rectified,*m_ocrCard,m_ocrAttempts);
+                  cv::Mat aCandidate=found->rectified.clone();
+                  if(m_autoFlipped)cv::rotate(aCandidate,aCandidate,cv::ROTATE_180);
+                  m_ocrAccepted=m_ocr->Read(aCandidate,*m_ocrCard,m_ocrAttempts);
                   if(m_ocrAccepted)std::println("[CAM-OCR] card #{} accepted after {} attempts",*m_ocrCard,m_ocrAttempts);
                }
             }
@@ -463,7 +533,7 @@ public:
       if(event->kind==StableCardTrigger::EventKind::Removed) {
          ++m_removedEvents;
          m_ocrCard.reset();m_ocrAccepted=false;m_ocrAttempts=0;
-         m_liveFrames=0;m_bestSharpness=0;
+         m_liveFrames=0;m_bestSharpness=0;m_autoFlipped=false;
          std::println("[CAM] CARD-NO-LONGER-DETECTED #{} fingerprint={:016x}; "
             "absent-frames=45; ready-for-next-card",
             event->number,event->fingerprint);
@@ -472,9 +542,12 @@ public:
       std::println("[CAM] NEW-STABLE-CARD #{} fingerprint={:016x}; edition=UNKNOWN",
          event->number,event->fingerprint);
       m_ocrCard=event->number;
+      ReportManaColorCandidates(event->card,event->number);
       m_liveFrames=0;m_bestSharpness=0;m_ocrAttempts=0;m_ocrAccepted=false;
+      m_autoFlipped=false;
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
       if(m_ocr) {
+         m_autoFlipped=m_ocr->Orient(event->card);
          m_ocrAttempts=1;
          m_ocrAccepted=m_ocr->Read(event->card,event->number,m_ocrAttempts);
       }
@@ -922,6 +995,7 @@ int main(int argc,char** argv) {
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
             if(ocr) {
                CardOcr stillOcr(tessdata);
+               static_cast<void>(stillOcr.Orient(found->rectified));
                static_cast<void>(stillOcr.Read(found->rectified,1,1));
             }
 #endif
@@ -977,6 +1051,11 @@ int main(int argc,char** argv) {
          throw std::runtime_error("cannot open camera: try another index/backend or Windows camera privacy settings");
       std::println("[CAM] opened camera={} backend={}",*camera,capture.getBackendName());
       ConfigureCapture(capture,width,height,fpsRequested,fourcc);
+      // Camera-side focus is driver/backend dependent. Enable continuous AF
+      // only if supported; image-space sharpness selection always remains on.
+      bool const bAutoFocus=capture.set(cv::CAP_PROP_AUTOFOCUS,1.0);
+      std::println("[CAM-FOCUS] autofocus-request accepted={} reported={}",
+         bAutoFocus,capture.get(cv::CAP_PROP_AUTOFOCUS));
       CameraWindow preview(*camera);
       cv::Mat frame;
       unsigned long long count=0;
