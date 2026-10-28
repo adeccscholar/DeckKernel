@@ -1674,6 +1674,18 @@ int main(int argc,char** argv) {
          throw std::runtime_error("cannot open camera: try another index/backend or Windows camera privacy settings");
       std::println("[CAM] opened camera={} backend={}",*camera,capture.getBackendName());
       ConfigureCapture(capture,width,height,fpsRequested,fourcc);
+      // DirectShow exposes these values only when the driver implements
+      // the camera properties. Reporting them does not mutate working
+      // exposure or HDR configuration.
+      std::println("[CAM-LIGHT] auto-exposure={} exposure={} gain={} "
+         "brightness={} contrast={} saturation={} white-balance={}",
+         capture.get(cv::CAP_PROP_AUTO_EXPOSURE),
+         capture.get(cv::CAP_PROP_EXPOSURE),
+         capture.get(cv::CAP_PROP_GAIN),
+         capture.get(cv::CAP_PROP_BRIGHTNESS),
+         capture.get(cv::CAP_PROP_CONTRAST),
+         capture.get(cv::CAP_PROP_SATURATION),
+         capture.get(cv::CAP_PROP_WB_TEMPERATURE));
       // Camera-side focus is driver/backend dependent. Enable continuous AF
       // only if supported; image-space sharpness selection always remains on.
       bool const bAutoFocus=capture.set(cv::CAP_PROP_AUTOFOCUS,1.0);
