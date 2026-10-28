@@ -342,3 +342,25 @@ recognize individual mana icons, colorless/white/black costs, hybrid or
 Phyrexian symbols. Such symbols require a validated segmented glyph/template
 matcher and reference-card tests. No supported runtime with the Windows
 BCC64X camera hardware has been tested for this change yet.
+
+## SDL2/Skia dashboard (2026-10-28)
+
+The camera application now has a separate `CameraDashboard.h` backed by
+SDL2 window/events/textures and a Skia raster canvas. If both installed
+CMake targets `SDL2::SDL2` and `Skia::skia` are available, it replaces
+the original Win32 preview for live camera mode. Otherwise the old preview
+remains the fallback.
+
+The screen is arranged as a left raw camera panel, a right geometrically
+rectified card panel, and a lower group of fields (OCR name, OCR rules text,
+mana diagnostics, recognition status, verified identity). R rotates the
+current card 180 degrees; Escape closes the dashboard.
+
+An OCR-readable title is shown as *unverified*. The positive recognition
+label `Found: <card name>` must only be emitted after the asynchronous
+artwork identification result has been validated against the card catalog;
+that positive UI handoff is not yet implemented. Mana fields currently
+report only unverified hue diagnostics. The right-hand live preview shows
+the geometrically corrected frame and may differ from a later auto-rotated
+event crop. Neither Windows/BCC64X compilation nor physical GUI testing
+has yet been performed for this change.
