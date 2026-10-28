@@ -239,60 +239,109 @@ struct FoundCard {
    hash_ty fingerprint{};
    std::array<cv::Point,4> corners{};
 };
-std::optional<FoundCard> FindCard(cv::Mat const& frame) {
+struct CardDetectionDiagnostics {
+   unsigned contours{};
+   unsigned areaCandidates{};
+   unsigned quadrilaterals{};
+   unsigned aspectCandidates{};
+   double selectedAreaPercent{};
+};
+
+std::optional<FoundCard> FindCard(cv::Mat const& frame,
+   CardDetectionDiagnostics* diagnostics=nullptr) {
+   if(diagnostics)*diagnostics={};
    if(frame.empty()||frame.cols<64||frame.rows<64)return std::nullopt;
+
+   // At 4K a real card may occupy less than 1% of the full frame.
+   // Detect contours on a bounded preview, but always return original-frame
+   // coordinates and rectify from the original unmodified pixels.
+   double const scale=std::min(1.0,
+      1600.0/std::max(frame.cols,frame.rows));
+   cv::Mat image;
+   if(scale<1.0)
+      cv::resize(frame,image,cv::Size(),scale,scale,cv::INTER_AREA);
+   else image=frame;
    cv::Mat gray,blur,edges;
-   if(frame.channels()==3)cv::cvtColor(frame,gray,cv::COLOR_BGR2GRAY);
-   else gray=frame;
+   if(image.channels()==3)cv::cvtColor(image,gray,cv::COLOR_BGR2GRAY);
+   else if(image.channels()==4)cv::cvtColor(image,gray,cv::COLOR_BGRA2GRAY);
+   else gray=image;
    cv::GaussianBlur(gray,blur,cv::Size(5,5),0);
-   cv::Canny(blur,edges,60,140);
-   std::vector<std::vector<cv::Point>> contours;
-   cv::findContours(edges,contours,cv::RETR_LIST,cv::CHAIN_APPROX_SIMPLE);
-   double bestArea{};
+
+   double const imageArea=static_cast<double>(image.cols)*image.rows;
+   // The previous 4% threshold excluded genuine small cards completely.
+   // Minimum side length and aspect ratio still guard against tiny noise.
+   double const minArea=std::max(350.0,imageArea*0.0005);
+   double bestArea=0;
    std::vector<cv::Point> best;
-   double const frameArea=static_cast<double>(frame.cols)*frame.rows;
-   for(auto const& contour:contours) {
-      double const area=std::abs(cv::contourArea(contour));
-      if(area<frameArea*0.04||area>frameArea*0.90||area<bestArea)continue;
-      std::vector<cv::Point> corners;
-      cv::approxPolyDP(contour,corners,cv::arcLength(contour,true)*0.025,true);
-      if(corners.size()!=4||!cv::isContourConvex(corners))continue;
-      auto const r=cv::minAreaRect(corners);
-      double const shortSide=std::min(r.size.width,r.size.height);
-      double const longSide=std::max(r.size.width,r.size.height);
-      if(shortSide<20||longSide/shortSide<1.25||longSide/shortSide>1.65)continue;
-      bestArea=area;
-      best=std::move(corners);
+   CardDetectionDiagnostics stats;
+   auto searchContours=[&](cv::Mat const& edgeMap) {
+      std::vector<std::vector<cv::Point>> contours;
+      cv::findContours(edgeMap,contours,cv::RETR_LIST,
+         cv::CHAIN_APPROX_SIMPLE);
+      stats.contours+=static_cast<unsigned>(contours.size());
+      for(auto const& contour:contours) {
+         double const area=std::abs(cv::contourArea(contour));
+         if(area<minArea||area>imageArea*0.85)continue;
+         ++stats.areaCandidates;
+         std::vector<cv::Point> corners;
+         cv::approxPolyDP(contour,corners,
+            cv::arcLength(contour,true)*0.018,true);
+         if(corners.size()!=4||!cv::isContourConvex(corners))continue;
+         ++stats.quadrilaterals;
+         auto const r=cv::minAreaRect(corners);
+         double const shortSide=std::min(r.size.width,r.size.height);
+         double const longSide=std::max(r.size.width,r.size.height);
+         if(shortSide<22||longSide/shortSide<1.22||
+            longSide/shortSide>1.72)continue;
+         ++stats.aspectCandidates;
+         if(area<=bestArea)continue;
+         bestArea=area;
+         best=std::move(corners);
+      }
+   };
+   cv::Canny(blur,edges,45,125);
+   searchContours(edges);
+   if(best.empty()) {
+      // Weak print edges or glare may defeat the default thresholds. Retry
+      // the *detection image only*, never the input for OCR or evidence.
+      cv::Mat enhanced;
+      auto clahe=cv::createCLAHE(2.0,cv::Size(8,8));
+      clahe->apply(blur,enhanced);
+      cv::Canny(enhanced,edges,25,75);
+      searchContours(edges);
+   }
+   if(diagnostics) {
+      stats.selectedAreaPercent=bestArea*100.0/imageArea;
+      *diagnostics=stats;
    }
    if(best.size()!=4)return std::nullopt;
-   // First test: near-upright cards. Arbitrary rotated/split layouts require
-   // an orientation-aware model in stage 2.
+
    std::array<cv::Point2f,4> pts{};
    double smallest=std::numeric_limits<double>::max(),largest=-smallest;
    double smallDiff=smallest,largeDiff=largest;
    for(auto const& point:best) {
-      double const sum=point.x+point.y;
-      double const diff=point.x-point.y;
-      if(sum<smallest){smallest=sum;pts[0]=point;}
-      if(diff>largeDiff){largeDiff=diff;pts[1]=point;}
-      if(sum>largest){largest=sum;pts[2]=point;}
-      if(diff<smallDiff){smallDiff=diff;pts[3]=point;}
+      double const x=point.x/scale,y=point.y/scale;
+      double const sum=x+y,diff=x-y;
+      cv::Point2f const p(static_cast<float>(x),
+         static_cast<float>(y));
+      if(sum<smallest){smallest=sum;pts[0]=p;}
+      if(diff>largeDiff){largeDiff=diff;pts[1]=p;}
+      if(sum>largest){largest=sum;pts[2]=p;}
+      if(diff<smallDiff){smallDiff=diff;pts[3]=p;}
    }
-   // The short edge must be horizontal after rectification, including
-   // cards presented sideways. Orientation of the printed content is
-   // decided independently by OCR.
    if(cv::norm(pts[0]-pts[1])>cv::norm(pts[1]-pts[2]))
       std::rotate(pts.begin(),pts.begin()+1,pts.end());
-   // Detection always uses fixed 480x672 geometry. A variable-size warp
-   // on every 4K frame destabilizes dHash and consumes capture time.
-   std::array<cv::Point2f,4> target{{
+
+   std::array<cv::Point2f,4> const target{{
       {0,0},{479,0},{479,671},{0,671}
    }};
-   cv::Mat const homography=cv::getPerspectiveTransform(pts.data(),target.data());
    cv::Mat rectified;
-   cv::warpPerspective(frame,rectified,homography,cv::Size(480,672));
+   cv::warpPerspective(frame,rectified,
+      cv::getPerspectiveTransform(pts.data(),target.data()),
+      cv::Size(480,672));
    std::array<cv::Point,4> quad{};
-   for(unsigned i=0;i<4;++i)quad[i]=cv::Point(cvRound(pts[i].x),cvRound(pts[i].y));
+   for(unsigned i=0;i<4;++i)
+      quad[i]=cv::Point(cvRound(pts[i].x),cvRound(pts[i].y));
    return FoundCard{rectified,DHash(rectified),quad};
 }
 /** High-resolution OCR warp only for an accepted card presentation.
