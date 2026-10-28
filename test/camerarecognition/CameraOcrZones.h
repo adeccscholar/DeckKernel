@@ -3,9 +3,9 @@
 #pragma once
 /** \file CameraOcrZones.h
     \brief Image-derived text and symbol zones for rectified MTG cards.
-    \details Detect the type bar from its real horizontal borders instead of
-             using a fixed percentage. If no reliable bar is found, type and
-             rules must not be sent to OCR (unknown layout).
+    \details Frame lines are optional evidence; the OCR text-line positions
+             can supply the actual typeline bounds. The rules area is always
+             available independently, even for unknown layouts.
 */
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
@@ -116,9 +116,9 @@ struct Separator {
    Zones result {
       Relative(size,  54,  35, 745, 133), // Name excludes mana symbols
       Relative(size, 745,  35, 964, 133), // Mana graphics are handled separately
-      Relative(size,  57, 540, 837, 590), // Preview only when unclassified
-      Relative(size, 837, 540, 964, 590), // Set-symbol preview only
-      Relative(size,  70, 720, 930, 840), // Preview only (not OCR) when unknown
+      Relative(size,  57, 552, 837, 636), // Standard-frame fallback typeline
+      Relative(size, 837, 552, 964, 636), // Separate set-symbol area
+      Relative(size,  70, 660, 930, 880), // Rules fallback, independent of type
       false,0.f
    };
    auto const peaks=HorizontalRules(card);
@@ -166,6 +166,33 @@ struct Separator {
    result.typeSeparated=true;
    result.separationConfidence=std::clamp((best-1.f)/1.30f,0.f,1.f);
    return result;
+}
+
+/** Refine the zones from an actual OCR text line belonging to the typeline.
+    Unlike a fixed card ratio, top/bottom come from Tesseract's bounding box.
+    Name and mana remain isolated; the set symbol follows the type band.
+*/
+inline bool ApplyTypeTextLine(Zones& zones,cv::Size const size,
+   int top,int bottom,float confidence) {
+   if(top<size.height*42/100||bottom>size.height*77/100||
+      bottom<=top||bottom-top>size.height*13/100)
+      return false;
+   int const pad=std::max(3,size.height/135);
+   int const y0=std::max(0,top-pad);
+   int const y1=std::min(size.height,bottom+pad);
+   int const rulesY=std::min(size.height-2,
+      bottom+std::max(10,size.height/60));
+   int const rulesEnd=size.height*89/100;
+   if(rulesEnd<=rulesY+15)return false;
+   zones.type.y=y0;
+   zones.type.height=y1-y0;
+   zones.setSymbol.y=y0;
+   zones.setSymbol.height=y1-y0;
+   zones.rules.y=rulesY;
+   zones.rules.height=rulesEnd-rulesY;
+   zones.typeSeparated=true;
+   zones.separationConfidence=std::clamp(confidence/100.f,0.f,1.f);
+   return true;
 }
 
 [[nodiscard]] inline bool Valid(Zones const& z,cv::Size size) {
