@@ -1151,21 +1151,47 @@ void SelfTest() {
       throw std::runtime_error("short contour dropout emitted a removal");
    for(int i=0;i<12;++i)if(processor.Process(card))++events;
    if(events!=1)throw std::runtime_error("brief contour loss caused a duplicate");
-   // One removal after exactly 45 absent frames, never repeated while empty.
-   for(int i=0;i<44;++i)processor.Process(blank);
+   // Removal is debounced, but no longer depends on a 45-frame gap.
+   for(unsigned i=0;i<StableCardTrigger::RemovalFrames()-1;++i)
+      processor.Process(blank);
    if(processor.RemovedEvents()!=0)
-      throw std::runtime_error("card removal signalled before frame 45");
+      throw std::runtime_error("card removed before debounce");
    processor.Process(blank);
    if(processor.RemovedEvents()!=1)
-      throw std::runtime_error("missing removal after 45 empty frames");
+      throw std::runtime_error("missing removal after debounce");
    for(int i=0;i<60;++i)processor.Process(blank);
    if(processor.RemovedEvents()!=1)
       throw std::runtime_error("repeated removal while scene remained empty");
    for(int i=0;i<12;++i)if(processor.Process(card))++events;
    if(events!=2)throw std::runtime_error("reinserted card must emit second event");
-   for(int i=0;i<45;++i)processor.Process(blank);
+   for(unsigned i=0;i<StableCardTrigger::RemovalFrames();++i)
+      processor.Process(blank);
    if(processor.RemovedEvents()!=2)
       throw std::runtime_error("second recognized card did not emit removal");
+   // Replace A with B without any empty frame: old card must be removed
+   // and a new presentation emitted, with no repeated removal of B.
+   StableCardTrigger swap;
+   auto a=FindCard(card);
+   if(!a)throw std::runtime_error("replacement sample A missing");
+   unsigned presents=0,removes=0;
+   for(int i=0;i<6;++i) {
+      auto event=swap.Accept(a);
+      if(event && event->kind==StableCardTrigger::EventKind::Presented)++presents;
+   }
+   if(presents!=1)throw std::runtime_error("replacement test initial event");
+   auto b=*a;
+   // Two distinct card faces with the same physical outline.
+   cv::rectangle(b.rectified,cv::Rect(90,130,300,290),
+      cv::Scalar(12,24,210),-1);
+   b.fingerprint=DHash(b.rectified);
+   for(int i=0;i<12;++i) {
+      auto event=swap.Accept(b);
+      if(!event)continue;
+      if(event->kind==StableCardTrigger::EventKind::Removed)++removes;
+      else ++presents;
+   }
+   if(removes!=1||presents!=2)
+      throw std::runtime_error("card swap A->B must remove and present once");
    std::println("SMOKE|RESULT|PASS|stable presentation, one removal per card, "
       "jitter suppression, short dropout and reentry");
 }
