@@ -478,8 +478,7 @@ public:
 // require template verification against known Scryfall symbol graphics.
 std::string ReportManaColorCandidates(cv::Mat const& aCard,unsigned uEvent,bool verbose=false) {
    if(aCard.empty())return "No mana evidence";
-   cv::Rect const aBand(aCard.cols*56/100,aCard.rows/35,
-      aCard.cols*39/100,aCard.rows/9);
+   cv::Rect const aBand=deckkernel_camera::ocr::Detect(aCard).mana;
    cv::Mat aHsv;
    cv::cvtColor(aCard(aBand),aHsv,cv::COLOR_BGR2HSV);
    std::array<unsigned,5> arrHits{};
@@ -795,6 +794,13 @@ public:
 
 void SelfTest() {
    Processor processor(false);
+   cv::Mat const zoneCard(672,480,CV_8UC3,cv::Scalar(255,255,255));
+   auto const zones=deckkernel_camera::ocr::Detect(zoneCard);
+   if(!deckkernel_camera::ocr::Valid(zones,zoneCard.size()) ||
+      zones.name.br().x>zones.mana.x ||
+      zones.type.br().x>zones.setSymbol.x ||
+      zones.rules.y<zones.type.br().y)
+      throw std::runtime_error("OCR text/symbol zones overlap");
    cv::Mat blank(720,1280,CV_8UC3,cv::Scalar(20,20,20));
    cv::Mat card=blank.clone();
    cv::rectangle(card,cv::Rect(475,175,250,350),cv::Scalar(240,240,240),-1);
