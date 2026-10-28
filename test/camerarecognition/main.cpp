@@ -457,27 +457,45 @@ public:
       // Search bands are broad; the selected type band is an OCR observation.
       OcrResult bestType;
       int bestTop=-1,bestBottom=-1;
-      for(int y=card.rows*46/100;y<card.rows*72/100;
-          y+=std::max(7,card.rows/75)) {
-         int const h=std::max(24,card.rows/17);
-         if(y+h>=card.rows*80/100)break;
-         cv::Rect const probe(card.cols*57/1000,y,
-            card.cols*78/100,h);
-         auto candidate=ReadRegion(card,probe,tesseract::PSM_SINGLE_LINE);
-         if(!deckkernel_camera::ocr::LooksLikeType(candidate.text))
-            continue;
-         if(candidate.confidence>bestType.confidence ||
-            bestTop<0) {
-            bestType=std::move(candidate);
-            bestTop=y;
-            bestBottom=y+h;
+      // Segment printed lines first, then evaluate each line as a possible
+      // type. Repeated broad sliding windows mixed the type and rules text.
+      cv::Rect const search(card.cols*57/1000,card.rows*44/100,
+         card.cols*78/100,card.rows*32/100);
+      cv::Mat searchGray;
+      cv::cvtColor(card(search),searchGray,cv::COLOR_BGR2GRAY);
+      m_api.SetPageSegMode(tesseract::PSM_AUTO);
+      m_api.SetImage(searchGray.data,searchGray.cols,searchGray.rows,1,
+         static_cast<int>(searchGray.step));
+      if(m_api.Recognize(nullptr)==0) {
+         std::unique_ptr<tesseract::ResultIterator> iterator(m_api.GetIterator());
+         if(iterator) {
+            do {
+               int x0{},y0{},x1{},y1{};
+               if(!iterator->BoundingBox(tesseract::RIL_TEXTLINE,&x0,&y0,&x1,&y1))
+                  continue;
+               std::unique_ptr<char[]> raw(iterator->GetUTF8Text(tesseract::RIL_TEXTLINE));
+               std::string const text=raw?Clean(raw.get()):std::string{};
+               if(!deckkernel_camera::ocr::LooksLikeType(text))continue;
+               int const absTop=search.y+y0;
+               int const absBottom=search.y+y1;
+               int const confidence=static_cast<int>(
+                  iterator->Confidence(tesseract::RIL_TEXTLINE));
+               // Type is a single line just below the artwork. Prefer the
+               // highest plausible line; longer rules are below it.
+               if(bestTop<0 || absTop<bestTop ||
+                  (absTop==bestTop && confidence>bestType.confidence)) {
+                  bestTop=absTop;
+                  bestBottom=absBottom;
+                  bestType={text,confidence};
+               }
+            } while(iterator->Next(tesseract::RIL_TEXTLINE));
          }
       }
       if(bestTop>=0)
          deckkernel_camera::ocr::ApplyTypeTextLine(
             zones,card.size(),bestTop,bestBottom,
             static_cast<float>(bestType.confidence));
-      // Never suppress rules OCR merely because type detection is uncertain.
+      // The rules are always read, independently of type confidence.
       auto const type=bestTop>=0?bestType:OcrResult{};
       auto const rules=ReadRegion(card,zones.rules,tesseract::PSM_AUTO);
       if(m_verbose)
