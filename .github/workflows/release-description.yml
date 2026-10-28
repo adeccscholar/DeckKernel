@@ -32,8 +32,8 @@ jobs:
           published = {a["name"]: a for a in release["assets"]}
           lines = pathlib.Path("Cache/thirdparty.lock").read_text().splitlines()
           packages = [line.split("|") for line in lines if line.startswith("package|")]
-          if len(packages) != 25:
-             raise SystemExit(f"Expected 25 package entries; got {len(packages)}")
+          if len(packages) != 30:
+             raise SystemExit(f"Expected 30 package entries; got {len(packages)}")
           for fields in packages:
              _, name, version, tag, path, size, sha = fields
              archive = pathlib.PurePosixPath(path).name
@@ -42,7 +42,7 @@ jobs:
                 raise SystemExit(f"Unpublished or mismatched ZIP: {archive}")
              if tag != "2026.09.26-1":
                 raise SystemExit(f"Wrong package release tag: {name}")
-          print("Verified 25 GitHub assets.")
+          print("Verified 30 GitHub assets.")
           PY
       - name: Apply versioned two-table release description
         env:
