@@ -36,6 +36,7 @@ class CameraDashboard {
    bool m_bRunning{true};
    bool m_bFlip{};
    std::string m_strName{"--"};
+   std::string m_strType{"--"};
    std::string m_strRules{"--"};
    std::string m_strMana{"--"};
    std::string m_strStatus{"Waiting for card"};
@@ -135,11 +136,12 @@ public:
       return m_bRunning;
    }
    [[nodiscard]] bool Flip180() const noexcept{return m_bFlip;}
-   void SetFields(std::string strName,std::string strRules,
+   void SetFields(std::string strName,std::string strType,std::string strRules,
       std::string strMana,std::string strStatus,
       std::string strIdentity="No verified identity",
       std::string strOrientation="Automatic orientation pending") {
       m_strName=std::move(strName);
+      m_strType=std::move(strType);
       m_strRules=std::move(strRules);
       m_strMana=std::move(strMana);
       m_strStatus=std::move(strStatus);
@@ -168,13 +170,14 @@ public:
       Text(pCanvas,48+(iWidth-48)*0.56f,84,"RECTIFIED / ROTATED CARD",17,0xff8ed5ee);
       Text(pCanvas,32,flBottom+28,"CARD INFORMATION / OCR (UNVERIFIED)",19,0xfff5f7fa);
       Text(pCanvas,32,flBottom+55,"Name: "+m_strName,17,0xfff5f7fa);
-      Text(pCanvas,32,flBottom+81,"Mana: "+m_strMana,15,0xffc9d9e2);
+      Text(pCanvas,32,flBottom+77,"Type: "+m_strType,16,0xffc9d9e2);
+      Text(pCanvas,32,flBottom+99,"Mana: "+m_strMana,15,0xffc9d9e2);
       // Wrap card text within the lower pane instead of truncating its first
       // line or allowing it to flow beyond the window.
       std::string strRemaining=m_strRules;
-      float flLine=flBottom+108;
+      float flLine=flBottom+124;
       int const maxChars=std::max(30,(iWidth-90)/9);
-      for(int line=0;line<3 && !strRemaining.empty();++line) {
+      for(int line=0;line<2 && !strRemaining.empty();++line) {
          auto const count=std::min(strRemaining.size(),
             static_cast<std::size_t>(maxChars));
          auto split=count;
