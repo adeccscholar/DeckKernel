@@ -849,28 +849,35 @@ public:
 // Coarse visual candidate detection only, NOT a definitive mana symbol reader.
 // Hue distinguishes chromatic candidates; white/colorless and hybrid symbols
 // require template verification against known Scryfall symbol graphics.
-std::string ReportManaColorCandidates(cv::Mat const& aCard,unsigned uEvent,bool verbose=false) {
-   if(aCard.empty())return "No mana evidence";
-   cv::Rect const aBand=deckkernel_camera::ocr::Detect(aCard).mana;
-   cv::Mat aHsv;
-   cv::cvtColor(aCard(aBand),aHsv,cv::COLOR_BGR2HSV);
-   std::array<unsigned,5> arrHits{};
-   for(int y=0;y<aHsv.rows;++y) {
-      for(int x=0;x<aHsv.cols;++x) {
-         auto const aPixel=aHsv.at<cv::Vec3b>(y,x);
-         int const iHue=aPixel[0],iSat=aPixel[1],iValue=aPixel[2];
-         if(iSat<65||iValue<65)continue;
-         if(iHue<11||iHue>171)++arrHits[0]; // red
-         else if(iHue>=11&&iHue<36)++arrHits[1]; // yellow/gold, not W!
-         else if(iHue>=36&&iHue<85)++arrHits[2]; // green
-         else if(iHue>=85&&iHue<132)++arrHits[3]; // blue
-         else ++arrHits[4]; // purple/other
-      }
+std::string ReportManaColorCandidates(cv::Mat const& card,
+   unsigned event,bool verbose=false) {
+   if(card.empty())return "No mana evidence";
+   auto const region=deckkernel_camera::ocr::Detect(card).mana;
+   cv::Mat roi=card(region),gray,blur;
+   cv::cvtColor(roi,gray,cv::COLOR_BGR2GRAY);
+   cv::GaussianBlur(gray,blur,cv::Size(5,5),1.3);
+   std::vector<cv::Vec3f> circles;
+   cv::HoughCircles(blur,circles,cv::HOUGH_GRADIENT,1.2,
+      std::max(10,roi.cols/13),110,17,
+      std::max(6,card.cols/85),std::max(12,card.cols/22));
+   std::vector<cv::Vec3f> unique;
+   for(auto const& candidate:circles) {
+      bool duplicate=false;
+      for(auto const& accepted:unique)
+         if(cv::norm(cv::Point2f(candidate[0],candidate[1])-
+            cv::Point2f(accepted[0],accepted[1]))<
+            std::max(candidate[2],accepted[2])) {
+            duplicate=true;break;
+         }
+      if(!duplicate)unique.push_back(candidate);
    }
-   if(verbose)std::println("[CAM-MANA] card #{} RGB hue candidate pixels R={} Y={} G={} U={} other={} status=UNVERIFIED",
-      uEvent,arrHits[0],arrHits[1],arrHits[2],arrHits[3],arrHits[4]);
-   return std::format("Color pixels (unverified) R:{} Y:{} G:{} U:{} other:{}",
-      arrHits[0],arrHits[1],arrHits[2],arrHits[3],arrHits[4]);
+   std::sort(unique.begin(),unique.end(),
+      [](auto const& a,auto const& b){return a[0]<b[0];});
+   if(verbose)
+      std::println("[CAM-MANA] card #{} candidates={} status=UNVERIFIED",
+         event,unique.size());
+   return std::format("{} circular mana candidates (unverified)",
+      unique.size());
 }
 
 class Processor {
