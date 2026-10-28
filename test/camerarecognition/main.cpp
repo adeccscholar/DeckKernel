@@ -243,8 +243,10 @@ struct CardDetectionDiagnostics {
    unsigned contours{};
    unsigned areaCandidates{};
    unsigned quadrilaterals{};
+   unsigned rotatedCandidates{};
    unsigned aspectCandidates{};
    double selectedAreaPercent{};
+   bool recoveredRectangle{};
 };
 
 std::optional<FoundCard> FindCard(cv::Mat const& frame,
@@ -252,9 +254,8 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
    if(diagnostics)*diagnostics={};
    if(frame.empty()||frame.cols<64||frame.rows<64)return std::nullopt;
 
-   // At 4K a real card may occupy less than 1% of the full frame.
-   // Detect contours on a bounded preview, but always return original-frame
-   // coordinates and rectify from the original unmodified pixels.
+   // Keep contour work bounded even when the camera captures at 4K.
+   // Perspective rectification always uses unmodified source pixels.
    double const scale=std::min(1.0,
       1600.0/std::max(frame.cols,frame.rows));
    cv::Mat image;
@@ -268,52 +269,90 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
    cv::GaussianBlur(gray,blur,cv::Size(5,5),0);
 
    double const imageArea=static_cast<double>(image.cols)*image.rows;
-   // The previous 4% threshold excluded genuine small cards completely.
-   // Minimum side length and aspect ratio still guard against tiny noise.
    double const minArea=std::max(350.0,imageArea*0.0005);
-   double bestArea=0;
+   double bestScore=-1.0,bestArea=0;
+   bool recoveredBest=false;
    std::vector<cv::Point> best;
    CardDetectionDiagnostics stats;
+
    auto searchContours=[&](cv::Mat const& edgeMap) {
+      // Small gaps in the printed border must not destroy the entire card
+      // outline. The original raw Canny contours from the user's screenshot
+      // did not approximate to any four-point polygon.
+      cv::Mat closed;
+      int const kernel=std::max(3,image.cols/320)|1;
+      cv::morphologyEx(edgeMap,closed,cv::MORPH_CLOSE,
+         cv::getStructuringElement(cv::MORPH_RECT,
+            cv::Size(kernel,kernel)));
       std::vector<std::vector<cv::Point>> contours;
-      cv::findContours(edgeMap,contours,cv::RETR_LIST,
+      cv::findContours(closed,contours,cv::RETR_LIST,
          cv::CHAIN_APPROX_SIMPLE);
       stats.contours+=static_cast<unsigned>(contours.size());
       for(auto const& contour:contours) {
          double const area=std::abs(cv::contourArea(contour));
-         if(area<minArea||area>imageArea*0.85)continue;
+         // Exclude huge table/desk outlines, but retain small printed cards.
+         if(area<minArea||area>imageArea*0.20)continue;
          ++stats.areaCandidates;
-         std::vector<cv::Point> corners;
-         cv::approxPolyDP(contour,corners,
-            cv::arcLength(contour,true)*0.018,true);
-         if(corners.size()!=4||!cv::isContourConvex(corners))continue;
-         ++stats.quadrilaterals;
-         auto const r=cv::minAreaRect(corners);
-         double const shortSide=std::min(r.size.width,r.size.height);
-         double const longSide=std::max(r.size.width,r.size.height);
-         if(shortSide<22||longSide/shortSide<1.22||
+         auto const rectangle=cv::minAreaRect(contour);
+         double const shortSide=std::min(
+            rectangle.size.width,rectangle.size.height);
+         double const longSide=std::max(
+            rectangle.size.width,rectangle.size.height);
+         if(shortSide<22.0||longSide/shortSide<1.22||
             longSide/shortSide>1.72)continue;
+         double const rectangleArea=
+            static_cast<double>(rectangle.size.width)*rectangle.size.height;
+         if(rectangleArea<=0)continue;
+         double const fill=std::min(1.0,area/rectangleArea);
+
+         std::vector<cv::Point> corners;
+         for(double epsilon:{0.018,0.026,0.038}) {
+            cv::approxPolyDP(contour,corners,
+               cv::arcLength(contour,true)*epsilon,true);
+            if(corners.size()==4 && cv::isContourConvex(corners))
+               break;
+         }
+         bool const recovered=corners.size()!=4||
+            !cv::isContourConvex(corners);
+         if(recovered) {
+            // Recover the quadrilateral from the rotated minimum-area box.
+            // Only accept contours filling most of that box, not arbitrary
+            // elongated edges, hands or a tabletop boundary.
+            if(fill<0.68)continue;
+            cv::Point2f points[4];
+            rectangle.points(points);
+            corners.clear();
+            for(auto const& point:points)
+               corners.emplace_back(cvRound(point.x),cvRound(point.y));
+            ++stats.rotatedCandidates;
+         } else {
+            ++stats.quadrilaterals;
+         }
          ++stats.aspectCandidates;
-         if(area<=bestArea)continue;
+         double const ratio=longSide/shortSide;
+         // Favor the rectangular printed card over partial inner borders.
+         double const ratioFitness=std::max(0.0,
+            1.0-std::abs(ratio-1.40)/0.50);
+         double const score=area*fill*(0.7+0.3*ratioFitness);
+         if(score<=bestScore)continue;
+         bestScore=score;
          bestArea=area;
+         recoveredBest=recovered;
          best=std::move(corners);
       }
    };
    cv::Canny(blur,edges,45,125);
    searchContours(edges);
    if(best.empty()) {
-      // Weak print edges or glare may defeat the default thresholds. Retry
-      // the *detection image only*, never the input for OCR or evidence.
       cv::Mat enhanced;
       auto clahe=cv::createCLAHE(2.0,cv::Size(8,8));
       clahe->apply(blur,enhanced);
       cv::Canny(enhanced,edges,25,75);
       searchContours(edges);
    }
-   if(diagnostics) {
-      stats.selectedAreaPercent=bestArea*100.0/imageArea;
-      *diagnostics=stats;
-   }
+   stats.selectedAreaPercent=bestArea*100.0/imageArea;
+   stats.recoveredRectangle=recoveredBest;
+   if(diagnostics)*diagnostics=stats;
    if(best.size()!=4)return std::nullopt;
 
    std::array<cv::Point2f,4> pts{};
@@ -1400,12 +1439,13 @@ int main(int argc,char** argv) {
          }
 #if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
          std::string qualityStatus=found?
-            std::format("Contour detected | stable {}/{} | area {:.2f}%",
+            std::format("Contour {} | stable {}/{} | area {:.2f}%",
+               detection.recoveredRectangle?"rotated box":"polygon",
                processor.StableFrames(),processor.RequiredStableFrames(),
                detection.selectedAreaPercent):
-            std::format("No contour | edges {} quads {} ratio {}",
+            std::format("No contour | contours {} polygon {} rotated {}",
                detection.contours,detection.quadrilaterals,
-               detection.aspectCandidates);
+               detection.rotatedCandidates);
          if(found) {
             auto const metrics=deckkernel_camera::quality::Measure(found->rectified);
             qualityStatus+=std::format(" | light {:.0f} clipped {:.1f}% | {}",
