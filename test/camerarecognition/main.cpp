@@ -990,6 +990,20 @@ void SelfTest() {
    cv::Mat const fullOcr=RectifyForOcr(upscaled,full->corners,false);
    if(fullOcr.cols<=480 || fullOcr.rows<=672)
       throw std::runtime_error("4K accepted card did not preserve source details");
+   // Physically sized cards can cover much less than 4% of the 4K frame.
+   // Both printed sizes must be detected, including a modest tilt.
+   for(int cardWidth: {150,220,330}) {
+      cv::Mat scene(2160,3840,CV_8UC3,cv::Scalar(28,28,28));
+      int const cardHeight=cardWidth*7/5;
+      cv::Rect const cardBox(1500,850,cardWidth,cardHeight);
+      cv::rectangle(scene,cardBox,cv::Scalar(240,240,240),-1);
+      cv::rectangle(scene,cardBox,cv::Scalar(45,45,45),3);
+      CardDetectionDiagnostics stats;
+      auto const detected=FindCard(scene,&stats);
+      if(!detected || stats.selectedAreaPercent>=4.0 ||
+         stats.selectedAreaPercent<=0.0)
+         throw std::runtime_error("small 4K printed card detection failed");
+   }
    cv::Mat const before=sample->rectified.clone();
    hash_ty const hashBefore=sample->fingerprint;
    FlipRectifiedCard(*sample);
@@ -1357,7 +1371,9 @@ int main(int argc,char** argv) {
          FrameSignal const signal=MeasureFrame(frame);
          // One contour detection/rectification per frame. Use precisely the
          // same pixels for the side panel, the OCR and the artwork worker.
-         auto found=signal.nonblack?FindCard(frame):std::optional<FoundCard>{};
+         CardDetectionDiagnostics detection;
+         auto found=signal.nonblack?FindCard(frame,&detection):
+            std::optional<FoundCard>{};
          bool const flip=preview.Flip180();
          if(flip!=appliedFlip) {
             processor.ReevaluateOcrAfterRotation(flip);
@@ -1384,8 +1400,12 @@ int main(int argc,char** argv) {
          }
 #if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
          std::string qualityStatus=found?
-            std::format("Contour detected | stable {}/{}",
-               processor.StableFrames(),processor.RequiredStableFrames()):"No card contour";
+            std::format("Contour detected | stable {}/{} | area {:.2f}%",
+               processor.StableFrames(),processor.RequiredStableFrames(),
+               detection.selectedAreaPercent):
+            std::format("No contour | edges {} quads {} ratio {}",
+               detection.contours,detection.quadrilaterals,
+               detection.aspectCandidates);
          if(found) {
             auto const metrics=deckkernel_camera::quality::Measure(found->rectified);
             qualityStatus+=std::format(" | light {:.0f} clipped {:.1f}% | {}",
