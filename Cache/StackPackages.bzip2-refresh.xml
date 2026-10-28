@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Repackage ONLY the current BuildEngine bzip2 and libarchive 3.8.9
+     install artifacts for the pinned DeckKernel 2026.09.26-1 stack.
+     The 28 other packages must not be regenerated or replaced.
+     Validate libarchive imports libbzip2.dll before publishing. -->
+<stackPackages schemaVersion="2" toolchain="bcc64x">
+   <package name="bzip2" version="1.0.8" release="2026.09.26-1"/>
+   <package name="libarchive" version="3.8.9" release="2026.09.26-1"/>
+</stackPackages>
