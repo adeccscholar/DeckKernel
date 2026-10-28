@@ -413,11 +413,9 @@ public:
       auto const normal=deckkernel_camera::ocr::Detect(aCard);
       auto const flipped=deckkernel_camera::ocr::Detect(reversed);
       auto const normalName=ReadRegion(aCard,normal.name,tesseract::PSM_SINGLE_LINE);
-      auto const normalText=normal.typeSeparated?
-         ReadRegion(aCard,normal.rules,tesseract::PSM_AUTO):OcrResult{};
+      auto const normalText=ReadRegion(aCard,normal.rules,tesseract::PSM_AUTO);
       auto const reversedName=ReadRegion(reversed,flipped.name,tesseract::PSM_SINGLE_LINE);
-      auto const reversedText=flipped.typeSeparated?
-         ReadRegion(reversed,flipped.rules,tesseract::PSM_AUTO):OcrResult{};
+      auto const reversedText=ReadRegion(reversed,flipped.rules,tesseract::PSM_AUTO);
       // Compare title and rules evidence. A single upside-down title fragment
       // can receive an artificially high OCR confidence.
       auto score=[](OcrResult const& name,OcrResult const& body) {
@@ -427,8 +425,10 @@ public:
       int const normalScore=score(normalName,normalText);
       int const reversedScore=score(reversedName,reversedText);
       bool const flip=!reversedName.text.empty() &&
-         reversedScore>=normalScore+22 &&
-         (reversedText.confidence>=60 || reversedName.confidence>=65);
+         reversedScore>=normalScore+30 &&
+         reversedName.confidence>=60 &&
+         (normalName.text.empty() || reversedName.confidence>=normalName.confidence+10) &&
+         (reversedText.confidence>=65 || reversedName.confidence>=78);
       if(m_verbose)
          std::println("[CAM-ROT] title normal={} reversed={} body normal={} reversed={} chosen={}",
             normalName.confidence,reversedName.confidence,
@@ -450,23 +450,44 @@ public:
    [[nodiscard]] std::string const& LastRules() const noexcept{return m_strLastRules;}
    bool Read(cv::Mat const& card,unsigned eventNumber,unsigned attempt) {
       if(card.empty()||card.cols<100||card.rows<200)return false;
-      auto const zones=deckkernel_camera::ocr::Detect(card);
+      auto zones=deckkernel_camera::ocr::Detect(card);
       auto const title=ReadRegion(card,zones.name,tesseract::PSM_SINGLE_LINE);
-      auto const proposedType=zones.typeSeparated?
-         ReadRegion(card,zones.type,tesseract::PSM_SINGLE_LINE):OcrResult{};
-      bool const semanticType=zones.typeSeparated &&
-         deckkernel_camera::ocr::LooksLikeType(proposedType.text);
-      auto const type=semanticType?proposedType:OcrResult{};
-      auto const rules=semanticType?
-         ReadRegion(card,zones.rules,tesseract::PSM_AUTO):OcrResult{};
+      // Standard frames may have decorative or broken border lines. Search
+      // for the actual typeline text independently of border detection.
+      // Search bands are broad; the selected type band is an OCR observation.
+      OcrResult bestType;
+      int bestTop=-1,bestBottom=-1;
+      for(int y=card.rows*46/100;y<card.rows*72/100;
+          y+=std::max(7,card.rows/75)) {
+         int const h=std::max(24,card.rows/17);
+         if(y+h>=card.rows*80/100)break;
+         cv::Rect const probe(card.cols*57/1000,y,
+            card.cols*78/100,h);
+         auto candidate=ReadRegion(card,probe,tesseract::PSM_SINGLE_LINE);
+         if(!deckkernel_camera::ocr::LooksLikeType(candidate.text))
+            continue;
+         if(candidate.confidence>bestType.confidence ||
+            bestTop<0) {
+            bestType=std::move(candidate);
+            bestTop=y;
+            bestBottom=y+h;
+         }
+      }
+      if(bestTop>=0)
+         deckkernel_camera::ocr::ApplyTypeTextLine(
+            zones,card.size(),bestTop,bestBottom,
+            static_cast<float>(bestType.confidence));
+      // Never suppress rules OCR merely because type detection is uncertain.
+      auto const type=bestTop>=0?bestType:OcrResult{};
+      auto const rules=ReadRegion(card,zones.rules,tesseract::PSM_AUTO);
       if(m_verbose)
-         std::println("[CAM-ZONES] card #{} layout={} separator-confidence={:.2f} "
-            "type-y={}..{} rules-y={}..{}",eventNumber,
-            semanticType?"segmented":"unclassified",
-            zones.separationConfidence,zones.type.y,zones.type.br().y,
+         std::println("[CAM-ZONES] card #{} type={} confidence={} "
+            "type-y={}..{} rules-y={}..{}",
+            eventNumber,bestTop>=0?"detected":"unverified",
+            type.confidence,zones.type.y,zones.type.br().y,
             zones.rules.y,zones.rules.br().y);
       m_strLastName=title.text;
-      m_strLastType=semanticType?type.text:"Unclassified typeline";
+      m_strLastType=bestTop>=0?type.text:"Type not yet recognized";
       m_strLastRules=rules.text;
       m_nameConfidence=title.confidence;
       m_typeConfidence=type.confidence;
@@ -525,6 +546,7 @@ class Processor {
    std::optional<unsigned> m_ocrCard;
    bool m_ocrAccepted{};
    bool m_autoFlipped{};
+   bool m_manualOrientation{};
    std::string m_strName{"--"};
    std::string m_strRules{"--"};
    std::string m_strType{"--"};
@@ -556,7 +578,8 @@ public:
    [[nodiscard]] std::string const& Orientation() const noexcept{return m_strOrientation;}
    [[nodiscard]] cv::Mat const& DisplayCard() const noexcept{return m_displayCard;}
    void ClearDisplayCard() {m_displayCard.release();}
-   void ReevaluateOcrAfterRotation() noexcept {
+   void ReevaluateOcrAfterRotation(bool manualFlip) noexcept {
+      m_manualOrientation=manualFlip;
       // Changing the orientation must be allowed to rerun OCR even when a
       // previous, wrong-side-up title passed the provisional confidence test.
       m_ocrAccepted=false;
@@ -568,7 +591,7 @@ public:
       m_autoFlipped=false;
       if(!m_displayCard.empty())
          cv::rotate(m_displayCard,m_displayCard,cv::ROTATE_180);
-      m_strOrientation="Manual 180 deg correction requested";
+      m_strOrientation=manualFlip?"Manual 180 deg":"Manual 0 deg";
    }
    bool Process(cv::Mat const& frame) {return Process(FindCard(frame));}
    bool Process(std::optional<FoundCard> const& found) {
@@ -622,8 +645,9 @@ public:
       m_autoFlipped=false;
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
       if(m_ocr) {
-         m_autoFlipped=m_ocr->Orient(event->card);
-         m_strOrientation=m_autoFlipped?"Auto rotated 180 deg":"Auto 0 deg / uncertain";
+         m_autoFlipped=!m_manualOrientation && m_ocr->Orient(event->card);
+         m_strOrientation=m_manualOrientation?"Manual orientation":
+            (m_autoFlipped?"Auto rotated 180 deg":"Auto 0 deg / uncertain");
          m_ocrAttempts=1;
          m_ocrAccepted=m_ocr->Read(event->card,event->number,m_ocrAttempts);
          m_strName=m_ocr->LastName();m_strType=m_ocr->LastType();m_strRules=m_ocr->LastRules();
@@ -1203,7 +1227,7 @@ int main(int argc,char** argv) {
          auto found=signal.nonblack?FindCard(frame):std::optional<FoundCard>{};
          bool const flip=preview.Flip180();
          if(flip!=appliedFlip) {
-            processor.ReevaluateOcrAfterRotation();
+            processor.ReevaluateOcrAfterRotation(flip);
             appliedFlip=flip;
          }
          if(found&&flip)FlipRectifiedCard(*found);
