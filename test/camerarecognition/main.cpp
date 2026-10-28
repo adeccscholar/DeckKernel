@@ -18,6 +18,9 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <Windows.h>
+#if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
+#include "CameraDashboard.h"
+#endif
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/geometry.hpp>
@@ -1056,7 +1059,11 @@ int main(int argc,char** argv) {
       bool const bAutoFocus=capture.set(cv::CAP_PROP_AUTOFOCUS,1.0);
       std::println("[CAM-FOCUS] autofocus-request accepted={} reported={}",
          bAutoFocus,capture.get(cv::CAP_PROP_AUTOFOCUS));
+#if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
+      CameraDashboard preview;
+#else
       CameraWindow preview(*camera);
+#endif
       cv::Mat frame;
       unsigned long long count=0;
       unsigned failures=0,blackFrames=0;
