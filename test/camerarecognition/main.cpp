@@ -358,12 +358,6 @@ public:
          m_bestFrame.release();
          m_bestScore=-1.0;
       }
-      cv::Mat aGray,aLap;
-      cv::cvtColor(found->rectified,aGray,cv::COLOR_BGR2GRAY);
-      cv::Laplacian(aGray,aLap,CV_32F);
-      cv::Scalar aMean,aStd;
-      cv::meanStdDev(aLap,aMean,aStd);
-      double const flSharpness=aStd[0]*aStd[0];
       auto const quality=deckkernel_camera::quality::Measure(found->rectified);
       if(quality.score>m_bestScore) {
          m_bestScore=quality.score;
@@ -858,6 +852,16 @@ public:
 
 void SelfTest() {
    Processor processor(false);
+   cv::Mat const brightCard(672,480,CV_8UC3,cv::Scalar(255,255,255));
+   cv::Mat const dimCard(672,480,CV_8UC3,cv::Scalar(15,15,15));
+   auto const brightQuality=deckkernel_camera::quality::Measure(brightCard);
+   auto const dimQuality=deckkernel_camera::quality::Measure(dimCard);
+   if(!brightQuality.GlareRisk() || !dimQuality.LowLight())
+      throw std::runtime_error("camera lighting diagnostics failed");
+   auto const enhanced=deckkernel_camera::quality::ForOcr(dimCard);
+   if(enhanced.empty() || enhanced.channels()!=1 ||
+      enhanced.size()!=dimCard.size())
+      throw std::runtime_error("OCR contrast preprocessing failed");
    cv::Mat zoneCard(672,480,CV_8UC3,cv::Scalar(255,255,255));
    auto drawSeparators=[&](int y1,int y2) {
       zoneCard.setTo(cv::Scalar(255,255,255));
