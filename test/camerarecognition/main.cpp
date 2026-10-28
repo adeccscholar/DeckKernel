@@ -1301,6 +1301,21 @@ void SelfTest() {
    }
    if(removes!=1||presents!=2)
       throw std::runtime_error("card swap A->B must remove and present once");
+   // A wrong contour elsewhere must not keep an already-presented card
+   // alive indefinitely. The right panel must be cleared on removal.
+   Processor unrelated(false);
+   for(int i=0;i<6;++i)unrelated.Process(card);
+   if(unrelated.DisplayCard().empty())
+      throw std::runtime_error("presented card preview not populated");
+   cv::Mat different=blank.clone();
+   cv::rectangle(different,cv::Rect(80,105,260,364),
+      cv::Scalar(235,235,235),-1);
+   cv::rectangle(different,cv::Rect(100,160,210,220),
+      cv::Scalar(45,50,195),-1);
+   for(unsigned i=0;i<StableCardTrigger::RemovalFrames();++i)
+      unrelated.Process(different);
+   if(unrelated.RemovedEvents()!=1 || !unrelated.DisplayCard().empty())
+      throw std::runtime_error("unrelated contour retained previous card");
    std::println("SMOKE|RESULT|PASS|stable presentation, one removal per card, "
       "jitter suppression, short dropout and reentry");
 }
