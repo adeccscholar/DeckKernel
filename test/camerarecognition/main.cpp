@@ -628,6 +628,8 @@ public:
    void EnableArtwork(unsigned limit){m_artwork=std::make_unique<ArtworkMatcher>(limit);}
 #endif
    [[nodiscard]] unsigned RemovedEvents() const noexcept {return m_removedEvents;}
+   [[nodiscard]] unsigned StableFrames() const noexcept{return m_detector.StableCount();}
+   [[nodiscard]] unsigned RequiredStableFrames() const noexcept{return m_detector.RequiredFrames();}
    [[nodiscard]] std::string const& Name() const noexcept {return m_strName;}
    [[nodiscard]] std::string const& Rules() const noexcept {return m_strRules;}
    [[nodiscard]] std::string const& Type() const noexcept {return m_strType;}
@@ -652,7 +654,8 @@ public:
       m_strOrientation=manualFlip?"Manual 180 deg":"Manual 0 deg";
    }
    bool Process(cv::Mat const& frame) {return Process(FindCard(frame));}
-   bool Process(std::optional<FoundCard> const& found) {
+   bool Process(std::optional<FoundCard> const& found,
+      cv::Mat const& sourceFrame={}) {
       auto event=m_detector.Accept(found);
       if(found && m_ocrCard && !m_ocrAccepted) {
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
@@ -696,6 +699,8 @@ public:
       }
       std::println("[CAM] NEW-STABLE-CARD #{} fingerprint={:016x}; edition=UNKNOWN",
          event->number,event->fingerprint);
+      if(!sourceFrame.empty() && found)
+         event->card=RectifyForOcr(sourceFrame,found->corners,m_manualOrientation);
       m_ocrCard=event->number;
       m_strStatus="Card detected - identity unverified";
       m_strMana=ReportManaColorCandidates(event->card,event->number,m_verbose);
@@ -1301,7 +1306,7 @@ int main(int argc,char** argv) {
          if(found&&flip)FlipRectifiedCard(*found);
          if(signal.nonblack) {
             blackFrames=0;
-            processor.Process(found);
+            processor.Process(found,frame);
          } else {
             ++blackFrames;
          }
@@ -1318,10 +1323,12 @@ int main(int argc,char** argv) {
                cv::FONT_HERSHEY_SIMPLEX,0.7,cv::Scalar(0,170,240),2,cv::LINE_AA);
          }
 #if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
-         std::string qualityStatus="No card";
+         std::string qualityStatus=found?
+            std::format("Contour detected | stable {}/{}",
+               processor.StableFrames(),processor.RequiredStableFrames()):"No card contour";
          if(found) {
             auto const metrics=deckkernel_camera::quality::Measure(found->rectified);
-            qualityStatus=std::format("light {:.0f}/255 | clipped {:.1f}% | {}",
+            qualityStatus+=std::format(" | light {:.0f} clipped {:.1f}% | {}",
                metrics.brightness,metrics.clippedPercent,
                metrics.GlareRisk()?"GLARE - reposition light":
                metrics.LowLight()?"LOW LIGHT - add diffuse light":"OK");
