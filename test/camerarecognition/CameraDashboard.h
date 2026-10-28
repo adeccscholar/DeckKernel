@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <format>
 #include <memory>
+#include <vector>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -33,7 +34,8 @@ class CameraDashboard {
    std::string m_strRules{"--"};
    std::string m_strMana{"--"};
    std::string m_strStatus{"Waiting for card"};
-   std::string m_strIdentity{"Not verified"};
+   std::string m_strIdentity{"No verified identity"};
+   std::string m_strOrientation{"Automatic orientation pending"};
    static void Text(SkCanvas* pCanvas,float flX,float flY,
       std::string const& strText,float flSize,SkColor uColor) {
       SkPaint aPaint;
@@ -68,7 +70,7 @@ class CameraDashboard {
       if(pTexture)SDL_UpdateTexture(pTexture,nullptr,aRgba.data,
          static_cast<int>(aRgba.step));
    }
-   void Image(SDL_Texture* pTexture,SDL_Rect aArea) {
+   void Image(SDL_Texture* pTexture,SDL_Rect aArea,bool rotated=false) {
       if(!pTexture)return;
       int iW{},iH{};
       SDL_QueryTexture(pTexture,nullptr,nullptr,&iW,&iH);
@@ -78,7 +80,8 @@ class CameraDashboard {
       SDL_Rect const aDest{aArea.x+(aArea.w-static_cast<int>(iW*flScale))/2,
          aArea.y+(aArea.h-static_cast<int>(iH*flScale))/2,
          static_cast<int>(iW*flScale),static_cast<int>(iH*flScale)};
-      SDL_RenderCopy(m_pRenderer,pTexture,nullptr,&aDest);
+      SDL_RenderCopyEx(m_pRenderer,pTexture,nullptr,&aDest,
+         rotated?180.0:0.0,nullptr,SDL_FLIP_NONE);
    }
 public:
    CameraDashboard() {
@@ -115,12 +118,14 @@ public:
    [[nodiscard]] bool Flip180() const noexcept{return m_bFlip;}
    void SetFields(std::string strName,std::string strRules,
       std::string strMana,std::string strStatus,
-      std::string strIdentity="Not verified") {
+      std::string strIdentity="No verified identity",
+      std::string strOrientation="Automatic orientation pending") {
       m_strName=std::move(strName);
       m_strRules=std::move(strRules);
       m_strMana=std::move(strMana);
       m_strStatus=std::move(strStatus);
       m_strIdentity=std::move(strIdentity);
+      m_strOrientation=std::move(strOrientation);
    }
    void Show(cv::Mat const& aRaw,cv::Mat const& aCard,
       int iCamera,double flFps,double flBrightness) {
@@ -142,14 +147,36 @@ public:
       Text(pCanvas,25,36,"DECKKERNEL  /  CAMERA RECOGNITION",24,0xfff5f7fa);
       Text(pCanvas,32,84,"LIVE CAMERA",17,0xff8ed5ee);
       Text(pCanvas,48+(iWidth-48)*0.56f,84,"RECTIFIED / ROTATED CARD",17,0xff8ed5ee);
-      Text(pCanvas,32,flBottom+30,"CARD INFORMATION",20,0xfff5f7fa);
-      Text(pCanvas,32,flBottom+62,"Name: "+m_strName,17,0xfff5f7fa);
-      Text(pCanvas,32,flBottom+90,"Mana: "+m_strMana,16,0xffc9d9e2);
-      Text(pCanvas,32,flBottom+118,"Text: "+m_strRules.substr(0,110),16,0xffc9d9e2);
-      Text(pCanvas,32,flBottom+147,"Recognition: "+m_strStatus,17,0xffffcc79);
-      Text(pCanvas,32,flBottom+175,"Identity: "+m_strIdentity,17,0xff9dddb9);
-      Text(pCanvas,32,flBottom+204,
-         std::format("Camera {} | {:.1f} fps | brightness {:.0f} | R rotate 180 | Esc exit",
+      Text(pCanvas,32,flBottom+28,"CARD INFORMATION / OCR (UNVERIFIED)",19,0xfff5f7fa);
+      Text(pCanvas,32,flBottom+55,"Name: "+m_strName,17,0xfff5f7fa);
+      Text(pCanvas,32,flBottom+81,"Mana: "+m_strMana,15,0xffc9d9e2);
+      // Wrap card text within the lower pane instead of truncating its first
+      // line or allowing it to flow beyond the window.
+      std::string strRemaining=m_strRules;
+      float flLine=flBottom+108;
+      int const maxChars=std::max(30,(iWidth-90)/9);
+      for(int line=0;line<3 && !strRemaining.empty();++line) {
+         auto const count=std::min(strRemaining.size(),
+            static_cast<std::size_t>(maxChars));
+         auto split=count;
+         if(count<strRemaining.size()) {
+            auto space=strRemaining.rfind(' ',count);
+            if(space!=std::string::npos && space>count/2)
+               split=space;
+         }
+         auto chunk=strRemaining.substr(0,split);
+         if(line==0)chunk="Text: "+chunk;
+         Text(pCanvas,32,flLine,chunk,15,0xffc9d9e2);
+         flLine+=22;
+         strRemaining.erase(0,split);
+         while(!strRemaining.empty() && strRemaining.front()==' ')
+            strRemaining.erase(0,1);
+      }
+      Text(pCanvas,32,flBottom+179,"Recognition: "+m_strStatus,16,0xffffcc79);
+      Text(pCanvas,32,flBottom+204,"Identity: "+m_strIdentity,15,0xff9dddb9);
+      Text(pCanvas,32,flBottom+229,"Orientation: "+m_strOrientation,15,0xffc9d9e2);
+      Text(pCanvas,32,flBottom+257,
+         std::format("Camera {} | {:.1f} fps | brightness {:.0f} | R: 180 deg | Esc: exit",
             iCamera,flFps,flBrightness),14,0xff8fa5b2);
       SkPixmap aPixels;
       if(aSurface->peekPixels(&aPixels)) {
@@ -163,7 +190,7 @@ public:
          }
       }
       Image(m_pRaw,SDL_Rect{30,98,
-         static_cast<int>((iWidth-48)*0.56f)-28,static_cast<int>(iHeight*0.57f)-54});
+         static_cast<int>((iWidth-48)*0.56f)-28,static_cast<int>(iHeight*0.57f)-54},m_bFlip);
       Image(m_pCard,SDL_Rect{
          static_cast<int>(46+(iWidth-48)*0.56f),98,
          static_cast<int>((iWidth-48)*0.44f)-30,static_cast<int>(iHeight*0.57f)-54});
