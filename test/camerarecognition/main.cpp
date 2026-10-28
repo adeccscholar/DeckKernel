@@ -408,15 +408,16 @@ public:
    ~CardOcr(){if(m_ready)m_api.End();}
    bool Orient(cv::Mat& aCard) {
       if(aCard.empty())return false;
-      auto const zones=deckkernel_camera::ocr::Detect(aCard);
-      cv::Rect const title=zones.name;
-      cv::Rect const rules=zones.rules;
-      auto const normalName=ReadRegion(aCard,title,tesseract::PSM_SINGLE_LINE);
-      auto const normalText=ReadRegion(aCard,rules,tesseract::PSM_AUTO);
       cv::Mat reversed;
       cv::rotate(aCard,reversed,cv::ROTATE_180);
-      auto const reversedName=ReadRegion(reversed,title,tesseract::PSM_SINGLE_LINE);
-      auto const reversedText=ReadRegion(reversed,rules,tesseract::PSM_AUTO);
+      auto const normal=deckkernel_camera::ocr::Detect(aCard);
+      auto const flipped=deckkernel_camera::ocr::Detect(reversed);
+      auto const normalName=ReadRegion(aCard,normal.name,tesseract::PSM_SINGLE_LINE);
+      auto const normalText=normal.typeSeparated?
+         ReadRegion(aCard,normal.rules,tesseract::PSM_AUTO):OcrResult{};
+      auto const reversedName=ReadRegion(reversed,flipped.name,tesseract::PSM_SINGLE_LINE);
+      auto const reversedText=flipped.typeSeparated?
+         ReadRegion(reversed,flipped.rules,tesseract::PSM_AUTO):OcrResult{};
       // Compare title and rules evidence. A single upside-down title fragment
       // can receive an artificially high OCR confidence.
       auto score=[](OcrResult const& name,OcrResult const& body) {
@@ -451,10 +452,21 @@ public:
       if(card.empty()||card.cols<100||card.rows<200)return false;
       auto const zones=deckkernel_camera::ocr::Detect(card);
       auto const title=ReadRegion(card,zones.name,tesseract::PSM_SINGLE_LINE);
-      auto const type=ReadRegion(card,zones.type,tesseract::PSM_SINGLE_LINE);
-      auto const rules=ReadRegion(card,zones.rules,tesseract::PSM_AUTO);
+      auto const proposedType=zones.typeSeparated?
+         ReadRegion(card,zones.type,tesseract::PSM_SINGLE_LINE):OcrResult{};
+      bool const semanticType=zones.typeSeparated &&
+         deckkernel_camera::ocr::LooksLikeType(proposedType.text);
+      auto const type=semanticType?proposedType:OcrResult{};
+      auto const rules=semanticType?
+         ReadRegion(card,zones.rules,tesseract::PSM_AUTO):OcrResult{};
+      if(m_verbose)
+         std::println("[CAM-ZONES] card #{} layout={} separator-confidence={:.2f} "
+            "type-y={}..{} rules-y={}..{}",eventNumber,
+            semanticType?"segmented":"unclassified",
+            zones.separationConfidence,zones.type.y,zones.type.br().y,
+            zones.rules.y,zones.rules.br().y);
       m_strLastName=title.text;
-      m_strLastType=type.text;
+      m_strLastType=semanticType?type.text:"Unclassified typeline";
       m_strLastRules=rules.text;
       m_nameConfidence=title.confidence;
       m_typeConfidence=type.confidence;
@@ -794,8 +806,21 @@ public:
 
 void SelfTest() {
    Processor processor(false);
-   cv::Mat const zoneCard(672,480,CV_8UC3,cv::Scalar(255,255,255));
+   cv::Mat zoneCard(672,480,CV_8UC3,cv::Scalar(255,255,255));
+   auto drawSeparators=[&](int y1,int y2) {
+      zoneCard.setTo(cv::Scalar(255,255,255));
+      cv::line(zoneCard,cv::Point(34,y1),cv::Point(446,y1),
+         cv::Scalar(20,20,20),3);
+      cv::line(zoneCard,cv::Point(34,y2),cv::Point(446,y2),
+         cv::Scalar(20,20,20),3);
+   };
+   drawSeparators(368,412);
+   auto const firstZones=deckkernel_camera::ocr::Detect(zoneCard);
+   drawSeparators(291,337);
    auto const zones=deckkernel_camera::ocr::Detect(zoneCard);
+   if(!firstZones.typeSeparated || !zones.typeSeparated ||
+      std::abs(zones.rules.y-firstZones.rules.y)<40)
+      throw std::runtime_error("dynamic OCR type/rules boundary not detected");
    if(!deckkernel_camera::ocr::Valid(zones,zoneCard.size()) ||
       zones.name.br().x>zones.mana.x ||
       zones.type.br().x>zones.setSymbol.x ||
