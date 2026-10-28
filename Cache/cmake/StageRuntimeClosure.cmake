@@ -84,6 +84,34 @@ foreach(_missing IN LISTS _unresolved)
       EXISTS "$ENV{SystemRoot}/System32/${_missing}")
       continue()
    endif()
+   # Identify which resolved module introduces this import. Each probe uses
+   # the same pinned roots, never an unrelated DLL from PATH. A probe may
+   # include transitive imports; report candidate ancestors, not a guessed
+   # direct importer.
+   message(STATUS "[RUNTIME] Investigating unresolved import: ${_missing}")
+   foreach(_candidate IN ITEMS "${ADECC_RUNTIME_EXECUTABLE}")
+      file(GET_RUNTIME_DEPENDENCIES EXECUTABLES "${_candidate}"
+         DIRECTORIES ${_search}
+         RESOLVED_DEPENDENCIES_VAR _probe_found
+         UNRESOLVED_DEPENDENCIES_VAR _probe_missing
+         PRE_EXCLUDE_REGEXES "^(api-ms-win-|ext-ms-)"
+         POST_EXCLUDE_REGEXES "[/\\\\][Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\\\]")
+   endforeach()
+   foreach(_candidate IN LISTS _resolved)
+      if(NOT EXISTS "${_candidate}")
+         continue()
+      endif()
+      file(GET_RUNTIME_DEPENDENCIES LIBRARIES "${_candidate}"
+         DIRECTORIES ${_search}
+         RESOLVED_DEPENDENCIES_VAR _probe_found
+         UNRESOLVED_DEPENDENCIES_VAR _probe_missing
+         PRE_EXCLUDE_REGEXES "^(api-ms-win-|ext-ms-)"
+         POST_EXCLUDE_REGEXES "[/\\\\][Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\\\]")
+      list(FIND _probe_missing "${_missing}" _probe_index)
+      if(NOT _probe_index EQUAL -1)
+         message(STATUS "[RUNTIME] Dependency chain through: ${_candidate}")
+      endif()
+   endforeach()
    message(FATAL_ERROR "Unresolved PE import: ${_missing}. "
       "Declare its active BuildEngine package instead of staging the entire SDK.")
 endforeach()
