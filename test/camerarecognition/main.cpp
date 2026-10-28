@@ -607,26 +607,31 @@ public:
       auto const normal=deckkernel_camera::ocr::Detect(aCard);
       auto const flipped=deckkernel_camera::ocr::Detect(reversed);
       auto const normalName=ReadRegion(aCard,normal.name,tesseract::PSM_SINGLE_LINE);
-      auto const normalText=ReadRegion(aCard,normal.rules,tesseract::PSM_AUTO);
+      auto const normalType=ReadRegion(aCard,normal.type,tesseract::PSM_SINGLE_LINE);
       auto const reversedName=ReadRegion(reversed,flipped.name,tesseract::PSM_SINGLE_LINE);
+      auto const reversedType=ReadRegion(reversed,flipped.type,tesseract::PSM_SINGLE_LINE);
+      auto const normalText=ReadRegion(aCard,normal.rules,tesseract::PSM_AUTO);
       auto const reversedText=ReadRegion(reversed,flipped.rules,tesseract::PSM_AUTO);
-      // Compare title and rules evidence. A single upside-down title fragment
-      // can receive an artificially high OCR confidence.
-      auto score=[](OcrResult const& name,OcrResult const& body) {
-         return (name.text.empty()?0:name.confidence/2)+
-            (body.text.empty()?0:body.confidence);
-      };
-      int const normalScore=score(normalName,normalText);
-      int const reversedScore=score(reversedName,reversedText);
-      bool const flip=!reversedName.text.empty() &&
-         reversedScore>=normalScore+30 &&
-         reversedName.confidence>=60 &&
-         (normalName.text.empty() || reversedName.confidence>=normalName.confidence+10) &&
-         (reversedText.confidence>=65 || reversedName.confidence>=78);
+      bool const normalTypeValid=deckkernel_camera::ocr::LooksLikeType(normalType.text);
+      bool const reversedTypeValid=deckkernel_camera::ocr::LooksLikeType(reversedType.text);
+      // Never invert a card solely because upside-down random OCR has a
+      // superficially high confidence. Require a recognizable card type.
+      int const normalScore=(normalName.text.empty()?0:normalName.confidence)+
+         (normalTypeValid?100+normalType.confidence:0)+
+         (normalText.text.empty()?0:normalText.confidence/2);
+      int const reversedScore=(reversedName.text.empty()?0:reversedName.confidence)+
+         (reversedTypeValid?100+reversedType.confidence:0)+
+         (reversedText.text.empty()?0:reversedText.confidence/2);
+      bool const flip=reversedTypeValid &&
+         (!normalTypeValid || reversedScore>=normalScore+35) &&
+         !reversedName.text.empty() &&
+         reversedName.confidence>=50;
       if(m_verbose)
-         std::println("[CAM-ROT] title normal={} reversed={} body normal={} reversed={} chosen={}",
+         std::println("[CAM-ROT] name={}/{} type-valid={}/{} "
+            "score={}/{} chosen={}",
             normalName.confidence,reversedName.confidence,
-            normalText.confidence,reversedText.confidence,flip?180:0);
+            normalTypeValid,reversedTypeValid,normalScore,reversedScore,
+            flip?180:0);
       if(flip)aCard=std::move(reversed);
       return flip;
    }
