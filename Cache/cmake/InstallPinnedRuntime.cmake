@@ -182,89 +182,24 @@ endfunction()
 # The only DLL sources are the pinned ThirdParty packages and BCC64X SDK.
 function(adecc_stage_pinned_runtime target)
    if(NOT TARGET "${target}")
-      message(FATAL_ERROR "Unknown runtime staging target: ${target}")
+      message(FATAL_ERROR "Unknown runtime target: ${target}")
    endif()
-   adecc_runtime_search_directories(_adecc_dirs _adecc_toolchain_dirs)
-   set(ADECC_RUNTIME_EXE "$<TARGET_FILE:${target}>")
-   set(ADECC_RUNTIME_OUTPUT "$<TARGET_FILE_DIR:${target}>")
-   set(ADECC_RUNTIME_DIRS "${_adecc_dirs}")
-   get_filename_component(ADECC_RUNTIME_COMPILER_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
-   set(ADECC_RUNTIME_ZLIB_DIR "${ADECC_TP_ZLIB_ROOT}/bin/win64/${CMAKE_BUILD_TYPE}")
-   set(ADECC_RUNTIME_RESOLVER "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ResolvePinnedRuntimeConflicts.cmake")
-   set(ADECC_RUNTIME_ALLOWED_ROOTS
-      "${ADECC_REPOSITORY_ROOT}/ThirdParty;${_adecc_toolchain_dirs}")
-
-   set(_template [=[
-set(_exe [==[@ADECC_RUNTIME_EXE@]==])
-set(_output [==[@ADECC_RUNTIME_OUTPUT@]==])
-set(_dirs [==[@ADECC_RUNTIME_DIRS@]==])
-set(_roots [==[@ADECC_RUNTIME_ALLOWED_ROOTS@]==])
-# Clear only files staged by this target in earlier builds, never manually
-# installed files. Prevent loader precedence from selecting stale DLLs.
-set(_manifest "${_output}/.deckkernel-runtime-closure.txt")
-if(EXISTS "${_manifest}")
-   file(STRINGS "${_manifest}" _previous ENCODING UTF-8)
-   foreach(_name IN LISTS _previous)
-      if(NOT _name MATCHES "^[A-Za-z0-9_+.-]+[.]dll$")
-         message(FATAL_ERROR "Invalid previous runtime manifest entry: ${_name}")
-      endif()
-      file(REMOVE "${_output}/${_name}")
-   endforeach()
-endif()
-set(_compiler_dir [==[@ADECC_RUNTIME_COMPILER_DIR@]==])
-set(_zlib_dir [==[@ADECC_RUNTIME_ZLIB_DIR@]==])
-include([==[@ADECC_RUNTIME_RESOLVER@]==])
-file(GET_RUNTIME_DEPENDENCIES
-   EXECUTABLES "${_exe}"
-   RESOLVED_DEPENDENCIES_VAR _resolved
-   UNRESOLVED_DEPENDENCIES_VAR _unresolved
-   CONFLICTING_DEPENDENCIES_PREFIX _conflict
-   DIRECTORIES ${_dirs}
-   PRE_EXCLUDE_REGEXES "^[Aa][Pp][Ii]-[Mm][Ss]-" "^[Ee][Xx][Tt]-[Mm][Ss]-"
-   POST_EXCLUDE_REGEXES "[/\\\\][Ww]indows[/\\\\][Ss]ystem32[/\\\\]")
-if(_unresolved)
-   message(FATAL_ERROR "Missing runtime imports for ${_exe}: ${_unresolved}")
-endif()
-adecc_reconcile_runtime_dependencies(_resolved _conflict
-   "${_compiler_dir}" "${_zlib_dir}")
-set(_count 0)
-set(_copied)
-foreach(_dll IN LISTS _resolved)
-   file(REAL_PATH "${_dll}" _real)
-   file(TO_CMAKE_PATH "${_real}" _normalized)
-   string(TOLOWER "${_normalized}" _dll_lower)
-   set(_allowed FALSE)
-   foreach(_root IN LISTS _roots)
-      file(REAL_PATH "${_root}" _root_real)
-      file(TO_CMAKE_PATH "${_root_real}" _root_normalized)
-      string(TOLOWER "${_root_normalized}" _root_lower)
-      string(FIND "${_dll_lower}" "${_root_lower}/" _start)
-      if(_start EQUAL 0)
-         set(_allowed TRUE)
-         break()
-      endif()
-   endforeach()
-   if(_allowed)
-      get_filename_component(_name "${_real}" NAME)
-      file(COPY_FILE "${_real}" "${_output}/${_name}" ONLY_IF_DIFFERENT)
-      message(STATUS "[RUNTIME] Staged ${_name}")
-      list(APPEND _copied "${_name}")
-      math(EXPR _count "${_count}+1")
-   else()
-      message(STATUS "[RUNTIME] Host provided: ${_real}")
-   endif()
-endforeach()
-list(REMOVE_DUPLICATES _copied)
-list(SORT _copied)
-string(REPLACE ";" "\n" _manifest_text "${_copied}")
-file(WRITE "${_manifest}" "${_manifest_text}\n")
-message(STATUS "[RUNTIME] Staged ${_count} DLLs beside ${_exe}")
-]=])
-   string(CONFIGURE "${_template}" _script @ONLY)
-   set(_script_file "${CMAKE_CURRENT_BINARY_DIR}/adecc_stage_${target}.cmake")
-   file(GENERATE OUTPUT "${_script_file}" CONTENT "${_script}")
-   add_custom_command(TARGET "${target}" POST_BUILD
-      COMMAND "${CMAKE_COMMAND}" -P "${_script_file}"
-      COMMENT "Stage pinned runtime dependencies for ${target}"
+   get_filename_component(_compiler_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
+   set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/runtime/${target}")
+   set(_roots_file "${CMAKE_CURRENT_BINARY_DIR}/${target}.runtime-roots.txt")
+   set(_toolchain_file "${CMAKE_CURRENT_BINARY_DIR}/${target}.runtime-toolchain.txt")
+   string(REPLACE ";" "\n" _roots_text "${ADECC_THIRDPARTY_PACKAGE_ROOTS}")
+   file(WRITE "${_roots_file}" "${_roots_text}\n")
+   file(WRITE "${_toolchain_file}" "libc++-370.dll\nlibunwind-370.dll\n")
+   add_custom_target("deckkernel-stage-${target}" ALL
+      COMMAND "${CMAKE_COMMAND}"
+         "-DADECC_RUNTIME_EXECUTABLE:FILEPATH=$<TARGET_FILE:${target}>"
+         "-DADECC_RUNTIME_OUTPUT_DIR:PATH=$<TARGET_FILE_DIR:${target}>"
+         "-DADECC_RUNTIME_ROOTS_FILE:FILEPATH=${_roots_file}"
+         "-DADECC_RUNTIME_TOOLCHAIN_DLLS_FILE:FILEPATH=${_toolchain_file}"
+         "-DADECC_RUNTIME_TOOLCHAIN_BIN:PATH=${_compiler_bin}"
+         "-DADECC_RUNTIME_CONFIGURATION=${CMAKE_BUILD_TYPE}"
+         -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/StageRuntimeClosure.cmake"
       VERBATIM)
+   add_dependencies("deckkernel-stage-${target}" ${target})
 endfunction()
