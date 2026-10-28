@@ -2,13 +2,13 @@
 <thirdPartyLock schemaVersion="2" toolchain="bcc64x" selectionSha256="57280833634e4b7a026beafb2db430ff41774fe5c5e9722e9124866ca61ae447" disclaimer="DISCLAIMER.md">
    <package name="boost" version="1.92.0" release="2026.09.26-1" archive="packages/boost-1.92.0-bcc64x.zip" size="57898831" sha256="961be5259b2db56bb309b17f46fdfa999a12b68e5c06161b07a4e3c662fdf4f7" />
    <package name="brotli" version="1.2.0" release="2026.09.26-1" archive="packages/brotli-1.2.0-bcc64x.zip" size="1017574" sha256="22d61b1fd9a09683b7084159d9b9cd4444cae924f9038e15e25da4b062a71408" />
-   <package name="bzip2" version="1.0.8" release="2026.09.26-1" archive="packages/bzip2-1.0.8-bcc64x.zip" size="90307" sha256="527c77eb2319303b39796762bb4868639c4b094e5d78492d58e5eac0833875b2" />
+   <package name="bzip2" version="1.0.8" release="2026.09.26-1" archive="packages/bzip2-1.0.8-bcc64x.zip" size="90587" sha256="ca64689c3f21be87fefcd04598c797734131b867186e69958a722b67d59f6029" />
    <package name="cmark-gfm" version="0.29.0.gfm.13" release="2026.09.26-1" archive="packages/cmark-gfm-0.29.0.gfm.13-bcc64x.zip" size="297796" sha256="0571c5c971a7fcfb62e436f953719c55d5b5eee4e7708db6e354631f191eb0a2" />
    <package name="curl" version="8.21.0" release="2026.09.26-1" archive="packages/curl-8.21.0-bcc64x.zip" size="1005859" sha256="14f207757c166766210288704ade40f3f59068fd2963af6e38000d97c1fb1acf" />
    <package name="freetype" version="2.14.3" release="2026.09.26-1" archive="packages/freetype-2.14.3-bcc64x.zip" size="1097291" sha256="f4469d4c53bc17f4623fa9f13f59cd3d5cc5f567eb60976cb00ae4110bea3319" />
    <package name="harfbuzz" version="14.4.0" release="2026.09.26-1" archive="packages/harfbuzz-14.4.0-bcc64x.zip" size="4255415" sha256="bd3fcf73df0ca82374d86d0a2e916820edfed04558faa64ea370ba046856dc2c" />
    <package name="leptonica" version="1.87.0" release="2026.09.26-1" archive="packages/leptonica-1.87.0-bcc64x.zip" size="2791072" sha256="2c13cd353e9753654fbf070b433686d7d147687bc8c56bc22832208b01e08427" />
-   <package name="libarchive" version="3.8.9" release="2026.09.26-1" archive="packages/libarchive-3.8.9-bcc64x.zip" size="2687908" sha256="bbfc78b0f4ae162a2a2a6e93becb14d040fbb0b5b07a90baff5b189544bb545d" />
+   <package name="libarchive" version="3.8.9" release="2026.09.26-1" archive="packages/libarchive-3.8.9-bcc64x.zip" size="2687917" sha256="d4a0de16b147bd318905af45da69f342892a575f76fd5567036aefeaba0e46e9" />
    <package name="libjpeg-turbo" version="3.2.0" release="2026.09.26-1" archive="packages/libjpeg-turbo-3.2.0-bcc64x.zip" size="1831407" sha256="f2ea79757a98b34e6d07e5b4bbba70e76ca6d86ca0f264c9b10321dc65c1492e" />
    <package name="libpng" version="1.6.59" release="2026.09.26-1" archive="packages/libpng-1.6.59-bcc64x.zip" size="550939" sha256="396f311ab5d5a1eba1770c7b43a720335c8175ca08ee1cca36adf008aabccbdc" />
    <package name="libpq" version="18.6" release="2026.09.26-1" archive="packages/libpq-18.6-bcc64x.zip" size="1341260" sha256="b742cf065d1251697aced2de7b8f313301b5909bbbb8c3eff42d497e7a183add" />
