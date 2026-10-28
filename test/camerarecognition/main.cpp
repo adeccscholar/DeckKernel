@@ -21,6 +21,7 @@
 #if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
 #include "CameraDashboard.h"
 #endif
+#include "CameraOcrZones.h"
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/geometry.hpp>
@@ -407,10 +408,9 @@ public:
    ~CardOcr(){if(m_ready)m_api.End();}
    bool Orient(cv::Mat& aCard) {
       if(aCard.empty())return false;
-      cv::Rect const title(aCard.cols/20,aCard.rows/30,
-         aCard.cols*9/10,aCard.rows/9);
-      cv::Rect const rules(aCard.cols/15,aCard.rows*58/100,
-         aCard.cols*13/15,aCard.rows*27/100);
+      auto const zones=deckkernel_camera::ocr::Detect(aCard);
+      cv::Rect const title=zones.name;
+      cv::Rect const rules=zones.rules;
       auto const normalName=ReadRegion(aCard,title,tesseract::PSM_SINGLE_LINE);
       auto const normalText=ReadRegion(aCard,rules,tesseract::PSM_AUTO);
       cv::Mat reversed;
@@ -437,31 +437,36 @@ public:
    }
    std::string m_strLastName;
    std::string m_strLastRules;
+   std::string m_strLastType;
+   int m_typeConfidence{};
    int m_nameConfidence{};
    int m_rulesConfidence{};
    [[nodiscard]] int NameConfidence() const noexcept{return m_nameConfidence;}
    [[nodiscard]] int RulesConfidence() const noexcept{return m_rulesConfidence;}
+   [[nodiscard]] int TypeConfidence() const noexcept{return m_typeConfidence;}
+   [[nodiscard]] std::string const& LastType() const noexcept{return m_strLastType;}
    [[nodiscard]] std::string const& LastName() const noexcept{return m_strLastName;}
    [[nodiscard]] std::string const& LastRules() const noexcept{return m_strLastRules;}
    bool Read(cv::Mat const& card,unsigned eventNumber,unsigned attempt) {
       if(card.empty()||card.cols<100||card.rows<200)return false;
-      // The upper title band is the most useful first-pass OCR target.
-      auto const title=ReadRegion(card,
-         cv::Rect(card.cols/20,card.rows/30,card.cols*9/10,card.rows/9),
-         tesseract::PSM_SINGLE_LINE);
-      // Text box is a separate multi-line recognition task.
-      auto const rules=ReadRegion(card,
-         cv::Rect(card.cols/15,card.rows*58/100,card.cols*13/15,
-            card.rows*27/100),tesseract::PSM_AUTO);
+      auto const zones=deckkernel_camera::ocr::Detect(card);
+      auto const title=ReadRegion(card,zones.name,tesseract::PSM_SINGLE_LINE);
+      auto const type=ReadRegion(card,zones.type,tesseract::PSM_SINGLE_LINE);
+      auto const rules=ReadRegion(card,zones.rules,tesseract::PSM_AUTO);
       m_strLastName=title.text;
+      m_strLastType=type.text;
       m_strLastRules=rules.text;
       m_nameConfidence=title.confidence;
+      m_typeConfidence=type.confidence;
       m_rulesConfidence=rules.confidence;
-      if(m_verbose)std::println("[CAM-OCR] card #{} attempt={} name=\"{}\" confidence={} status={}",
-         eventNumber,attempt,title.text,title.confidence,title.text.empty()?"UNREADABLE":"UNVERIFIED");
-      if(m_verbose)std::println("[CAM-OCR] card #{} attempt={} text=\"{}\" confidence={} status={}",
-         eventNumber,attempt,rules.text,rules.confidence,rules.text.empty()?"UNREADABLE":"UNVERIFIED");
-      if(m_verbose)std::println("[CAM-OCR] unverified OCR, not an edition or Oracle identity");
+      if(m_verbose) {
+         std::println("[CAM-OCR] card #{} attempt={} name=\"{}\" confidence={}",
+            eventNumber,attempt,title.text,title.confidence);
+         std::println("[CAM-OCR] card #{} attempt={} type=\"{}\" confidence={}",
+            eventNumber,attempt,type.text,type.confidence);
+         std::println("[CAM-OCR] card #{} attempt={} rules=\"{}\" confidence={}",
+            eventNumber,attempt,rules.text,rules.confidence);
+      }
       return !title.text.empty();
    }
 };
@@ -511,6 +516,7 @@ class Processor {
    bool m_autoFlipped{};
    std::string m_strName{"--"};
    std::string m_strRules{"--"};
+   std::string m_strType{"--"};
    std::string m_strMana{"No mana evidence"};
    std::string m_strOrientation{"Automatic orientation pending"};
    cv::Mat m_displayCard;
@@ -533,6 +539,7 @@ public:
    [[nodiscard]] unsigned RemovedEvents() const noexcept {return m_removedEvents;}
    [[nodiscard]] std::string const& Name() const noexcept {return m_strName;}
    [[nodiscard]] std::string const& Rules() const noexcept {return m_strRules;}
+   [[nodiscard]] std::string const& Type() const noexcept {return m_strType;}
    [[nodiscard]] std::string const& Status() const noexcept {return m_strStatus;}
    [[nodiscard]] std::string const& Mana() const noexcept {return m_strMana;}
    [[nodiscard]] std::string const& Orientation() const noexcept{return m_strOrientation;}
@@ -574,8 +581,9 @@ public:
                   cv::Mat aCandidate=found->rectified.clone();
                   if(m_autoFlipped)cv::rotate(aCandidate,aCandidate,cv::ROTATE_180);
                   m_ocrAccepted=m_ocr->Read(aCandidate,*m_ocrCard,m_ocrAttempts);
-                  m_strName=m_ocr->LastName();m_strRules=m_ocr->LastRules();
-                  m_strStatus=m_ocrAccepted?"OCR read - unverified":"OCR unreadable";
+                  m_strName=m_ocr->LastName();m_strType=m_ocr->LastType();m_strRules=m_ocr->LastRules();
+                  m_strStatus=std::format("OCR name {}% type {}% text {}% - unverified",
+                     m_ocr->NameConfidence(),m_ocr->TypeConfidence(),m_ocr->RulesConfidence());
                   if(m_ocrAccepted)std::println("[CAM-OCR] card #{} accepted after {} attempts",*m_ocrCard,m_ocrAttempts);
                }
             }
@@ -607,12 +615,30 @@ public:
          m_strOrientation=m_autoFlipped?"Auto rotated 180 deg":"Auto 0 deg / uncertain";
          m_ocrAttempts=1;
          m_ocrAccepted=m_ocr->Read(event->card,event->number,m_ocrAttempts);
-         m_strName=m_ocr->LastName();m_strRules=m_ocr->LastRules();
-         m_strStatus=std::format("OCR name {}%, rules {}% - unverified",
-            m_ocr->NameConfidence(),m_ocr->RulesConfidence());
+         m_strName=m_ocr->LastName();m_strType=m_ocr->LastType();m_strRules=m_ocr->LastRules();
+         m_strStatus=std::format("OCR name {}% type {}% text {}% - unverified",
+            m_ocr->NameConfidence(),m_ocr->TypeConfidence(),m_ocr->RulesConfidence());
       }
 #endif
       m_displayCard=event->card.clone();
+      if(m_save) {
+         auto const zones=deckkernel_camera::ocr::Detect(event->card);
+         if(!deckkernel_camera::ocr::Valid(zones,event->card.size()))
+            throw std::runtime_error("invalid/non-disjoint OCR zones");
+         std::filesystem::create_directories(m_root);
+         auto saveZone=[&](char const* label,cv::Rect region) {
+            auto const file=m_root/std::format("event-{:06}-{}.png",event->number,label);
+            if(!cv::imwrite(file.string(),event->card(region)))
+               throw std::runtime_error("cannot save OCR zone");
+         };
+         saveZone("name",zones.name);
+         saveZone("mana",zones.mana);
+         saveZone("type",zones.type);
+         saveZone("set-symbol",zones.setSymbol);
+         saveZone("rules",zones.rules);
+         auto const file=m_root/std::format("event-{:06}-zones.png",event->number);
+         cv::imwrite(file.string(),deckkernel_camera::ocr::Diagram(event->card,zones));
+      }
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
       if(m_artwork)m_artwork->Search(event->card,event->number);
 #endif
@@ -1169,7 +1195,7 @@ int main(int argc,char** argv) {
                cv::FONT_HERSHEY_SIMPLEX,0.7,cv::Scalar(0,170,240),2,cv::LINE_AA);
          }
 #if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
-         preview.SetFields(processor.Name(),processor.Rules(),
+         preview.SetFields(processor.Name(),processor.Type(),processor.Rules(),
             processor.Mana(),processor.Status(),"Edition not verified",
             flip?"Manual 180 deg / "+processor.Orientation():processor.Orientation());
 #endif
