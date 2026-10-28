@@ -478,23 +478,46 @@ foreach(_line IN LISTS _adecc_lock_lines)
    else()
       message(STATUS "[EXTRACT]  ${_name} ${_version}")
 
-      # The StackBuilder archives are relative to the library root.  Therefore
-      # the archive is extracted into ThirdParty/<package>, not directly into
-      # ThirdParty/<package>/<version>.  This also preserves siblings such as
-      # boost/bcc64x-native-clang.
-      file(REMOVE_RECURSE "${_package_root}")
-      file(MAKE_DIRECTORY "${_package_root}")
-      file(
-         ARCHIVE_EXTRACT
-         INPUT "${_archive_file}"
-         DESTINATION "${_package_root}"
-      )
-
-      if(NOT EXISTS "${_version_root}")
+      # Extract into a sibling staging directory first. Never remove the
+      # currently installed package until the new archive has extracted and
+      # its expected version directory exists. This handles changed SHA-256
+      # for the same package/version, including republished release assets.
+      set(_stage_root "${ADECC_THIRDPARTY_ROOT}/.${_name}.bootstrap-new")
+      set(_backup_root "${ADECC_THIRDPARTY_ROOT}/.${_name}.bootstrap-old")
+      if(EXISTS "${_stage_root}" OR EXISTS "${_backup_root}")
          message(FATAL_ERROR
-            "Archive ${_archive_name} did not create expected directory "
-            "${_version_root}"
-         )
+            "Incomplete previous bootstrap transaction for ${_name}. "
+            "Inspect ${_stage_root} and ${_backup_root} before retrying.")
+      endif()
+      file(MAKE_DIRECTORY "${_stage_root}")
+      file(ARCHIVE_EXTRACT INPUT "${_archive_file}" DESTINATION "${_stage_root}")
+      if(NOT IS_DIRECTORY "${_stage_root}/${_version}")
+         file(REMOVE_RECURSE "${_stage_root}")
+         message(FATAL_ERROR
+            "Archive ${_archive_name} did not create expected version ${_version}.")
+      endif()
+      if(EXISTS "${_package_root}")
+         file(RENAME "${_package_root}" "${_backup_root}" RESULT _move_old)
+         if(NOT _move_old STREQUAL "0")
+            file(REMOVE_RECURSE "${_stage_root}")
+            message(FATAL_ERROR
+               "Cannot move installed ${_name} to backup: ${_move_old}")
+         endif()
+      endif()
+      file(RENAME "${_stage_root}" "${_package_root}" RESULT _activate_result)
+      if(NOT _activate_result STREQUAL "0")
+         if(EXISTS "${_backup_root}")
+            file(RENAME "${_backup_root}" "${_package_root}" RESULT _rollback_result)
+            if(NOT _rollback_result STREQUAL "0")
+               message(FATAL_ERROR
+                  "Activation failed: ${_activate_result}. Rollback also failed: "
+                  "${_rollback_result}; recover ${_backup_root} manually.")
+            endif()
+         endif()
+         message(FATAL_ERROR "Package activation failed for ${_name}: ${_activate_result}")
+      endif()
+      if(EXISTS "${_backup_root}")
+         file(REMOVE_RECURSE "${_backup_root}")
       endif()
 
       file(WRITE "${_state_file}" "${_sha256}\n")
@@ -505,7 +528,7 @@ if(_adecc_package_count EQUAL 0)
    message(FATAL_ERROR "thirdparty.lock does not contain any package lines.")
 endif()
 
-# Unified 25-package canonical lock; former optional legacy lock is ignored.
+# Unified canonical package lock; former optional legacy lock is ignored.
 message(STATUS "Bootstrap complete: ${_adecc_package_count} packages")
 message(STATUS "Tool paths       : ${ADECC_TOOLS_FILE}")
 message(STATUS "Package map      : ${ADECC_PACKAGES_FILE}")
