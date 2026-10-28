@@ -1043,6 +1043,21 @@ void SelfTest() {
          stats.selectedAreaPercent<=0.0)
          throw std::runtime_error("small 4K printed card detection failed");
    }
+   // A rotated print with a broken border must still yield a card target.
+   cv::Mat rotatedScene(900,1600,CV_8UC3,cv::Scalar(38,38,38));
+   cv::RotatedRect testRect(cv::Point2f(800.f,450.f),
+      cv::Size2f(178.f,250.f),24.f);
+   cv::Point2f testPoints[4];
+   testRect.points(testPoints);
+   std::vector<cv::Point> polygon;
+   for(auto const& p:testPoints)
+      polygon.emplace_back(cvRound(p.x),cvRound(p.y));
+   cv::fillConvexPoly(rotatedScene,polygon,cv::Scalar(224,224,224));
+   cv::polylines(rotatedScene,polygon,true,cv::Scalar(24,24,24),3);
+   CardDetectionDiagnostics rotatedStats;
+   auto const rotatedCard=FindCard(rotatedScene,&rotatedStats);
+   if(!rotatedCard || rotatedStats.aspectCandidates==0)
+      throw std::runtime_error("rotated printed card not detected");
    cv::Mat const before=sample->rectified.clone();
    hash_ty const hashBefore=sample->fingerprint;
    FlipRectifiedCard(*sample);
