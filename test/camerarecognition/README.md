@@ -323,3 +323,22 @@ FindCard now runs only once per live frame, with its result shared by the
 processor and preview instead of performing the same expensive contour
 extraction twice. The new synthetic self-test verifies that two 180-degree
 rotations reconstruct the original pixels and dHash.
+
+## 2026-10-28: orientation, focus and mana diagnostics
+
+The camera now requests continuous autofocus through OpenCV and logs whether
+its backend accepts the setting. This is not a guarantee that the camera can
+focus on a selected image region: OpenCV VideoCapture does not expose a
+portable focus ROI. The stable-card trigger retains the sharpest rectified
+frame in its stabilization window instead of blindly using the fifth frame.
+A title-OCR comparison between 0 and 180 degrees may correct upside-down
+cards before OCR, artwork matching, and evidence saving. An inconclusive OCR
+comparison leaves the orientation unchanged; manual R remains available.
+Cards presented sideways are normalized geometrically before this comparison.
+
+[CAM-MANA] reports a provisional HSV color histogram from the upper-right
+mana region. This is a diagnostic color-candidate signal only; it does NOT
+recognize individual mana icons, colorless/white/black costs, hybrid or
+Phyrexian symbols. Such symbols require a validated segmented glyph/template
+matcher and reference-card tests. No supported runtime with the Windows
+BCC64X camera hardware has been tested for this change yet.
