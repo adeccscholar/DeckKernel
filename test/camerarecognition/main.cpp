@@ -22,6 +22,7 @@
 #include "CameraDashboard.h"
 #endif
 #include "CameraOcrZones.h"
+#include "CameraImageQuality.h"
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/geometry.hpp>
@@ -282,12 +283,20 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame) {
    // decided independently by OCR.
    if(cv::norm(pts[0]-pts[1])>cv::norm(pts[1]-pts[2]))
       std::rotate(pts.begin(),pts.begin()+1,pts.end());
+   // Preserve actual card detail from 4K input for small OCR glyphs.
+   // Keep a bounded working resolution to avoid excessive allocations.
+   double const sourceWidth=std::max(cv::norm(pts[0]-pts[1]),
+      cv::norm(pts[2]-pts[3]));
+   int const outputWidth=std::clamp(static_cast<int>(sourceWidth),480,1120);
+   int const outputHeight=outputWidth*7/5;
    std::array<cv::Point2f,4> target{{
-      {0,0},{479,0},{479,671},{0,671}
+      {0,0},{static_cast<float>(outputWidth-1),0},
+      {static_cast<float>(outputWidth-1),static_cast<float>(outputHeight-1)},
+      {0,static_cast<float>(outputHeight-1)}
    }};
    cv::Mat homography=cv::getPerspectiveTransform(pts.data(),target.data());
    cv::Mat rectified;
-   cv::warpPerspective(frame,rectified,homography,cv::Size(480,672));
+   cv::warpPerspective(frame,rectified,homography,cv::Size(outputWidth,outputHeight));
    std::array<cv::Point,4> quad{};
    for(unsigned i=0;i<4;++i)quad[i]=cv::Point(cvRound(pts[i].x),cvRound(pts[i].y));
    return FoundCard{rectified,DHash(rectified),quad};
@@ -355,8 +364,9 @@ public:
       cv::Scalar aMean,aStd;
       cv::meanStdDev(aLap,aMean,aStd);
       double const flSharpness=aStd[0]*aStd[0];
-      if(flSharpness>m_bestScore) {
-         m_bestScore=flSharpness;
+      auto const quality=deckkernel_camera::quality::Measure(found->rectified);
+      if(quality.score>m_bestScore) {
+         m_bestScore=quality.score;
          m_bestFrame=found->rectified.clone();
       }
       m_previous=found->fingerprint;
@@ -385,7 +395,7 @@ class CardOcr {
    struct OcrResult {std::string text;int confidence{};};
    OcrResult ReadRegion(cv::Mat const& image,cv::Rect region,int mode) {
       cv::Mat gray,scaled;
-      cv::cvtColor(image(region),gray,cv::COLOR_BGR2GRAY);
+      gray=deckkernel_camera::quality::ForOcr(image(region));
       cv::resize(gray,scaled,cv::Size(),2.0,2.0,cv::INTER_CUBIC);
       m_api.SetPageSegMode(static_cast<tesseract::PageSegMode>(mode));
       m_api.SetImage(scaled.data,scaled.cols,scaled.rows,1,
