@@ -421,6 +421,10 @@ public:
          aNormal.confidence,aFlipped.confidence);
       return true;
    }
+   std::string m_strLastName;
+   std::string m_strLastRules;
+   [[nodiscard]] std::string const& LastName() const noexcept{return m_strLastName;}
+   [[nodiscard]] std::string const& LastRules() const noexcept{return m_strLastRules;}
    bool Read(cv::Mat const& card,unsigned eventNumber,unsigned attempt) {
       if(card.empty()||card.cols<100||card.rows<200)return false;
       // The upper title band is the most useful first-pass OCR target.
@@ -431,6 +435,8 @@ public:
       auto const rules=ReadRegion(card,
          cv::Rect(card.cols/15,card.rows*58/100,card.cols*13/15,
             card.rows*27/100),tesseract::PSM_AUTO);
+      m_strLastName=title.text;
+      m_strLastRules=rules.text;
       std::println("[CAM-OCR] card #{} attempt={} name=\"{}\" confidence={} status={}",
          eventNumber,attempt,title.text,title.confidence,title.text.empty()?"UNREADABLE":"UNVERIFIED");
       std::println("[CAM-OCR] card #{} attempt={} text=\"{}\" confidence={} status={}",
@@ -480,6 +486,9 @@ class Processor {
    std::optional<unsigned> m_ocrCard;
    bool m_ocrAccepted{};
    bool m_autoFlipped{};
+   std::string m_strName{"--"};
+   std::string m_strRules{"--"};
+   std::string m_strStatus{"Waiting for card"};
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
    std::unique_ptr<CardOcr> m_ocr;
 #endif
@@ -496,6 +505,9 @@ public:
    void EnableArtwork(unsigned limit){m_artwork=std::make_unique<ArtworkMatcher>(limit);}
 #endif
    [[nodiscard]] unsigned RemovedEvents() const noexcept {return m_removedEvents;}
+   [[nodiscard]] std::string const& Name() const noexcept {return m_strName;}
+   [[nodiscard]] std::string const& Rules() const noexcept {return m_strRules;}
+   [[nodiscard]] std::string const& Status() const noexcept {return m_strStatus;}
    void ReevaluateOcrAfterRotation() noexcept {
       // Changing the orientation must be allowed to rerun OCR even when a
       // previous, wrong-side-up title passed the provisional confidence test.
@@ -526,6 +538,8 @@ public:
                   cv::Mat aCandidate=found->rectified.clone();
                   if(m_autoFlipped)cv::rotate(aCandidate,aCandidate,cv::ROTATE_180);
                   m_ocrAccepted=m_ocr->Read(aCandidate,*m_ocrCard,m_ocrAttempts);
+                  m_strName=m_ocr->LastName();m_strRules=m_ocr->LastRules();
+                  m_strStatus=m_ocrAccepted?"OCR read - unverified":"OCR unreadable";
                   if(m_ocrAccepted)std::println("[CAM-OCR] card #{} accepted after {} attempts",*m_ocrCard,m_ocrAttempts);
                }
             }
@@ -537,6 +551,7 @@ public:
          ++m_removedEvents;
          m_ocrCard.reset();m_ocrAccepted=false;m_ocrAttempts=0;
          m_liveFrames=0;m_bestSharpness=0;m_autoFlipped=false;
+         m_strName="--";m_strRules="--";m_strStatus="Waiting for card";
          std::println("[CAM] CARD-NO-LONGER-DETECTED #{} fingerprint={:016x}; "
             "absent-frames=45; ready-for-next-card",
             event->number,event->fingerprint);
@@ -545,6 +560,7 @@ public:
       std::println("[CAM] NEW-STABLE-CARD #{} fingerprint={:016x}; edition=UNKNOWN",
          event->number,event->fingerprint);
       m_ocrCard=event->number;
+      m_strStatus="Card detected - identity unverified";
       ReportManaColorCandidates(event->card,event->number);
       m_liveFrames=0;m_bestSharpness=0;m_ocrAttempts=0;m_ocrAccepted=false;
       m_autoFlipped=false;
@@ -553,6 +569,8 @@ public:
          m_autoFlipped=m_ocr->Orient(event->card);
          m_ocrAttempts=1;
          m_ocrAccepted=m_ocr->Read(event->card,event->number,m_ocrAttempts);
+         m_strName=m_ocr->LastName();m_strRules=m_ocr->LastRules();
+         m_strStatus=m_ocrAccepted?"OCR read - unverified":"OCR unreadable";
       }
 #endif
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
@@ -1108,6 +1126,10 @@ int main(int argc,char** argv) {
             cv::putText(annotated,"NO CARD CONTOUR",cv::Point(12,26),
                cv::FONT_HERSHEY_SIMPLEX,0.7,cv::Scalar(0,170,240),2,cv::LINE_AA);
          }
+#if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
+         preview.SetFields(processor.Name(),processor.Rules(),
+            "Color candidates: diagnostic only",processor.Status());
+#endif
          preview.Show(annotated,found?found->rectified:cv::Mat{},
             *camera,fps,signal.brightness);
          auto now=std::chrono::steady_clock::now();
