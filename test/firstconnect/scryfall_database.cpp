@@ -159,7 +159,8 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
       "face_id integer NOT NULL CHECK (face_id >= 0),"
       "is_main boolean GENERATED ALWAYS AS (face_id = 0) STORED,"
       "name text NOT NULL, type_line text NOT NULL,"
-      "layout text, loyalty text, mana_cost text NOT NULL, power text,"
+      "layout text, layout_id integer REFERENCES deckkernel_test.dom_layout_types(id), "
+      "loyalty text, mana_cost text NOT NULL, power text,"
       "illustration_id text, image_url_normal text, image_url_art_crop text, image_url_png text,"
       "image_url_small text, image_url_large text, image_url_border_crop text,"
       "PRIMARY KEY (card_id, face_id))");
@@ -397,6 +398,19 @@ DomainCatalogIds SynchronizeDomainCatalogs(
       "('art_series','A collectible art-series card displaying artwork, rather than a regular playable card.',NULL),"
       "('reversible_card','A reversible double-faced card with independently identifiable, unrelated front and back faces.',NULL) "
       "ON CONFLICT (code) DO NOTHING");
+
+   aDatabase.ExecuteCommand(
+      "INSERT INTO deckkernel_test.dom_layout_types (code,description,notice) "
+      "VALUES ('prepare','A card layout featuring a creature and its associated prepared spell. The creature can become prepared, allowing its controller to cast a copy of the associated spell under the preparation rules.',NULL) ON CONFLICT (code) DO NOTHING");
+   aDatabase.ExecuteCommand(
+      "UPDATE deckkernel_test.dom_layout_types SET description='A card layout featuring a creature and its associated prepared spell. The creature can become prepared, allowing its controller to cast a copy of the associated spell under the preparation rules.' "
+      "WHERE code='prepare' AND description IS NULL");
+   aDatabase.ExecuteCommand(
+      "INSERT INTO deckkernel_test.dom_layout_types (code,description,notice) "
+      "VALUES ('front_card','A nontraditional card layout used for introductory or theme-identification cards, such as Jumpstart front cards. These cards identify a pack or theme rather than representing a conventional playable Magic card.',NULL) ON CONFLICT (code) DO NOTHING");
+   aDatabase.ExecuteCommand(
+      "UPDATE deckkernel_test.dom_layout_types SET description='A nontraditional card layout used for introductory or theme-identification cards, such as Jumpstart front cards. These cards identify a pack or theme rather than representing a conventional playable Magic card.' "
+      "WHERE code='front_card' AND description IS NULL");
 
    // Register every non-empty layout seen on any card face.
    // The Scryfall API may add layout codes without requiring a schema change.
@@ -680,6 +694,20 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
          })
       | std::views::join;
    aFaceSink(aFaceRows);
+   // Preserve layout TEXT as a reversible legacy copy while establishing the FK.
+   // The domain synchronization has already inserted all observed layouts.
+   aDatabase.ExecuteCommand(
+      "UPDATE deckkernel_test.scryfall_card_faces f "
+      "SET layout_id=d.id FROM deckkernel_test.dom_layout_types d "
+      "WHERE f.layout=d.code AND f.layout_id IS NULL");
+   auto const aMissingLayout = aDatabase.ExecuteOne<int>(
+      "SELECT CASE WHEN EXISTS (SELECT 1 FROM deckkernel_test.scryfall_card_faces "
+      "WHERE layout IS NOT NULL AND layout <> '' AND layout_id IS NULL) "
+      "THEN 1 ELSE 0 END");
+   if(!aMissingLayout || std::get<0>(*aMissingLayout) != 0) {
+      throw std::runtime_error("Unresolved card-face layout references");
+      }
+
 
    // One generic transformation pipeline for all five face-scoped type relations.
    auto fnWriteTypeLinks = [&]<typename sink_ty>(
@@ -720,6 +748,7 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_set_number_lang ON deckkernel_test.scryfall_cards(set_id, collector_number, lang)");
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_cards_illustration ON deckkernel_test.scryfall_cards(illustration_id)");
    aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_faces_illustration ON deckkernel_test.scryfall_card_faces(illustration_id)");
+   aDatabase.ExecuteCommand("CREATE INDEX ix_scryfall_card_faces_layout_id ON deckkernel_test.scryfall_card_faces(layout_id)");
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_image_assets ("
       "id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, image_url text NOT NULL UNIQUE,"
