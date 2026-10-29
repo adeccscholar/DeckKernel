@@ -2,9 +2,11 @@
 -- SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
 --
 -- Extend the existing card-face image type domain with an offline selection flag.
--- The six existing Scryfall image_uris keys are enabled initially. The six
--- reserved DeckKernel variants are disabled until their source/URL mapping
--- is implemented. No card faces, image URLs or cached image data are touched.
+-- All twelve codes occur in the observed 2026 Scryfall image_uris object.
+-- Six already-imported variants are enabled initially. Six additional keys
+-- (five WebP renditions and the JPEG normal alias) remain disabled until the
+-- URL-storage and download pipeline supports them.
+-- No card faces, image URLs or cached image data are touched.
 --
 -- This migration is re-entrant. Values already assigned to offline are left
 -- unchanged on reruns so later manual selections are not reset.
@@ -44,29 +46,30 @@ VALUES
     NULL, '146x204', TRUE)
 ON CONFLICT (code) DO NOTHING;
 
--- Additional, prospective DeckKernel image rendition codes. These are NOT
--- documented properties of Scryfall's standard Card.image_uris object.
--- Resolution is unspecified until an actual image source is integrated.
+-- Additional Scryfall image_uris keys observed in the latest bulk export.
+-- thumb, grid, display, art, crop are WebP; jpeg is a JPEG alias of normal
+-- in the observed sample. Nominal dimensions are not fixed here.
+-- They remain offline=FALSE until the importer is explicitly extended.
 INSERT INTO deckkernel_test.dom_card_face_image_types
    (code, description, notice, resolution, offline)
 VALUES
    ('grid',
-    'A compact image rendition intended for a tiled card grid. The dimensions and download source are not yet defined.',
+    'A Scryfall WebP card image for compact grid and gallery views, supplied by image_uris.grid. The image dimensions may vary.',
     NULL, NULL, FALSE),
    ('display',
-    'A general-purpose image rendition intended for on-screen display. The dimensions and download source are not yet defined.',
+    'A Scryfall WebP card image intended for detailed on-screen display, supplied by image_uris.display. The image dimensions may vary.',
     NULL, NULL, FALSE),
    ('art',
-    'An artwork-focused image rendition without an agreed crop, format or source. It is distinct from the documented art_crop URI variant.',
+    'A Scryfall WebP rendition focused on the card artwork, supplied by image_uris.art. This is distinct from the JPEG art_crop variant.',
     NULL, NULL, FALSE),
    ('jpeg',
-    'A JPEG-encoded image rendition. This code identifies an encoding rather than a specific image size or crop; its source is not yet defined.',
+    'A Scryfall JPEG card image supplied by image_uris.jpeg. In the observed bulk export, it is the same image URL as image_uris.normal.',
     NULL, NULL, FALSE),
    ('thumb',
-    'A thumbnail rendition for previews or compact lists. The dimensions and download source are not yet defined.',
+    'A Scryfall WebP thumbnail card image for small previews and lists, supplied by image_uris.thumb. The image dimensions may vary.',
     NULL, NULL, FALSE),
    ('crop',
-    'A cropped rendition with an as-yet-unspecified crop region, dimensions and download source. It is distinct from art_crop and border_crop.',
+    'A Scryfall WebP cropped card image supplied by image_uris.crop. The crop is distinct from the JPEG art_crop and border_crop variants.',
     NULL, NULL, FALSE)
 ON CONFLICT (code) DO NOTHING;
 
