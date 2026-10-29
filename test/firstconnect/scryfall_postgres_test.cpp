@@ -12,6 +12,7 @@ The evaluation stays here so the example visibly closes the data-flow loop.
 
 #include "scryfall_database.h"
 #include "scryfall_images.h"
+#include "scryfall_set_symbols.h"
 #include "scryfall_load.h"
 #include "scryfall_parse.h"
 
@@ -128,21 +129,34 @@ int main(int argc,char* argv[]) {
    using namespace deckkernel::test;
 
    try {
-      if(argc>2) throw std::runtime_error("Expected one mode: --domains-only, --image-probe, --images-only, --images-offline or --all");
+      if(argc>2) throw std::runtime_error("Expected one mode (see --help)");
       std::string_view const svMode=argc==2?std::string_view{argv[1]}:std::string_view{"--images-only"};
       if(svMode=="--help" || svMode=="-h") {
-         std::println("Usage: deckkernel_scryfall_postgres_test.exe [--all | --domains-only | --images-only | --image-probe | --images-offline]");
+         std::println("Usage: deckkernel_scryfall_postgres_test.exe [--all | --domains-only | --images-only | --image-probe | --images-offline | --set-symbols | --set-symbol-probe | --set-symbols-offline]");
          std::println("--domains-only: synchronize domain codes only; preserve existing IDs and descriptions");
          std::println("--image-probe: one missing image, HTTPS/TLS check, no card reload");
          std::println("--images-only (default): restore caches and fetch all missing images, no card reload");
          std::println("--images-offline: restore all from caches, no network and no card reload");
+         std::println("--set-symbols: cache all missing SVG set symbols (non-destructive)");
+         std::println("--set-symbol-probe: cache one SVG set symbol");
+         std::println("--set-symbols-offline: check cached set symbols without network");
          std::println("--all: fresh model initialization and import; refuses to reset an existing model");
          return 0;
          }
       if(svMode!="--all" && svMode!="--domains-only" && svMode!="--images-only" &&
-         svMode!="--image-probe" && svMode!="--images-offline")
+         svMode!="--image-probe" && svMode!="--images-offline" &&
+         svMode!="--set-symbols" && svMode!="--set-symbol-probe" &&
+         svMode!="--set-symbols-offline")
          throw std::runtime_error("Unknown test mode; use --help");
 
+      if(svMode=="--set-symbols" || svMode=="--set-symbol-probe" ||
+         svMode=="--set-symbols-offline") {
+         RunTimedProcess("Set symbols",[&](){
+            SyncSetSymbols({svMode=="--set-symbol-probe",
+               svMode=="--set-symbols-offline"});
+         });
+         return 0;
+         }
       if(svMode=="--domains-only") {
          std::println("[MODE] --domains-only: parse catalogs and update only missing domain codes");
          LoadedBulkData aLoaded=RunTimedProcess("Load", []() { return LoadProcess(); });
