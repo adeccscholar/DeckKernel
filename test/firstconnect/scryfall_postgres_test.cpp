@@ -128,19 +128,31 @@ int main(int argc,char* argv[]) {
    using namespace deckkernel::test;
 
    try {
-      if(argc>2) throw std::runtime_error("Expected one mode: --image-probe, --images-only, --images-offline or --all");
+      if(argc>2) throw std::runtime_error("Expected one mode: --domains-only, --image-probe, --images-only, --images-offline or --all");
       std::string_view const svMode=argc==2?std::string_view{argv[1]}:std::string_view{"--images-only"};
       if(svMode=="--help" || svMode=="-h") {
-         std::println("Usage: deckkernel_scryfall_postgres_test.exe [--all | --images-only | --image-probe | --images-offline]");
+         std::println("Usage: deckkernel_scryfall_postgres_test.exe [--all | --domains-only | --images-only | --image-probe | --images-offline]");
+         std::println("--domains-only: synchronize domain codes only; preserve existing IDs and descriptions");
          std::println("--image-probe: one missing image, HTTPS/TLS check, no card reload");
          std::println("--images-only (default): restore caches and fetch all missing images, no card reload");
          std::println("--images-offline: restore all from caches, no network and no card reload");
          std::println("--all: explicit full model reset / re-import (default image limit 100)");
          return 0;
          }
-      if(svMode!="--all" && svMode!="--images-only" &&
+      if(svMode!="--all" && svMode!="--domains-only" && svMode!="--images-only" &&
          svMode!="--image-probe" && svMode!="--images-offline")
          throw std::runtime_error("Unknown test mode; use --help");
+
+      if(svMode=="--domains-only") {
+         std::println("[MODE] --domains-only: parse catalogs and update only missing domain codes");
+         LoadedBulkData aLoaded=RunTimedProcess("Load", []() { return LoadProcess(); });
+         aLoaded.strSetsCatalog=RunTimedProcess("Read CardSets", []() { return ReadCardSets(); });
+         ParsedBulkData const aParsed=RunTimedProcess("Parse", [&]() { return ParseProcess(aLoaded); });
+         postgres_database_ty aDatabase=RunTimedProcess("Connect", []() { return OpenDatabase(); });
+         RunTimedProcess("Domains", [&]() { UpdateDomainValues(aDatabase,aParsed); });
+         std::println("[MODE] domains synchronized; card, set and image records unchanged");
+         return 0;
+         }
 
       if(svMode!="--all") {
          std::println("[MODE] {}: reuse existing model; Load/Parse/Store are SKIPPED",svMode);
