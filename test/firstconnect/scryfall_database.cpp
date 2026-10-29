@@ -106,68 +106,20 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
          "test/postgresql_sspi_setup.sql as PostgreSQL administrator");
       }
 
-   // Migrate previous model image bytes before model tables are dropped.
-   // On fresh installations the old table does not exist: skip migration.
-   // This conditional is deliberately in C++, not a PostgreSQL DO block.
-   auto const aPreviousAssets = aDatabase.ExecuteOne<int>(
-      "SELECT CASE WHEN "
-      "to_regclass('deckkernel_test.scryfall_image_assets') IS NOT NULL "
-      "THEN 1 ELSE 0 END");
-   if(!aPreviousAssets) {
-      throw std::runtime_error(
-         "Cannot inspect previous FirstConnection image assets");
-      }
-   if(std::get<0>(*aPreviousAssets) == 1) {
-      aDatabase.ExecuteCommand(
-         "INSERT INTO deckkernel_cache.scryfall_images(url,image_data,sha256,media_type,cached_at) "
-         "SELECT image_url,image_data,sha256,media_type,COALESCE(downloaded_at,now()) "
-         "FROM deckkernel_test.scryfall_image_assets "
-         "WHERE image_data IS NOT NULL AND sha256 IS NOT NULL AND media_type IS NOT NULL "
-         "ON CONFLICT (url) DO NOTHING");
-      }
-   // Never reset an existing model. The migration workflow preserves row identities,
-   // foreign keys, descriptions and application-owned data.
+   // FirstConnection is a fresh-install-only schema creator.
+   // Refuse to destroy or replace any pre-existing model relation.
    auto const aModelCheck = aDatabase.ExecuteOne<int>(
-      "SELECT CASE WHEN "
-      "to_regclass('deckkernel_test.scryfall_cards') IS NOT NULL OR "
-      "to_regclass('deckkernel_test.scryfall_sets') IS NOT NULL OR "
-      "to_regclass('deckkernel_test.artifact_types') IS NOT NULL OR "
-      "to_regclass('deckkernel_test.card_types') IS NOT NULL OR "
-      "to_regclass('deckkernel_test.creatures_types') IS NOT NULL OR "
-      "to_regclass('deckkernel_test.creature_types') IS NOT NULL OR "
-      "to_regclass('deckkernel_test.land_types') IS NOT NULL OR "
-      "to_regclass('deckkernel_test.rarities') IS NOT NULL OR "
-      "to_regclass('deckkernel_test.supertypes') IS NOT NULL OR "
-      "to_regclass('deckkernel_test.dom_artifact_types') IS NOT NULL OR "
-      "to_regclass('deckkernel_test.dom_card_types') IS NOT NULL OR "
-      "to_regclass('deckkernel_test.dom_creature_types') IS NOT NULL OR "
-      "to_regclass('deckkernel_test.dom_land_types') IS NOT NULL OR "
-      "to_regclass('deckkernel_test.dom_rarities') IS NOT NULL OR "
-      "to_regclass('deckkernel_test.dom_supertypes') IS NOT NULL "
-      "THEN 1 ELSE 0 END");
+      "SELECT CASE WHEN EXISTS ("
+      "SELECT 1 FROM pg_class c "
+      "JOIN pg_namespace n ON n.oid = c.relnamespace "
+      "WHERE n.nspname = 'deckkernel_test' "
+      "AND c.relkind IN ('r','p','v','m','f')"
+      ") THEN 1 ELSE 0 END");
    if(!aModelCheck || std::get<0>(*aModelCheck) != 0) {
       throw std::runtime_error(
          "Existing model detected: FirstConnection --all refuses destructive reset. "
          "Run the schema migration and use non-destructive test modes.");
       }
-   aDatabase.ExecuteCommand("DROP VIEW IF EXISTS deckkernel_test.scryfall_cards_view");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_image_features");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_image_variants");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_image_assets");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_land_types");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_creature_types");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_artifact_types");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_supertypes");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_main_types");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_faces");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_cards");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_sets");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.dom_land_types");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.dom_creature_types");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.dom_artifact_types");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.dom_supertypes");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.dom_card_types");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.dom_rarities");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_land_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE, description text, notice text)");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_creature_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE, description text, notice text)");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_artifact_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE, description text, notice text)");
