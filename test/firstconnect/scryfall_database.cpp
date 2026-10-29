@@ -120,6 +120,24 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
          "Existing model detected: FirstConnection --all refuses destructive reset. "
          "Run the schema migration and use non-destructive test modes.");
       }
+   // The Scryfall image rendition catalog is independent of the card-face URL
+   // columns; their normalization is a separate, data-preserving migration.
+   aDatabase.ExecuteCommand(
+      "CREATE TABLE deckkernel_test.\"dom_KindOfImage_Types\" ("
+      "id integer GENERATED ALWAYS AS IDENTITY, "
+      "code text NOT NULL, description text, notice text, resolution text, "
+      "CONSTRAINT \"pk_dom_KindOfImage_Types\" PRIMARY KEY (id), "
+      "CONSTRAINT \"uk_dom_KindOfImage_Types_code\" UNIQUE (code))");
+   aDatabase.ExecuteCommand(
+      "INSERT INTO deckkernel_test.\"dom_KindOfImage_Types\" "
+      "(code,description,notice,resolution) VALUES "
+      "('art_crop','A rectangular crop containing primarily the card artwork, without the full card frame or rules text. Cropping and dimensions vary with card layout.',NULL,NULL),"
+      "('border_crop','A JPEG of the full card with the rounded corners and most of the outer border cropped away, intended for rectangular displays.',NULL,'480x680'),"
+      "('large','A large JPEG rendition of the full card, suitable for detailed on-screen viewing.',NULL,'672x936'),"
+      "('normal','A medium-sized JPEG rendition of the full card, intended for normal on-screen card display.',NULL,'488x680'),"
+      "('png','A high-resolution PNG rendition of the full card, with transparent rounded corners, suitable for high-quality display.',NULL,'745x1040'),"
+      "('small','A small JPEG rendition of the full card, optimized for thumbnails and card lists.',NULL,'146x204') "
+      "ON CONFLICT ON CONSTRAINT \"uk_dom_KindOfImage_Types_code\" DO NOTHING");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_land_types (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_land_types PRIMARY KEY (id), CONSTRAINT uk_dom_land_types_code UNIQUE (code))");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_creature_types (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_creature_types PRIMARY KEY (id), CONSTRAINT uk_dom_creature_types_code UNIQUE (code))");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_artifact_types (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_artifact_types PRIMARY KEY (id), CONSTRAINT uk_dom_artifact_types_code UNIQUE (code))");
