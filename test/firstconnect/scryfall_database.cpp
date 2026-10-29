@@ -126,6 +126,7 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
       "CREATE TABLE deckkernel_test.\"dom_card_face_image_types\" ("
       "id integer GENERATED ALWAYS AS IDENTITY, "
       "code text NOT NULL, description text, notice text, resolution text, "
+      "offline boolean NOT NULL DEFAULT FALSE, "
       "CONSTRAINT \"pk_dom_card_face_image_types\" PRIMARY KEY (id), "
       "CONSTRAINT \"uk_dom_card_face_image_types_code\" UNIQUE (code))");
    aDatabase.ExecuteCommand(
@@ -396,11 +397,24 @@ DomainCatalogIds SynchronizeDomainCatalogs(
 
    // A fixed catalog: retain previously authored metadata and nominal resolution.
    // Only missing codes are inserted, with NULL description and notice.
+   // Six native Scryfall image_uris variants start enabled for offline use.
+   // Supplementary DeckKernel-only variants remain disabled until supported.
+   // Existing domain rows and manually selected offline values are preserved.
    aDatabase.ExecuteCommand(
-      "INSERT INTO deckkernel_test.dom_card_face_image_types (code,resolution) VALUES "
-      "('art_crop',NULL),('border_crop','480x680'),"
-      "('large','672x936'),('normal','488x680'),"
-      "('png','745x1040'),('small','146x204') "
+      "INSERT INTO deckkernel_test.dom_card_face_image_types "
+      "(code,resolution,offline,description,notice) VALUES "
+      "('art_crop',NULL,TRUE,'A crop of card artwork without the card frame or text.',NULL),"
+      "('border_crop','480x680',TRUE,'A full card JPEG with most outer borders removed.',NULL),"
+      "('large','672x936',TRUE,'A large JPEG rendition of the full card.',NULL),"
+      "('normal','488x680',TRUE,'A standard JPEG rendition of the full card.',NULL),"
+      "('png','745x1040',TRUE,'A high-resolution PNG of the full card.',NULL),"
+      "('small','146x204',TRUE,'A small JPEG thumbnail of the full card.',NULL),"
+      "('grid',NULL,FALSE,'A proposed compact tiled-grid rendition; source and size not yet defined.',NULL),"
+      "('display',NULL,FALSE,'A proposed on-screen rendition; source and size not yet defined.',NULL),"
+      "('art',NULL,FALSE,'A proposed artwork rendition distinct from art_crop; source not yet defined.',NULL),"
+      "('jpeg',NULL,FALSE,'A proposed JPEG-encoded rendition without a fixed crop or size.',NULL),"
+      "('thumb',NULL,FALSE,'A proposed thumbnail rendition; source and size not yet defined.',NULL),"
+      "('crop',NULL,FALSE,'A proposed unspecified crop rendition; source not yet defined.',NULL) "
       "ON CONFLICT (code) DO NOTHING");
 
    // On fresh installations seed the documented layout descriptions as well.
