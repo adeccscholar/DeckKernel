@@ -125,6 +125,31 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
          "WHERE image_data IS NOT NULL AND sha256 IS NOT NULL AND media_type IS NOT NULL "
          "ON CONFLICT (url) DO NOTHING");
       }
+   // Never reset an existing model. The migration workflow preserves row identities,
+   // foreign keys, descriptions and application-owned data.
+   auto const aModelCheck = aDatabase.ExecuteOne<int>(
+      "SELECT CASE WHEN "
+      "to_regclass('deckkernel_test.scryfall_cards') IS NOT NULL OR "
+      "to_regclass('deckkernel_test.scryfall_sets') IS NOT NULL OR "
+      "to_regclass('deckkernel_test.artifact_types') IS NOT NULL OR "
+      "to_regclass('deckkernel_test.card_types') IS NOT NULL OR "
+      "to_regclass('deckkernel_test.creatures_types') IS NOT NULL OR "
+      "to_regclass('deckkernel_test.creature_types') IS NOT NULL OR "
+      "to_regclass('deckkernel_test.land_types') IS NOT NULL OR "
+      "to_regclass('deckkernel_test.rarities') IS NOT NULL OR "
+      "to_regclass('deckkernel_test.supertypes') IS NOT NULL OR "
+      "to_regclass('deckkernel_test.dom_artifact_types') IS NOT NULL OR "
+      "to_regclass('deckkernel_test.dom_card_types') IS NOT NULL OR "
+      "to_regclass('deckkernel_test.dom_creature_types') IS NOT NULL OR "
+      "to_regclass('deckkernel_test.dom_land_types') IS NOT NULL OR "
+      "to_regclass('deckkernel_test.dom_rarities') IS NOT NULL OR "
+      "to_regclass('deckkernel_test.dom_supertypes') IS NOT NULL "
+      "THEN 1 ELSE 0 END");
+   if(!aModelCheck || std::get<0>(*aModelCheck) != 0) {
+      throw std::runtime_error(
+         "Existing model detected: FirstConnection --all refuses destructive reset. "
+         "Run the schema migration and use non-destructive test modes.");
+      }
    aDatabase.ExecuteCommand("DROP VIEW IF EXISTS deckkernel_test.scryfall_cards_view");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_image_features");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_image_variants");
@@ -137,18 +162,18 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_card_faces");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_cards");
    aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.scryfall_sets");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.land_types");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.creatures_types");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.artifact_types");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.supertypes");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.card_types");
-   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.rarities");
-   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.land_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE)");
-   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.creatures_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE)");
-   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.artifact_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE)");
-   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.supertypes (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE)");
-   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.card_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE)");
-   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.rarities (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE)");
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.dom_land_types");
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.dom_creature_types");
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.dom_artifact_types");
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.dom_supertypes");
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.dom_card_types");
+   aDatabase.ExecuteCommand("DROP TABLE IF EXISTS deckkernel_test.dom_rarities");
+   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_land_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE, description text, notice text)");
+   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_creature_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE, description text, notice text)");
+   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_artifact_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE, description text, notice text)");
+   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_supertypes (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE, description text, notice text)");
+   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_card_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE, description text, notice text)");
+   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_rarities (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE, description text, notice text)");
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_sets ("
       "id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, scryfall_id text NOT NULL UNIQUE, code text NOT NULL UNIQUE,"
@@ -159,7 +184,7 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
       "name text NOT NULL, set_id integer NOT NULL REFERENCES deckkernel_test.scryfall_sets(id),"
       "released_at date NOT NULL,"
       "variation_of_id integer REFERENCES deckkernel_test.scryfall_cards(id),"
-      "rarity_id integer NOT NULL REFERENCES deckkernel_test.rarities(id),"
+      "rarity_id integer NOT NULL REFERENCES deckkernel_test.dom_rarities(id),"
       "collector_number text NOT NULL, lang text NOT NULL,"
       "illustration_id text)");
    aDatabase.ExecuteCommand(
@@ -175,7 +200,7 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_card_artifact_types ("
       "card_id integer NOT NULL, face_id integer NOT NULL,"
-      "artifact_type_id integer NOT NULL REFERENCES deckkernel_test.artifact_types(id),"
+      "artifact_type_id integer NOT NULL REFERENCES deckkernel_test.dom_artifact_types(id),"
       "position integer NOT NULL CHECK (position >= 0),"
       "PRIMARY KEY (card_id, face_id, position),"
       "UNIQUE (card_id, face_id, artifact_type_id),"
@@ -183,7 +208,7 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_card_supertypes ("
       "card_id integer NOT NULL, face_id integer NOT NULL,"
-      "supertype_id integer NOT NULL REFERENCES deckkernel_test.supertypes(id),"
+      "supertype_id integer NOT NULL REFERENCES deckkernel_test.dom_supertypes(id),"
       "position integer NOT NULL CHECK (position >= 0),"
       "PRIMARY KEY (card_id, face_id, position),"
       "UNIQUE (card_id, face_id, supertype_id),"
@@ -191,7 +216,7 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_card_main_types ("
       "card_id integer NOT NULL, face_id integer NOT NULL,"
-      "main_type_id integer NOT NULL REFERENCES deckkernel_test.card_types(id),"
+      "main_type_id integer NOT NULL REFERENCES deckkernel_test.dom_card_types(id),"
       "position integer NOT NULL CHECK (position >= 0),"
       "PRIMARY KEY (card_id, face_id, position),"
       "UNIQUE (card_id, face_id, main_type_id),"
@@ -200,7 +225,7 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
       "CREATE TABLE deckkernel_test.scryfall_card_land_types ("
       "card_id integer NOT NULL,"
       "face_id integer NOT NULL,"
-      "land_type_id integer NOT NULL REFERENCES deckkernel_test.land_types(id),"
+      "land_type_id integer NOT NULL REFERENCES deckkernel_test.dom_land_types(id),"
       "position integer NOT NULL CHECK (position >= 0),"
       "PRIMARY KEY (card_id, face_id, position),"
       "UNIQUE (card_id, face_id, land_type_id),"
@@ -209,7 +234,7 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
       "CREATE TABLE deckkernel_test.scryfall_card_creature_types ("
       "card_id integer NOT NULL,"
       "face_id integer NOT NULL,"
-      "creature_type_id integer NOT NULL REFERENCES deckkernel_test.creatures_types(id),"
+      "creature_type_id integer NOT NULL REFERENCES deckkernel_test.dom_creature_types(id),"
       "position integer NOT NULL CHECK (position >= 0),"
       "PRIMARY KEY (card_id, face_id, position),"
       "UNIQUE (card_id, face_id, creature_type_id),"
@@ -612,27 +637,27 @@ void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed
       "f.layout, f.loyalty, f.mana_cost, f.power, "
       "COALESCE((SELECT array_agg(t.code ORDER BY x.position) "
       "FROM deckkernel_test.scryfall_card_supertypes x "
-      "JOIN deckkernel_test.supertypes t ON t.id=x.supertype_id "
+      "JOIN deckkernel_test.dom_supertypes t ON t.id=x.supertype_id "
       "WHERE x.card_id=c.id AND x.face_id=f.face_id), ARRAY[]::text[]) AS supertypes, "
       "COALESCE((SELECT array_agg(t.code ORDER BY x.position) "
       "FROM deckkernel_test.scryfall_card_main_types x "
-      "JOIN deckkernel_test.card_types t ON t.id=x.main_type_id "
+      "JOIN deckkernel_test.dom_card_types t ON t.id=x.main_type_id "
       "WHERE x.card_id=c.id AND x.face_id=f.face_id), ARRAY[]::text[]) AS main_types, "
       "COALESCE((SELECT array_agg(t.code ORDER BY x.position) "
       "FROM deckkernel_test.scryfall_card_artifact_types x "
-      "JOIN deckkernel_test.artifact_types t ON t.id=x.artifact_type_id "
+      "JOIN deckkernel_test.dom_artifact_types t ON t.id=x.artifact_type_id "
       "WHERE x.card_id=c.id AND x.face_id=f.face_id), ARRAY[]::text[]) AS artifact_types, "
       "COALESCE((SELECT array_agg(t.code ORDER BY x.position) "
       "FROM deckkernel_test.scryfall_card_land_types x "
-      "JOIN deckkernel_test.land_types t ON t.id=x.land_type_id "
+      "JOIN deckkernel_test.dom_land_types t ON t.id=x.land_type_id "
       "WHERE x.card_id=c.id AND x.face_id=f.face_id), ARRAY[]::text[]) AS land_types, "
       "COALESCE((SELECT array_agg(t.code ORDER BY x.position) "
       "FROM deckkernel_test.scryfall_card_creature_types x "
-      "JOIN deckkernel_test.creatures_types t ON t.id=x.creature_type_id "
+      "JOIN deckkernel_test.dom_creature_types t ON t.id=x.creature_type_id "
       "WHERE x.card_id=c.id AND x.face_id=f.face_id), ARRAY[]::text[]) AS creature_types "
       "FROM deckkernel_test.scryfall_cards c "
       "JOIN deckkernel_test.scryfall_card_faces f ON f.card_id=c.id "
-      "JOIN deckkernel_test.rarities r ON r.id=c.rarity_id");
+      "JOIN deckkernel_test.dom_rarities r ON r.id=c.rarity_id");
    aCardTransaction.CommitAndClose();
    // One original blob per URL in the resettable model, plus normalized per-face
    // image-variant links. Multiple printings may reference the same URL.
