@@ -120,12 +120,12 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
          "Existing model detected: FirstConnection --all refuses destructive reset. "
          "Run the schema migration and use non-destructive test modes.");
       }
-   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_land_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE, description text, notice text)");
-   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_creature_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE, description text, notice text)");
-   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_artifact_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE, description text, notice text)");
-   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_supertypes (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE, description text, notice text)");
-   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_card_types (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE, description text, notice text)");
-   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_rarities (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code text NOT NULL UNIQUE, description text, notice text)");
+   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_land_types (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_land_types PRIMARY KEY (id), CONSTRAINT uk_dom_land_types_code UNIQUE (code))");
+   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_creature_types (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_creature_types PRIMARY KEY (id), CONSTRAINT uk_dom_creature_types_code UNIQUE (code))");
+   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_artifact_types (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_artifact_types PRIMARY KEY (id), CONSTRAINT uk_dom_artifact_types_code UNIQUE (code))");
+   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_supertypes (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_supertypes PRIMARY KEY (id), CONSTRAINT uk_dom_supertypes_code UNIQUE (code))");
+   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_card_types (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_card_types PRIMARY KEY (id), CONSTRAINT uk_dom_card_types_code UNIQUE (code))");
+   aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_rarities (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_rarities PRIMARY KEY (id), CONSTRAINT uk_dom_rarities_code UNIQUE (code))");
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.scryfall_sets ("
       "id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, scryfall_id text NOT NULL UNIQUE, code text NOT NULL UNIQUE,"
