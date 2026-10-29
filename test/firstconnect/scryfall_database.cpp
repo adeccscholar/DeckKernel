@@ -128,16 +128,6 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
       "code text NOT NULL, description text, notice text, resolution text, "
       "CONSTRAINT \"pk_dom_card_face_image_types\" PRIMARY KEY (id), "
       "CONSTRAINT \"uk_dom_card_face_image_types_code\" UNIQUE (code))");
-   aDatabase.ExecuteCommand(
-      "INSERT INTO deckkernel_test.\"dom_card_face_image_types\" "
-      "(code,description,notice,resolution) VALUES "
-      "('art_crop','A rectangular crop containing primarily the card artwork, without the full card frame or rules text. Cropping and dimensions vary with card layout.',NULL,NULL),"
-      "('border_crop','A JPEG of the full card with the rounded corners and most of the outer border cropped away, intended for rectangular displays.',NULL,'480x680'),"
-      "('large','A large JPEG rendition of the full card, suitable for detailed on-screen viewing.',NULL,'672x936'),"
-      "('normal','A medium-sized JPEG rendition of the full card, intended for normal on-screen card display.',NULL,'488x680'),"
-      "('png','A high-resolution PNG rendition of the full card, with transparent rounded corners, suitable for high-quality display.',NULL,'745x1040'),"
-      "('small','A small JPEG rendition of the full card, optimized for thumbnails and card lists.',NULL,'146x204') "
-      "ON CONFLICT ON CONSTRAINT \"uk_dom_card_face_image_types_code\" DO NOTHING");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_land_types (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_land_types PRIMARY KEY (id), CONSTRAINT uk_dom_land_types_code UNIQUE (code))");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_creature_types (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_creature_types PRIMARY KEY (id), CONSTRAINT uk_dom_creature_types_code UNIQUE (code))");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_artifact_types (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_artifact_types PRIMARY KEY (id), CONSTRAINT uk_dom_artifact_types_code UNIQUE (code))");
@@ -251,6 +241,131 @@ std::vector<std::size_t> TopologicalOrder(std::vector<row_ty> const& vecRows,
    return vecOrder;
    }
 
+/**
+\brief Synchronizes one code catalog without modifying existing values.
+\details Locks the domain table for this transaction, reads existing identities,
+and inserts only codes absent from the database. New description and notice
+columns are intentionally omitted, so PostgreSQL stores NULL. All original
+IDs and all existing descriptions and notices remain unchanged.
+\tparam catalog_ty Persistent catalog record type.
+\param aDatabase Open database with an active transaction.
+\param mpSource Codes to synchronize.
+\param svTableName Fully qualified, compile-time defined domain table name.
+\returns Mapping from every source code to its preserved or newly created ID.
+\throw std::runtime_error If database identities or inserted rows are invalid.
+*/
+template <typename catalog_ty>
+std::map<std::string, int> SynchronizeCatalog(
+   postgres_database_ty& aDatabase,
+   std::map<std::string, int> const& mpSource,
+   std::string_view const svTableName) {
+
+   aDatabase.ExecuteCommand(std::format(
+      "LOCK TABLE {} IN SHARE ROW EXCLUSIVE MODE", svTableName));
+
+   std::map<std::string, int> mpIds;
+   for (auto const& [iId, strCode] :
+      aDatabase.Execute<int, std::string>(
+         std::format("SELECT id,code FROM {}", svTableName))) {
+      if (iId <= 0 || !mpIds.emplace(strCode, iId).second) {
+         throw std::runtime_error(
+            std::format("Invalid or duplicate existing catalog key in {}", svTableName));
+         }
+      }
+
+   auto aOutput = catalog_types::invoke([&]<typename... types_ty>() {
+      return aDatabase.template MakeOutputRange<types_ty...>(
+         catalog_ty::CreateInsertSql(), catalog_ty::CreateInsertOutputParameters());
+      });
+
+   std::size_t uNew = 0;
+   std::size_t uExisting = 0;
+   for (auto const& [strCode, iUnused] : mpSource) {
+      if (mpIds.contains(strCode)) {
+         ++uExisting;
+         continue;
+         }
+
+      std::array<catalog_types::type_list, 1> arrInput{{
+         catalog_types::type_list{0, strCode}
+         }};
+      bool boInserted = false;
+      for (auto const& tplResult : aOutput(arrInput)) {
+         int const iId = std::get<0>(tplResult);
+         if (boInserted || iId <= 0 || !mpIds.emplace(strCode, iId).second) {
+            throw std::runtime_error(
+               std::format("Invalid generated catalog identity in {}", svTableName));
+            }
+         boInserted = true;
+         ++uNew;
+         }
+      if (!boInserted) {
+         throw std::runtime_error(
+            std::format("Missing INSERT result for code '{}' in {}", strCode, svTableName));
+         }
+      }
+
+   std::println("[DOMAIN] {}: existing={}, inserted={}, total={}",
+      svTableName, uExisting, uNew, mpIds.size());
+   return mpIds;
+   }
+
+
+struct DomainCatalogIds {
+   std::map<std::string, int> mpLandIds;
+   std::map<std::string, int> mpCreatureIds;
+   std::map<std::string, int> mpArtifactIds;
+   std::map<std::string, int> mpSuperIds;
+   std::map<std::string, int> mpMainIds;
+   std::map<std::string, int> mpRarityIds;
+   };
+
+
+/**
+\brief Inserts missing domain values while preserving all existing domain records.
+\details Synchronizes all six Scryfall catalogs and the six fixed image rendition
+codes in one transaction. Existing descriptions, notices, resolutions, and IDs
+are never changed. New catalog descriptions and notices are NULL.
+\param aDatabase Connected PostgreSQL database.
+\param aParsed Parsed Scryfall domain catalogs.
+\returns Existing and new IDs for references created by the card importer.
+\throw std::runtime_error On missing schema, conflicts, or invalid identifiers.
+*/
+DomainCatalogIds SynchronizeDomainCatalogs(
+   postgres_database_ty& aDatabase, ParsedBulkData const& aParsed) {
+   auto aCatalogTransaction = aDatabase.Transaction();
+
+   DomainCatalogIds aIds{
+      .mpLandIds = SynchronizeCatalog<TLandType>(
+         aDatabase, aParsed.mpLandTypes, LandTypeMetaData::svTableName),
+      .mpCreatureIds = SynchronizeCatalog<TCreatureType>(
+         aDatabase, aParsed.mpCreatureTypes, CreatureTypeMetaData::svTableName),
+      .mpArtifactIds = SynchronizeCatalog<TArtifactType>(
+         aDatabase, aParsed.mpArtifactTypes, ArtifactTypeMetaData::svTableName),
+      .mpSuperIds = SynchronizeCatalog<TSuperType>(
+         aDatabase, aParsed.mpSuperTypes, SuperTypeMetaData::svTableName),
+      .mpMainIds = SynchronizeCatalog<TMainType>(
+         aDatabase, aParsed.mpMainTypes, MainTypeMetaData::svTableName),
+      .mpRarityIds = SynchronizeCatalog<TRarity>(
+         aDatabase, std::map<std::string, int>{
+            {"common", 0}, {"uncommon", 0}, {"rare", 0},
+            {"mythic", 0}, {"special", 0}, {"bonus", 0}
+            }, RarityMetaData::svTableName)
+      };
+
+   // A fixed catalog: retain previously authored metadata and nominal resolution.
+   // Only missing codes are inserted, with NULL description and notice.
+   aDatabase.ExecuteCommand(
+      "INSERT INTO deckkernel_test.dom_card_face_image_types (code,resolution) VALUES "
+      "('art_crop',NULL),('border_crop','480x680'),"
+      "('large','672x936'),('normal','488x680'),"
+      "('png','745x1040'),('small','146x204') "
+      "ON CONFLICT (code) DO NOTHING");
+
+   aCatalogTransaction.CommitAndClose();
+   return aIds;
+   }
+
 } // namespace
 
 
@@ -270,81 +385,32 @@ static double ElapsedSeconds(std::chrono::steady_clock::time_point const aStart)
    return std::chrono::duration<double>(std::chrono::steady_clock::now() - aStart).count();
    }
 
+/**
+\brief Updates the existing domain tables without changing cards, sets, or images.
+\details Uses the same safe code/identity synchronization as a fresh import.
+\param aDatabase Connected PostgreSQL database.
+\param aParsed Parsed domain codes.
+\returns Nothing.
+\throw std::runtime_error If a domain table is missing or synchronization fails.
+*/
+void UpdateDomainValues(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed) {
+   (void)SynchronizeDomainCatalogs(aDatabase, aParsed);
+   }
+
+
 void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed) {
    // DDL is committed independently: a later data error must not restore an obsolete schema.
    EnsureSchema(aDatabase);
-   std::println("[STORE] Schema created: land_types, creatures_types, scryfall_sets, scryfall_cards");
-   auto aCatalogTransaction = aDatabase.Transaction();
-   auto const aLandStart = std::chrono::steady_clock::now();
-   // Insert land types with PostgreSQL-generated identities via the adecc output range.
-   auto aLandOutput = catalog_types::invoke([&]<typename... types_ty>() {
-      return aDatabase.template MakeOutputRange<types_ty...>(
-         TLandType::CreateInsertSql(), TLandType::CreateInsertOutputParameters());
-      });
-   std::map<std::string, int> mpLandIds;
-   for (auto const& [strCode, iIgnored] : aParsed.mpLandTypes) {
-      std::array<TLandType::data_ty, 1> arrInput{{ TLandType::data_ty{0, strCode} }};
-      for (auto const& tplResult : aLandOutput(arrInput)) {
-         if (!mpLandIds.emplace(strCode, std::get<0>(tplResult)).second) {
-            throw std::runtime_error("duplicate land type: " + strCode);
-            }
-         }
-      }
-   std::println("[TIME] Store LandTypes: {:.3f} s", ElapsedSeconds(aLandStart));
-   std::println("[STORE] LandTypes written: {} rows", mpLandIds.size());
-   auto const aCreatureStart = std::chrono::steady_clock::now();
-   auto aCreatureOutput = catalog_types::invoke([&]<typename... types_ty>() {
-      return aDatabase.template MakeOutputRange<types_ty...>(
-         TCreatureType::CreateInsertSql(), TCreatureType::CreateInsertOutputParameters());
-      });
-   std::map<std::string, int> mpCreatureIds;
-   for (auto const& [strCode, iUnused] : aParsed.mpCreatureTypes) {
-      std::array<TCreatureType::data_ty, 1> arrInput{{ TCreatureType::data_ty{0, strCode} }};
-      for (auto const& tplResult : aCreatureOutput(arrInput)) {
-         if (!mpCreatureIds.emplace(strCode, std::get<0>(tplResult)).second) {
-            throw std::runtime_error("duplicate creature type: " + strCode);
-            }
-         }
-      }
-   std::println("[TIME] Store CreatureTypes: {:.3f} s", ElapsedSeconds(aCreatureStart));
-   std::println("[STORE] CreatureTypes written: {} rows", mpCreatureIds.size());
-   auto fnStoreCatalog = [&]<typename meta_ty>(
-      std::map<std::string, int> const& mpSource, meta_ty) {
-      auto aOutput = catalog_types::invoke([&]<typename... types_ty>() {
-         return aDatabase.template MakeOutputRange<types_ty...>(
-            meta_ty::CreateInsertSql(), meta_ty::CreateInsertOutputParameters());
-         });
-      std::map<std::string, int> mpIds;
-      for (auto const& [strCode, iUnused] : mpSource) {
-         std::array<catalog_types::type_list, 1> arrInput{{catalog_types::type_list{0, strCode}}};
-         for (auto const& tplResult : aOutput(arrInput)) {
-            if (!mpIds.emplace(strCode, std::get<0>(tplResult)).second) {
-               throw std::runtime_error("duplicate catalog type: " + strCode);
-               }
-            }
-         }
-      return mpIds;
-      };
-   auto const aSuperStart = std::chrono::steady_clock::now();
-   auto mpArtifactIds = fnStoreCatalog(aParsed.mpArtifactTypes, TArtifactType{});
-   std::println("[STORE] ArtifactTypes written: {} rows", mpArtifactIds.size());
-   auto mpSuperIds = fnStoreCatalog(aParsed.mpSuperTypes, TSuperType{});
-   std::println("[TIME] Store SuperTypes: {:.3f} s", ElapsedSeconds(aSuperStart));
-   std::println("[STORE] SuperTypes written: {} rows", mpSuperIds.size());
-   auto const aMainStart = std::chrono::steady_clock::now();
-   auto mpMainIds = fnStoreCatalog(aParsed.mpMainTypes, TMainType{});
-   std::println("[TIME] Store MainTypes: {:.3f} s", ElapsedSeconds(aMainStart));
-   std::println("[STORE] MainTypes written: {} rows", mpMainIds.size());
-   // Scryfall has no separate rarity catalog; use its documented domain.
-   std::map<std::string, int> mpRaritySource{
-      {"common", 0}, {"uncommon", 0}, {"rare", 0},
-      {"mythic", 0}, {"special", 0}, {"bonus", 0}
-      };
-   auto mpRarityIds = fnStoreCatalog(mpRaritySource, TRarity{});
-   std::println("[STORE] Rarity domain written: {} values", mpRarityIds.size());
-   aCatalogTransaction.CommitAndClose();
-   std::println("[STORE] Catalogs committed: {} land types, {} creature types",
-      mpLandIds.size(), mpCreatureIds.size());
+   std::println("[STORE] Fresh schema created; domain catalogs will be synchronized");
+   // Resolve existing code identities first; insert only previously unknown values.
+   // Never overwrite descriptions/notices maintained in the domain tables.
+   DomainCatalogIds const aDomainIds = SynchronizeDomainCatalogs(aDatabase, aParsed);
+   auto const& mpLandIds = aDomainIds.mpLandIds;
+   auto const& mpCreatureIds = aDomainIds.mpCreatureIds;
+   auto const& mpArtifactIds = aDomainIds.mpArtifactIds;
+   auto const& mpSuperIds = aDomainIds.mpSuperIds;
+   auto const& mpMainIds = aDomainIds.mpMainIds;
+   auto const& mpRarityIds = aDomainIds.mpRarityIds;
 
    // Set graph: root sets are persisted before any child.
    std::vector<StagedSet> vecSets;
