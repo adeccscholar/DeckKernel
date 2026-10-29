@@ -54,7 +54,7 @@ public:
 using catalog_types = adecc::defined_type_list<int, std::string>;
 
 struct LandTypeMetaData {
-   static constexpr std::string_view svTableName = "deckkernel_test.land_types";
+   static constexpr std::string_view svTableName = "deckkernel_test.dom_land_types";
    static constexpr std::array<std::string_view, 2> arrAttributeNames{ "id", "code" };
    static constexpr std::array<std::size_t, 1> arrKeyIndices{ 0 };
    static constexpr std::optional<std::size_t> optIdentityIndex{0};
@@ -62,7 +62,7 @@ struct LandTypeMetaData {
    };
 
 struct CreatureTypeMetaData {
-   static constexpr std::string_view svTableName = "deckkernel_test.creatures_types";
+   static constexpr std::string_view svTableName = "deckkernel_test.dom_creature_types";
    static constexpr std::array<std::string_view, 2> arrAttributeNames{ "id", "code" };
    static constexpr std::array<std::size_t, 1> arrKeyIndices{ 0 };
    static constexpr std::optional<std::size_t> optIdentityIndex{0};
@@ -73,21 +73,21 @@ using TLandType = adecc::db::PersistentSystemData<catalog_types, LandTypeMetaDat
 using TCreatureType = adecc::db::PersistentSystemData<catalog_types, CreatureTypeMetaData>;
 
 struct SuperTypeMetaData {
-   static constexpr std::string_view svTableName = "deckkernel_test.supertypes";
+   static constexpr std::string_view svTableName = "deckkernel_test.dom_supertypes";
    static constexpr std::array<std::string_view, 2> arrAttributeNames{"id", "code"};
    static constexpr std::array<std::size_t, 1> arrKeyIndices{0};
    static constexpr std::optional<std::size_t> optIdentityIndex{0};
    static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
    };
 struct MainTypeMetaData {
-   static constexpr std::string_view svTableName = "deckkernel_test.card_types";
+   static constexpr std::string_view svTableName = "deckkernel_test.dom_card_types";
    static constexpr std::array<std::string_view, 2> arrAttributeNames{"id", "code"};
    static constexpr std::array<std::size_t, 1> arrKeyIndices{0};
    static constexpr std::optional<std::size_t> optIdentityIndex{0};
    static constexpr std::array<std::size_t, 0> arrReadOnlyIndices{};
    };
 struct ArtifactTypeMetaData {
-   static constexpr std::string_view svTableName = "deckkernel_test.artifact_types";
+   static constexpr std::string_view svTableName = "deckkernel_test.dom_artifact_types";
    static constexpr std::array<std::string_view, 2> arrAttributeNames{"id", "code"};
    static constexpr std::array<std::size_t, 1> arrKeyIndices{0};
    static constexpr std::optional<std::size_t> optIdentityIndex{0};
@@ -99,7 +99,7 @@ using TSuperType = adecc::db::PersistentSystemData<catalog_types, SuperTypeMetaD
 using TMainType = adecc::db::PersistentSystemData<catalog_types, MainTypeMetaData>;
 
 struct RarityMetaData {
-   static constexpr std::string_view svTableName = "deckkernel_test.rarities";
+   static constexpr std::string_view svTableName = "deckkernel_test.dom_rarities";
    static constexpr std::array<std::string_view, 2> arrAttributeNames{"id", "code"};
    static constexpr std::array<std::size_t, 1> arrKeyIndices{0};
    static constexpr std::optional<std::size_t> optIdentityIndex{0};
