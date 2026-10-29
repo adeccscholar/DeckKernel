@@ -78,6 +78,11 @@ BEGIN
          EXECUTE format(
             'ALTER TABLE %I.%I RENAME CONSTRAINT %I TO %I',
             'deckkernel_test', strTable, strExisting, strExpected);
+         RAISE NOTICE 'Renamed constraint on %.%: % -> %',
+            'deckkernel_test', strTable, strExisting, strExpected;
+      ELSE
+         RAISE NOTICE 'Constraint already correctly named on %.%: %',
+            'deckkernel_test', strTable, strExpected;
       END IF;
 
       -- Likewise, preserve and rename the unique constraint on code.
@@ -95,6 +100,11 @@ BEGIN
          EXECUTE format(
             'ALTER TABLE %I.%I RENAME CONSTRAINT %I TO %I',
             'deckkernel_test', strTable, strExisting, strExpected);
+         RAISE NOTICE 'Renamed constraint on %.%: % -> %',
+            'deckkernel_test', strTable, strExisting, strExpected;
+      ELSE
+         RAISE NOTICE 'Constraint already correctly named on %.%: %',
+            'deckkernel_test', strTable, strExpected;
       END IF;
    END LOOP;
 END
@@ -128,6 +138,12 @@ BEGIN
            AND c.conname = 'uk_' || strTable || '_code'
       ) THEN
          RAISE EXCEPTION 'Domain constraints not verified for %', theTable;
+      END IF;
+      IF (
+         SELECT count(*) FROM pg_constraint AS c
+         WHERE c.conrelid = theTable AND c.contype IN ('p', 'u')
+      ) <> 2 THEN
+         RAISE EXCEPTION 'Unexpected additional or missing PK/UNIQUE constraints for %', theTable;
       END IF;
    END LOOP;
 END
