@@ -91,6 +91,22 @@ VALUES
    ('reversible_card', 'A reversible double-faced card with independently identifiable, unrelated front and back faces.', NULL)
 ON CONFLICT (code) DO NOTHING;
 
+-- Cover additional layouts observed in Scryfall bulk data.
+-- Preserve user-curated descriptions; fill only currently missing text.
+INSERT INTO deckkernel_test.dom_layout_types (code, description, notice)
+VALUES
+   ('prepare', 'A card layout featuring a creature and its associated prepared spell. The creature can become prepared, allowing its controller to cast a copy of the associated spell under the preparation rules.', NULL),
+   ('front_card', 'A nontraditional card layout used for introductory or theme-identification cards, such as Jumpstart front cards. These cards identify a pack or theme rather than representing a conventional playable Magic card.', NULL)
+ON CONFLICT (code) DO NOTHING;
+
+UPDATE deckkernel_test.dom_layout_types
+SET description = 'A card layout featuring a creature and its associated prepared spell. The creature can become prepared, allowing its controller to cast a copy of the associated spell under the preparation rules.'
+WHERE code = 'prepare' AND description IS NULL;
+
+UPDATE deckkernel_test.dom_layout_types
+SET description = 'A nontraditional card layout used for introductory or theme-identification cards, such as Jumpstart front cards. These cards identify a pack or theme rather than representing a conventional playable Magic card.'
+WHERE code = 'front_card' AND description IS NULL;
+
 -- Preserve layout codes already present on cards before this migration.
 -- Card faces may not exist yet on a fresh installation.
 DO $backfill$
