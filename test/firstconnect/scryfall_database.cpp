@@ -140,6 +140,12 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
       "currency text NOT NULL, description text, notices text, "
       "CONSTRAINT pk_dom_price_types PRIMARY KEY (id), "
       "CONSTRAINT uk_dom_price_types_code UNIQUE (code))");
+   aDatabase.ExecuteCommand(
+      "CREATE TABLE deckkernel_test.dom_card_finish_types ("
+      "id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, "
+      "description text, notice text, "
+      "CONSTRAINT pk_dom_card_finish_types PRIMARY KEY (id), "
+      "CONSTRAINT uk_dom_card_finish_types_code UNIQUE (code))");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_land_types (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_land_types PRIMARY KEY (id), CONSTRAINT uk_dom_land_types_code UNIQUE (code))");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_creature_types (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_creature_types PRIMARY KEY (id), CONSTRAINT uk_dom_creature_types_code UNIQUE (code))");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_artifact_types (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_artifact_types PRIMARY KEY (id), CONSTRAINT uk_dom_artifact_types_code UNIQUE (code))");
@@ -376,6 +382,16 @@ DomainCatalogIds SynchronizeDomainCatalogs(
       "('eur','EUR','Indicative nonfoil paper price in euros, typically sourced from the European card market.',NULL),"
       "('eur_foil','EUR','Indicative foil paper price in euros.',NULL),"
       "('tix','TIX','Indicative Magic Online digital card price in MTGO event tickets, not a fiat currency.',NULL) "
+      "ON CONFLICT (code) DO NOTHING");
+
+   // The finish domain is additive and independent of the existing price types.
+   // Keep curated descriptions and all IDs whenever a code already exists.
+   aDatabase.ExecuteCommand(
+      "INSERT INTO deckkernel_test.dom_card_finish_types (code,description,notice) VALUES "
+      "('nonfoil','A printing without a foil or reflective metallic finish. Availability of this finish is a property of the specific card printing.',NULL),"
+      "('foil','A printing with a traditional reflective foil finish. It is distinct from etched foil and does not imply a particular rarity.',NULL),"
+      "('etched','A printing with an etched-foil treatment, distinct from the traditional foil finish. Availability is specific to the printing.',NULL),"
+      "('glossy','A specialty printing with a glossy surface treatment. Scryfall distinguishes glossy from nonfoil, traditional foil, and etched foil.',NULL) "
       "ON CONFLICT (code) DO NOTHING");
 
    // A fixed catalog: retain previously authored metadata and nominal resolution.
