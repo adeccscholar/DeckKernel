@@ -368,6 +368,36 @@ DomainCatalogIds SynchronizeDomainCatalogs(
       "('png','745x1040'),('small','146x204') "
       "ON CONFLICT (code) DO NOTHING");
 
+   // On fresh installations seed the documented layout descriptions as well.
+   // This is additive: previously curated descriptions are never overwritten.
+   aDatabase.ExecuteCommand(
+      "INSERT INTO deckkernel_test.dom_layout_types (code,description,notice) VALUES "
+      "('normal','A standard Magic card layout with a single card face.',NULL),"
+      "('split','A card whose front is divided into two spell halves, each with its own characteristics.',NULL),"
+      "('flip','A single-sided card with two vertically opposed orientations that can be flipped.',NULL),"
+      "('transform','A double-faced card that can transform between its front and back faces.',NULL),"
+      "('modal_dfc','A modal double-faced card whose front or back face can be played, subject to applicable rules.',NULL),"
+      "('meld','A card used in a meld pair; the reverse side depicts part of the combined melded permanent.',NULL),"
+      "('leveler','A card with level up and a level-based text box showing different characteristics at different levels.',NULL),"
+      "('class','A Class enchantment with levels that can be unlocked to gain additional abilities.',NULL),"
+      "('case','A Case enchantment that can be solved by fulfilling a stated condition, unlocking an additional effect.',NULL),"
+      "('saga','A Saga enchantment with chapter abilities tied to lore counters.',NULL),"
+      "('adventure','A card combining an Adventure spell with another spell or permanent card face.',NULL),"
+      "('mutate','A card with the mutate mechanic and its distinctive alternate casting presentation.',NULL),"
+      "('prototype','A card showing both a normal cost and a prototype cost with alternate power and toughness.',NULL),"
+      "('battle','A Battle card layout with defense and rules associated with defending and defeating it.',NULL),"
+      "('planar','A Plane or Phenomenon card used in the Planechase multiplayer variant.',NULL),"
+      "('scheme','A Scheme card used by the archenemy in the Archenemy multiplayer variant.',NULL),"
+      "('vanguard','A Vanguard avatar card used to modify a player''s starting conditions or abilities.',NULL),"
+      "('token','A printed representation of a token object, rather than a conventional deck card.',NULL),"
+      "('double_faced_token','A double-faced token card presenting a token representation on each side.',NULL),"
+      "('emblem','A printed representation of an emblem created by a card effect; an emblem is not a card or permanent.',NULL),"
+      "('augment','An Augment card intended to combine with a Host creature in the Unstable environment.',NULL),"
+      "('host','A Host creature card that can combine with an Augment card in the Unstable environment.',NULL),"
+      "('art_series','A collectible art-series card displaying artwork, rather than a regular playable card.',NULL),"
+      "('reversible_card','A reversible double-faced card with independently identifiable, unrelated front and back faces.',NULL) "
+      "ON CONFLICT (code) DO NOTHING");
+
    // Register every non-empty layout seen on any card face.
    // The Scryfall API may add layout codes without requiring a schema change.
    std::set<std::string> setLayouts;
