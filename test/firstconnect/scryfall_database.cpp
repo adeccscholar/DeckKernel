@@ -397,8 +397,8 @@ DomainCatalogIds SynchronizeDomainCatalogs(
 
    // A fixed catalog: retain previously authored metadata and nominal resolution.
    // Only missing codes are inserted, with NULL description and notice.
-   // Six native Scryfall image_uris variants start enabled for offline use.
-   // Supplementary DeckKernel-only variants remain disabled until supported.
+   // Six already-imported Scryfall image_uris variants start enabled for offline use.
+   // Six additional Scryfall image_uris variants remain offline-disabled until imported.
    // Existing domain rows and manually selected offline values are preserved.
    aDatabase.ExecuteCommand(
       "INSERT INTO deckkernel_test.dom_card_face_image_types "
@@ -409,12 +409,12 @@ DomainCatalogIds SynchronizeDomainCatalogs(
       "('normal','488x680',TRUE,'A standard JPEG rendition of the full card.',NULL),"
       "('png','745x1040',TRUE,'A high-resolution PNG of the full card.',NULL),"
       "('small','146x204',TRUE,'A small JPEG thumbnail of the full card.',NULL),"
-      "('grid',NULL,FALSE,'A proposed compact tiled-grid rendition; source and size not yet defined.',NULL),"
-      "('display',NULL,FALSE,'A proposed on-screen rendition; source and size not yet defined.',NULL),"
-      "('art',NULL,FALSE,'A proposed artwork rendition distinct from art_crop; source not yet defined.',NULL),"
-      "('jpeg',NULL,FALSE,'A proposed JPEG-encoded rendition without a fixed crop or size.',NULL),"
-      "('thumb',NULL,FALSE,'A proposed thumbnail rendition; source and size not yet defined.',NULL),"
-      "('crop',NULL,FALSE,'A proposed unspecified crop rendition; source not yet defined.',NULL) "
+      "('grid',NULL,FALSE,'A Scryfall WebP card image for compact grid and gallery views (image_uris.grid).',NULL),"
+      "('display',NULL,FALSE,'A Scryfall WebP card image for detailed display (image_uris.display).',NULL),"
+      "('art',NULL,FALSE,'A Scryfall WebP artwork image distinct from JPEG art_crop (image_uris.art).',NULL),"
+      "('jpeg',NULL,FALSE,'A Scryfall JPEG card image (image_uris.jpeg), aliasing normal in the observed export.',NULL),"
+      "('thumb',NULL,FALSE,'A Scryfall WebP thumbnail image (image_uris.thumb).',NULL),"
+      "('crop',NULL,FALSE,'A Scryfall WebP crop image (image_uris.crop).',NULL) "
       "ON CONFLICT (code) DO NOTHING");
 
    // On fresh installations seed the documented layout descriptions as well.
