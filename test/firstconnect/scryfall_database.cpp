@@ -128,6 +128,12 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
       "code text NOT NULL, description text, notice text, resolution text, "
       "CONSTRAINT \"pk_dom_card_face_image_types\" PRIMARY KEY (id), "
       "CONSTRAINT \"uk_dom_card_face_image_types_code\" UNIQUE (code))");
+   aDatabase.ExecuteCommand(
+      "CREATE TABLE deckkernel_test.dom_layout_types ("
+      "id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, "
+      "description text, notice text, "
+      "CONSTRAINT pk_dom_layout_types PRIMARY KEY (id), "
+      "CONSTRAINT uk_dom_layout_types_code UNIQUE (code))");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_land_types (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_land_types PRIMARY KEY (id), CONSTRAINT uk_dom_land_types_code UNIQUE (code))");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_creature_types (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_creature_types PRIMARY KEY (id), CONSTRAINT uk_dom_creature_types_code UNIQUE (code))");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_artifact_types (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_artifact_types PRIMARY KEY (id), CONSTRAINT uk_dom_artifact_types_code UNIQUE (code))");
@@ -361,6 +367,45 @@ DomainCatalogIds SynchronizeDomainCatalogs(
       "('large','672x936'),('normal','488x680'),"
       "('png','745x1040'),('small','146x204') "
       "ON CONFLICT (code) DO NOTHING");
+
+   // Register every non-empty layout seen on any card face.
+   // The Scryfall API may add layout codes without requiring a schema change.
+   std::set<std::string> setLayouts;
+   for (StagedCard const& aCard : aParsed.vecCards) {
+      for (StagedFace const& aFace : aCard.vecFaces) {
+         if (aFace.optLayout && !aFace.optLayout->empty()) {
+            setLayouts.emplace(*aFace.optLayout);
+            }
+         }
+      }
+   aDatabase.ExecuteCommand(
+      "LOCK TABLE deckkernel_test.dom_layout_types IN SHARE ROW EXCLUSIVE MODE");
+   std::set<std::string> setExisting;
+   for (auto const& tplRow : aDatabase.Execute<std::string>(
+      "SELECT code FROM deckkernel_test.dom_layout_types")) {
+      setExisting.emplace(std::get<0>(tplRow));
+      }
+   std::size_t uAddedLayouts = 0;
+   for (std::string const& strCode : setLayouts) {
+      if (setExisting.contains(strCode)) { continue; }
+      // Reuse the same safe SQL quoting strategy as the existing code-based
+      // catalog loader, preserving the exact Scryfall value.
+      std::string strQuotedCode;
+      strQuotedCode.reserve(strCode.size() + 2);
+      strQuotedCode += '\'';
+      for (char const ch : strCode) {
+         strQuotedCode += ch;
+         if (ch == '\'') { strQuotedCode += '\''; }
+         }
+      strQuotedCode += '\'';
+      aDatabase.ExecuteCommand(std::format(
+         "INSERT INTO deckkernel_test.dom_layout_types "
+         "(code,description,notice) VALUES ({},NULL,NULL) "
+         "ON CONFLICT (code) DO NOTHING", strQuotedCode));
+      ++uAddedLayouts;
+      }
+   std::println("[DOMAIN] dom_layout_types: existing={}, added={}, source={}",
+      setExisting.size(), uAddedLayouts, setLayouts.size());
 
    aCatalogTransaction.CommitAndClose();
    return aIds;
