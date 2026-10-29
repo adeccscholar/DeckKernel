@@ -134,6 +134,12 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
       "description text, notice text, "
       "CONSTRAINT pk_dom_layout_types PRIMARY KEY (id), "
       "CONSTRAINT uk_dom_layout_types_code UNIQUE (code))");
+   aDatabase.ExecuteCommand(
+      "CREATE TABLE deckkernel_test.dom_price_types ("
+      "id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, "
+      "currency text NOT NULL, description text, notices text, "
+      "CONSTRAINT pk_dom_price_types PRIMARY KEY (id), "
+      "CONSTRAINT uk_dom_price_types_code UNIQUE (code))");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_land_types (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_land_types PRIMARY KEY (id), CONSTRAINT uk_dom_land_types_code UNIQUE (code))");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_creature_types (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_creature_types PRIMARY KEY (id), CONSTRAINT uk_dom_creature_types_code UNIQUE (code))");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_artifact_types (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_artifact_types PRIMARY KEY (id), CONSTRAINT uk_dom_artifact_types_code UNIQUE (code))");
@@ -359,6 +365,18 @@ DomainCatalogIds SynchronizeDomainCatalogs(
             {"mythic", 0}, {"special", 0}, {"bonus", 0}
             }, RarityMetaData::svTableName)
       };
+
+   // Seed the six published Scryfall price keys without changing existing values.
+   // Price quotes themselves are not persisted by this catalog-only change.
+   aDatabase.ExecuteCommand(
+      "INSERT INTO deckkernel_test.dom_price_types (code,currency,description,notices) VALUES "
+      "('usd','USD','Indicative nonfoil paper price in US dollars, typically sourced from the US card market.',NULL),"
+      "('usd_foil','USD','Indicative traditional foil paper price in US dollars.',NULL),"
+      "('usd_etched','USD','Indicative etched-foil paper price in US dollars.',NULL),"
+      "('eur','EUR','Indicative nonfoil paper price in euros, typically sourced from the European card market.',NULL),"
+      "('eur_foil','EUR','Indicative foil paper price in euros.',NULL),"
+      "('tix','TIX','Indicative Magic Online digital card price in MTGO event tickets, not a fiat currency.',NULL) "
+      "ON CONFLICT (code) DO NOTHING");
 
    // A fixed catalog: retain previously authored metadata and nominal resolution.
    // Only missing codes are inserted, with NULL description and notice.
