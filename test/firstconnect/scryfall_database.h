@@ -19,5 +19,6 @@ using postgres_database_ty = adecc::db::logical_database<adecc::db::postgres::po
 
 postgres_database_ty OpenDatabase();
 void StoreProcess(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed);
+void UpdateDomainValues(postgres_database_ty& aDatabase, ParsedBulkData const& aParsed);
 
 } // namespace deckkernel::test
