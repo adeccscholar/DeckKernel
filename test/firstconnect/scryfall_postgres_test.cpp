@@ -136,7 +136,7 @@ int main(int argc,char* argv[]) {
          std::println("--image-probe: one missing image, HTTPS/TLS check, no card reload");
          std::println("--images-only (default): restore caches and fetch all missing images, no card reload");
          std::println("--images-offline: restore all from caches, no network and no card reload");
-         std::println("--all: explicit full model reset / re-import (default image limit 100)");
+         std::println("--all: fresh model initialization and import; refuses to reset an existing model");
          return 0;
          }
       if(svMode!="--all" && svMode!="--domains-only" && svMode!="--images-only" &&
@@ -166,7 +166,7 @@ int main(int argc,char* argv[]) {
          return 0;
          }
 
-      std::println("[MODE] --all: full Load/Parse/Store with model reset");
+      std::println("[MODE] --all: fresh Load/Parse/Store; existing models are protected");
       LoadedBulkData aLoaded = RunTimedProcess(
          "Load",
          []() {
