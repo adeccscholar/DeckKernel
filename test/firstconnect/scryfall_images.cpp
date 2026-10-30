@@ -38,7 +38,7 @@ std::string Env(char const* szName,char const* szDefault) {
 }
 
 std::chrono::milliseconds ImageInterval() {
-   std::string const strInterval=Env("DECKKERNEL_IMAGE_INTERVAL_MS","250");
+   std::string const strInterval=Env("DECKKERNEL_IMAGE_INTERVAL_MS","500");
    unsigned uMilliseconds{};
    auto const aParsed=std::from_chars(strInterval.data(),
       strInterval.data()+strInterval.size(),uMilliseconds);
@@ -69,6 +69,11 @@ struct PgResultDeleter {
 struct CurlDeleter {
    void operator()(CURL* pCurl) const noexcept { if(pCurl) curl_easy_cleanup(pCurl); }
 };
+struct CurlHeaderDeleter {
+   void operator()(curl_slist* pHeaders) const noexcept {
+      if(pHeaders) { curl_slist_free_all(pHeaders); }
+      }
+   };
 struct ImageDownloadError : std::runtime_error {
    CURLcode eCode;
    long iHttpStatus;
@@ -95,6 +100,7 @@ struct ImageDownloadError : std::runtime_error {
 using pg_connection_ty=std::unique_ptr<PGconn,PgDeleter>;
 using pg_result_ty=std::unique_ptr<PGresult,PgResultDeleter>;
 using curl_handle_ty=std::unique_ptr<CURL,CurlDeleter>;
+using curl_headers_ty=std::unique_ptr<curl_slist,CurlHeaderDeleter>;
 
 /** \brief Append libcurl response blocks to a bounded memory buffer. */
 std::size_t Receive(char* pData,std::size_t uSize,std::size_t uCount,void* pState) {
@@ -109,6 +115,8 @@ std::size_t Receive(char* pData,std::size_t uSize,std::size_t uCount,void* pStat
 
 struct ImageResponseHeaders final {
    std::chrono::seconds aRetryAfter{};
+   std::string strServer;
+   std::string strCfRay;
 };
 
 /** \brief Honor Retry-After on HTTP 429/503 without disabling TLS verification. */
@@ -120,6 +128,29 @@ std::size_t ReceiveHeader(char* pData,std::size_t uSize,std::size_t uCount,
    auto const fnLower=[](unsigned char ch){return static_cast<char>(std::tolower(ch));};
    std::string strLower=strLine;
    std::transform(strLower.begin(),strLower.end(),strLower.begin(),fnLower);
+   // Keep only diagnostics from the final HTTP response.
+   if(strLower.starts_with("http/")) {
+      aHeaders={};
+      return uBytes;
+      }
+   if(strLower.starts_with("server:") || strLower.starts_with("cf-ray:")) {
+      std::size_t const uBegin=strLine.find_first_not_of(" \t",strLine.find(':')+1);
+      std::size_t const uEnd=strLine.find_last_not_of(" \r\n\t");
+      if(uBegin!=std::string::npos && uEnd!=std::string::npos && uBegin<=uEnd) {
+         std::string strValue=strLine.substr(
+            uBegin,std::min<std::size_t>(128,uEnd-uBegin+1));
+         for(char& ch : strValue) {
+            if(static_cast<unsigned char>(ch)<32) { ch=' '; }
+            }
+         if(strLower.starts_with("server:")) {
+            aHeaders.strServer=std::move(strValue);
+            }
+         else {
+            aHeaders.strCfRay=std::move(strValue);
+            }
+         }
+      return uBytes;
+      }
    if(!strLower.starts_with("retry-after:")) return uBytes;
    std::string strValue=strLine.substr(12);
    std::size_t const uBegin=strValue.find_first_not_of(" \t");
@@ -152,6 +183,9 @@ std::size_t ReceiveHeader(char* pData,std::size_t uSize,std::size_t uCount,
     reuse, and TLS session caching. Callback buffers are owned by this class.
 */
 class ImageHttpClient final {
+   // Declare headers first so they outlive curl_easy_cleanup.
+   curl_headers_ty m_upHeaders {
+      curl_slist_append(nullptr,"Accept: image/png,image/jpeg,image/webp,*/*;q=0.8") };
    curl_handle_ty m_upCurl { curl_easy_init() };
    std::string m_strCaBundle=Env("DECKKERNEL_CURL_CA_BUNDLE","");
    std::vector<unsigned char> m_vecData;
@@ -160,7 +194,12 @@ class ImageHttpClient final {
 
 public:
    ImageHttpClient() {
-      if(!m_upCurl) throw std::runtime_error("curl_easy_init failed");
+      if(!m_upHeaders) {
+         throw std::runtime_error("curl_slist_append failed for image Accept header");
+         }
+      if(!m_upCurl) {
+         throw std::runtime_error("curl_easy_init failed");
+         }
       if(!m_strCaBundle.empty() &&
          !std::filesystem::is_regular_file(m_strCaBundle))
          throw std::runtime_error(
@@ -184,6 +223,7 @@ public:
       curl_easy_setopt(pCurl,CURLOPT_REDIR_PROTOCOLS_STR,"https");
       curl_easy_setopt(pCurl,CURLOPT_USERAGENT,
          "adecc-DeckKernel/0.1 (+https://github.com/adeccscholar/DeckKernel)");
+      curl_easy_setopt(pCurl,CURLOPT_HTTPHEADER,m_upHeaders.get());
       curl_easy_setopt(pCurl,CURLOPT_TCP_KEEPALIVE,1L);
       curl_easy_setopt(pCurl,CURLOPT_FRESH_CONNECT,0L);
       curl_easy_setopt(pCurl,CURLOPT_FORBID_REUSE,0L);
@@ -213,11 +253,20 @@ public:
       CURLcode const eCode=curl_easy_perform(pCurl);
       long iHttpStatus{};
       curl_easy_getinfo(pCurl,CURLINFO_RESPONSE_CODE,&iHttpStatus);
-      if(eCode!=CURLE_OK)
-         throw ImageDownloadError(eCode,iHttpStatus,m_aHeaders.aRetryAfter,
-            std::format("image HTTPS failed (curl={}, HTTP={}): {}",
-               static_cast<int>(eCode),iHttpStatus,
-               m_arrError[0]?m_arrError.data():curl_easy_strerror(eCode)));
+      if(eCode!=CURLE_OK) {
+         std::string strDetail=std::format(
+            "image HTTPS failed (curl={}, HTTP={}): {}",
+            static_cast<int>(eCode),iHttpStatus,
+            m_arrError[0]?m_arrError.data():curl_easy_strerror(eCode));
+         if(iHttpStatus==403 || iHttpStatus==429) {
+            strDetail+=std::format(" [Server={}, CF-Ray={}, Retry-After={}s]",
+               m_aHeaders.strServer.empty()?"unknown":m_aHeaders.strServer,
+               m_aHeaders.strCfRay.empty()?"unknown":m_aHeaders.strCfRay,
+               m_aHeaders.aRetryAfter.count());
+            }
+         throw ImageDownloadError(
+            eCode,iHttpStatus,m_aHeaders.aRetryAfter,std::move(strDetail));
+         }
       if(m_vecData.empty())
          throw std::runtime_error("image server returned an empty body");
       Response aResult;
@@ -336,7 +385,10 @@ void ImportImages(postgres_database_ty const& aDatabase,
    (void)aDatabase; // The caller has already opened its normal database context.
    std::size_t const uLimit=
       aOptions.uMaxMissing.value_or(ImageLimit(aOptions.bContinuous));
-   std::chrono::milliseconds const aInterval=ImageInterval();
+   // This floor also overrides legacy 100ms environment configuration.
+   std::chrono::milliseconds const aRequestedInterval=ImageInterval();
+   std::chrono::milliseconds aInterval=
+      std::max(aRequestedInterval,std::chrono::milliseconds{500});
    std::filesystem::path const aCacheRoot=Env("DECKKERNEL_IMAGE_CACHE_ROOT","");
    deckkernel::scryfall::ImageCache aCache(
       aCacheRoot.empty()?std::filesystem::path{".cache/scryfall/images"}:aCacheRoot);
@@ -372,10 +424,11 @@ void ImportImages(postgres_database_ty const& aDatabase,
       return uCount;
    };
    std::uint64_t const uInitiallyMissing=fnCountMissing();
-   std::println("[IMAGE] missing={}, limit={}, mode={}, interval={}ms",
+   std::println(
+      "[IMAGE] missing={}, limit={}, mode={}, interval={}ms (requested={}ms)",
       uInitiallyMissing,uLimit==0?"unlimited":std::to_string(uLimit),
       aOptions.bAllowNetwork?"network+cache":"offline cache only",
-      aInterval.count());
+      aInterval.count(),aRequestedInterval.count());
    if(uInitiallyMissing==0) {
       std::println("[IMAGE] all model images already present; no downloads");
       return;
@@ -404,6 +457,7 @@ void ImportImages(postgres_database_ty const& aDatabase,
          std::chrono::steady_clock::now()-aBegin).count();
    };
    auto aNextRequest=std::chrono::steady_clock::now();
+   unsigned uRateLimitEvents{};
    auto const aStarted=std::chrono::steady_clock::now();
 
    // Keyset pagination: keep only 512 URL rows in memory at once, not the
@@ -475,9 +529,35 @@ void ImportImages(postgres_database_ty const& aDatabase,
                   }
                   catch(ImageDownloadError const& ex) {
                      aMetrics.flHttpSeconds+=fnSeconds(aHttpStarted);
-                     if(ex.IsFatal()) throw; // TLS trust is not transient.
-                     if(!ex.IsTransient() || uAttempt>=uMaxTransientRetries)
+                     // Stop on 403: another URL would likely hit the same block.
+                     if(ex.iHttpStatus==403) {
                         throw;
+                        }
+                     if(ex.iHttpStatus==429) {
+                        // One recovery attempt for the entire import.
+                        ++uRateLimitEvents;
+                        if(uRateLimitEvents>1) {
+                           throw;
+                           }
+                        aInterval=std::max(
+                           aInterval*2,std::chrono::milliseconds{1000});
+                        std::chrono::seconds const aDelay=std::max(
+                           std::chrono::seconds{60},ex.aRetryAfter);
+                        std::println(std::cerr,
+                           "[IMAGE] HTTP 429: pause={}s, retry=1, interval={}ms, URL={}",
+                           aDelay.count(),aInterval.count(),strUrl);
+                        auto const aRetryStarted=std::chrono::steady_clock::now();
+                        std::this_thread::sleep_for(aDelay);
+                        aMetrics.flRetrySeconds+=fnSeconds(aRetryStarted);
+                        aNextRequest=std::chrono::steady_clock::now()+aInterval;
+                        continue;
+                        }
+                     if(ex.IsFatal()) {
+                        throw;
+                        }
+                     if(!ex.IsTransient() || uAttempt>=uMaxTransientRetries) {
+                        throw;
+                        }
                      // Exponential backoff, limited to five minutes unless the
                      // server explicitly requests a longer Retry-After delay.
                      std::chrono::seconds const aBackoff{
@@ -531,10 +611,18 @@ void ImportImages(postgres_database_ty const& aDatabase,
          catch(ImageDownloadError const& ex) {
             ++uFailed;
             std::println(std::cerr,"[IMAGE] FAIL {}: {}",strUrl,ex.what());
-            if(ex.IsFatal())
+            if(ex.iHttpStatus==403 || ex.iHttpStatus==429) {
+               throw std::runtime_error(std::format(
+                  "Scryfall image access rejected (HTTP {}). "
+                  "Import stopped without modifying earlier commits. "
+                  "Failed URL: {}",
+                  ex.iHttpStatus,strUrl));
+               }
+            if(ex.IsFatal()) {
                throw std::runtime_error(
                   "TLS certificate or handshake failure; image import stopped "
                   "without losing previous database commits");
+               }
          }
          catch(std::exception const& ex) {
             ++uFailed;
