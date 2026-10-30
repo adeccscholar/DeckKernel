@@ -147,6 +147,18 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
       "description text, notice text, "
       "CONSTRAINT pk_dom_card_finish_types PRIMARY KEY (id), "
       "CONSTRAINT uk_dom_card_finish_types_code UNIQUE (code))");
+   aDatabase.ExecuteCommand(
+      "CREATE TABLE deckkernel_test.dom_format_types ("
+      "id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, "
+      "description text, notice text, "
+      "CONSTRAINT pk_dom_format_types PRIMARY KEY (id), "
+      "CONSTRAINT uk_dom_format_types_code UNIQUE (code))");
+   aDatabase.ExecuteCommand(
+      "CREATE TABLE deckkernel_test.dom_legality_types ("
+      "id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, "
+      "description text, notice text, "
+      "CONSTRAINT pk_dom_legality_types PRIMARY KEY (id), "
+      "CONSTRAINT uk_dom_legality_types_code UNIQUE (code))");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_land_types (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_land_types PRIMARY KEY (id), CONSTRAINT uk_dom_land_types_code UNIQUE (code))");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_creature_types (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_creature_types PRIMARY KEY (id), CONSTRAINT uk_dom_creature_types_code UNIQUE (code))");
    aDatabase.ExecuteCommand("CREATE TABLE deckkernel_test.dom_artifact_types (id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, description text, notice text, CONSTRAINT pk_dom_artifact_types PRIMARY KEY (id), CONSTRAINT uk_dom_artifact_types_code UNIQUE (code))");
@@ -372,6 +384,41 @@ DomainCatalogIds SynchronizeDomainCatalogs(
             {"mythic", 0}, {"special", 0}, {"bonus", 0}
             }, RarityMetaData::svTableName)
       };
+
+   aDatabase.ExecuteCommand(
+      "INSERT INTO deckkernel_test.dom_format_types (code,description,notice) VALUES "
+      "('standard','Standard: a rotating constructed format using the current Standard-legal card pool.',NULL),"
+      "('future','Future Standard: projected Standard legality based on upcoming releases and rotation.',NULL),"
+      "('historic','Historic: a non-rotating Magic Arena format including digital-only and rebalanced cards.',NULL),"
+      "('timeless','Timeless: a non-rotating Magic Arena format with an extensive card pool and its own restrictions.',NULL),"
+      "('gladiator','Gladiator: a 100-card singleton Magic Arena constructed format.',NULL),"
+      "('pioneer','Pioneer: a non-rotating constructed format with a card pool beginning with Return to Ravnica.',NULL),"
+      "('modern','Modern: a non-rotating constructed format whose eligible sets begin with Eighth Edition.',NULL),"
+      "('legacy','Legacy: an Eternal constructed format with its own banned-card list.',NULL),"
+      "('pauper','Pauper: a constructed format based on cards printed at common rarity, subject to a banned list.',NULL),"
+      "('vintage','Vintage: an Eternal format that distinguishes banned and restricted cards.',NULL),"
+      "('penny','Penny Dreadful: a community format with seasonally changing eligibility based on Magic Online prices.',NULL),"
+      "('commander','Commander: a singleton multiplayer format using a commander, color identity and a banned list.',NULL),"
+      "('oathbreaker','Oathbreaker: a singleton format using a planeswalker Oathbreaker and its signature spell.',NULL),"
+      "('standardbrawl','Standard Brawl: a singleton Brawl variant using the rotating Standard card pool.',NULL),"
+      "('brawl','Brawl: a commander-style singleton format tracked separately from Standard Brawl.',NULL),"
+      "('competitivebrawl','Competitive Brawl: a separately tracked competitive variant of Brawl.',NULL),"
+      "('alchemy','Alchemy: a rotating Magic Arena format using digital-only and rebalanced cards as well as eligible paper cards.',NULL),"
+      "('paupercommander','Pauper Commander: a Commander variant using common cards and an eligible uncommon creature commander.',NULL),"
+      "('duel','Duel Commander: a one-versus-one competitive Commander variant.',NULL),"
+      "('oldschool','Old School (93/94): a constructed format centered on the earliest Magic releases.',NULL),"
+      "('premodern','Premodern: a constructed format using an early historical card pool, from Fourth Edition through Scourge.',NULL),"
+      "('predh','PreDH: a Commander variant using a historically limited card pool predating modern Commander releases.',NULL),"
+      "('tlr','Tiny Leaders Reborn: a separately tracked singleton format with low mana-value restrictions.',NULL) "
+      "ON CONFLICT (code) DO NOTHING");
+
+   aDatabase.ExecuteCommand(
+      "INSERT INTO deckkernel_test.dom_legality_types (code,description,notice) VALUES "
+      "('legal','The card is permitted in the format under the usual deck-construction rules.',NULL),"
+      "('not_legal','The card does not qualify for the format''s eligible card pool; this is distinct from being banned.',NULL),"
+      "('banned','The card is explicitly prohibited in the format by its ban list or governing rules.',NULL),"
+      "('restricted','The card is permitted with a reduced copy limit under the format''s restricted list.',NULL) "
+      "ON CONFLICT (code) DO NOTHING");
 
    // Seed the six published Scryfall price keys without changing existing values.
    // Price quotes themselves are not persisted by this catalog-only change.
