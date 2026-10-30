@@ -148,11 +148,11 @@ void EnsureSchema(postgres_database_ty const& aDatabase) {
       "CONSTRAINT pk_dom_card_finish_types PRIMARY KEY (id), "
       "CONSTRAINT uk_dom_card_finish_types_code UNIQUE (code))");
    aDatabase.ExecuteCommand(
-      "CREATE TABLE deckkernel_test.dom_format_types ("
+      "CREATE TABLE deckkernel_test.format_types ("
       "id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, "
       "description text, notice text, "
-      "CONSTRAINT pk_dom_format_types PRIMARY KEY (id), "
-      "CONSTRAINT uk_dom_format_types_code UNIQUE (code))");
+      "CONSTRAINT pk_format_types PRIMARY KEY (id), "
+      "CONSTRAINT uk_format_types_code UNIQUE (code))");
    aDatabase.ExecuteCommand(
       "CREATE TABLE deckkernel_test.dom_legality_types ("
       "id integer GENERATED ALWAYS AS IDENTITY, code text NOT NULL, "
@@ -386,7 +386,7 @@ DomainCatalogIds SynchronizeDomainCatalogs(
       };
 
    aDatabase.ExecuteCommand(
-      "INSERT INTO deckkernel_test.dom_format_types (code,description,notice) VALUES "
+      "INSERT INTO deckkernel_test.format_types (code,description,notice) VALUES "
       "('standard','Standard: a rotating constructed format using the current Standard-legal card pool.',NULL),"
       "('future','Future Standard: projected Standard legality based on upcoming releases and rotation.',NULL),"
       "('historic','Historic: a non-rotating Magic Arena format including digital-only and rebalanced cards.',NULL),"
