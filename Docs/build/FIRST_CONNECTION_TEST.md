@@ -340,6 +340,38 @@ apps\Release\deckkernel_scryfall_postgres_test.exe --images-offline
 The separate image downloader now matches the bulk downloader's libcurl configuration by requesting Windows native CA certificates through `CURLSSLOPT_NATIVE_CA` when available, with peer/host verification enabled. When required, set `DECKKERNEL_CURL_CA_BUNDLE` to an existing trusted PEM certificate-bundle file. **Never disable `CURLOPT_SSL_VERIFYPEER` or `CURLOPT_SSL_VERIFYHOST`.** It prints the active libcurl TLS backend and uses the CURL error buffer to reveal certificate issues. Certificate/TLS failures and HTTP 403 immediately abort the image stage; HTTP 429 permits one retry after at least 60 seconds, with a stricter request interval, before stopping on any subsequent 429. HTTP 503 uses the existing bounded retry/backoff logic. Compilation and runtime behavior still require verification on Windows/BCC64X.
 
 
+### Selecting offline image types and clearing model PNG payloads
+
+The image stage now reads `deckkernel_test.dom_card_face_image_types.offline`.
+Only enabled image kinds are selected for new HTTP downloads and for restoration
+from `deckkernel_cache.scryfall_images`. Existing image assets, their URLs,
+and card/face/variant links are not removed when a kind is disabled.
+
+To prefer small previews and stop restoring/downloading PNGs, **stop the image
+import first**, then run:
+
+```cmd
+psql -X -v ON_ERROR_STOP=1 -d DeckKernel -f test/firstconnect/migrations/20261031_select_small_prune_model_png.sql
+```
+
+This migration sets `small.offline=TRUE`, `png.offline=FALSE` and clears
+`image_data`, `sha256`, `media_type` and `downloaded_at` only on
+`deckkernel_test.scryfall_image_assets` rows whose `image_kind='png'`.
+It does **not** delete asset rows, their IDs, links, or a byte in the permanent
+`deckkernel_cache.scryfall_images` table. A later decision to turn PNGs back
+on will allow cache-first restoration without re-downloading cached URLs.
+
+Other previously selected image kinds retain their existing `offline` values.
+To disable those as well, change their flags explicitly before restarting
+`--images-only`.
+
+PostgreSQL MVCC does not guarantee immediate operating-system disk release
+after an UPDATE. Run `VACUUM (ANALYZE) deckkernel_test.scryfall_image_assets;`
+separately after the migration to reclaim dead space for reuse. `VACUUM FULL`
+can shrink the on-disk relation, but requires an exclusive lock and temporary
+space for a table rewrite. Large bytea values may reside in TOAST storage,
+so inspect relation and TOAST sizes before planning disruptive maintenance.
+
 ### Unattended complete image import (no batch file)
 
 Run the installed executable **directly** in the DeckKernel repository root:
