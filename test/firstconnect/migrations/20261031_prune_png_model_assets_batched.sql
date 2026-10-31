@@ -1,9 +1,9 @@
 -- SPDX-FileCopyrightText: 2026 adecc Systemhaus GmbH
 -- SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
 --
--- Remove PNG binary payloads from the RESETTABLE MODEL in small transactions.
+-- Reset at most 10 PNG model payloads per CALL, with no internal COMMIT.
 -- Never modify deckkernel_cache.scryfall_images, asset IDs, URLs, or links.
--- Run using psql with AUTOCOMMIT on, not inside a pgAdmin transaction block.
+-- Run each batch with client-controlled commit (works in pgAdmin or psql).
 -- Stop concurrent image imports before running this script.
 --
 -- Prerequisite: 20261031_select_small_prune_model_png.sql
@@ -15,8 +15,6 @@ LANGUAGE plpgsql
 AS $prune$
 DECLARE
    iChanged integer;
-   iTotal bigint := 0;
-   iBatches bigint := 0;
 BEGIN
    IF current_database() <> 'DeckKernel' THEN
       RAISE EXCEPTION 'Wrong database; DeckKernel is required';
@@ -31,9 +29,9 @@ BEGIN
       RAISE EXCEPTION 'PNG must be offline-disabled before cleanup';
    END IF;
 
-   LOOP
+   -- A single call changes at most iBatchSize rows.
       -- A plain ordered selection ensures locked rows are not silently skipped.
-      -- Any lock timeout aborts the CALL; already committed batches survive.
+      -- Any lock timeout aborts only this batch; prior transactions survive.
       WITH batch AS MATERIALIZED (
          SELECT id
          FROM deckkernel_test.scryfall_image_assets
@@ -53,21 +51,12 @@ BEGIN
       WHERE a.id = batch.id;
 
       GET DIAGNOSTICS iChanged = ROW_COUNT;
-      iTotal := iTotal + iChanged;
-      iBatches := iBatches + 1;
+      RAISE NOTICE 'PNG model cleanup: changed=%', iChanged;
 
-      COMMIT;
-
-      IF iBatches % 100 = 0 OR iChanged = 0 THEN
-         RAISE NOTICE 'PNG model cleanup: batches=%, cleared=%, last_batch=%',
-            iBatches, iTotal, iChanged;
-      END IF;
-      EXIT WHEN iChanged = 0;
-   END LOOP;
 END
 $prune$;
 
--- CALL performs its own commits; never wrap this statement in BEGIN.
+-- CALL runs a single small batch. The caller owns the transaction.
 SET lock_timeout = '3s';
 SET statement_timeout = '0';
 CALL deckkernel_test.prune_png_model_assets(10);
