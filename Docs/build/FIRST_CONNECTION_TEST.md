@@ -354,23 +354,30 @@ import first**, then run:
 psql -X -v ON_ERROR_STOP=1 -d DeckKernel -f test/firstconnect/migrations/20261031_select_small_prune_model_png.sql
 ```
 
-This migration sets `small.offline=TRUE`, `png.offline=FALSE` and clears
-`image_data`, `sha256`, `media_type` and `downloaded_at` only on
-`deckkernel_test.scryfall_image_assets` rows whose `image_kind='png'`.
-It does **not** delete asset rows, their IDs, links, or a byte in the permanent
-`deckkernel_cache.scryfall_images` table. A later decision to turn PNGs back
-on will allow cache-first restoration without re-downloading cached URLs.
+The first migration changes only two catalog flags: `small.offline=TRUE`
+and `png.offline=FALSE`. It does not rewrite any image data.
 
-Other previously selected image kinds retain their existing `offline` values.
-To disable those as well, change their flags explicitly before restarting
-`--images-only`.
+After any previous long-running cleanup has been cancelled and rolled back,
+run the second script from **psql with autocommit enabled**, outside any
+surrounding transaction:
 
-PostgreSQL MVCC does not guarantee immediate operating-system disk release
-after an UPDATE. Run `VACUUM (ANALYZE) deckkernel_test.scryfall_image_assets;`
-separately after the migration to reclaim dead space for reuse. `VACUUM FULL`
-can shrink the on-disk relation, but requires an exclusive lock and temporary
-space for a table rewrite. Large bytea values may reside in TOAST storage,
-so inspect relation and TOAST sizes before planning disruptive maintenance.
+```cmd
+psql -X -v ON_ERROR_STOP=1 -d DeckKernel -f test/firstconnect/migrations/20261031_prune_png_model_assets_batched.sql
+```
+
+The second script deletes no rows. It clears `image_data`, `sha256`,
+`media_type` and `downloaded_at` exclusively on PNG assets in
+`deckkernel_test.scryfall_image_assets`, committing each ten-row batch.
+If cancelled, already committed batches remain and rerunning continues with
+remaining payloads. It never modifies the permanent
+`deckkernel_cache.scryfall_images`, image IDs, URLs or variant links.
+Stop other image importers before running it.
+
+Each batch still generates WAL and PostgreSQL may need additional disk space
+to process it. Run `VACUUM (ANALYZE) deckkernel_test.scryfall_image_assets;`
+separately to make dead space reusable; this does not guarantee an immediate
+reduction of filesystem size. `VACUUM FULL` requires extra disk and a long
+exclusive lock, and is not part of either migration.
 
 ### Unattended complete image import (no batch file)
 
