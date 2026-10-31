@@ -400,7 +400,9 @@ void ImportImages(postgres_database_ty const& aDatabase,
       "image_data=c.image_data,sha256=c.sha256,media_type=c.media_type,"
       "downloaded_at=c.cached_at "
       "FROM deckkernel_cache.scryfall_images c "
-      "WHERE a.image_url=c.url AND a.image_data IS NULL"));
+      "WHERE a.image_url=c.url AND a.image_data IS NULL "
+       "AND EXISTS (SELECT 1 FROM deckkernel_test.dom_card_face_image_types t "
+       "WHERE t.code=a.image_kind AND t.offline)"));
    if(!aRestored || PQresultStatus(aRestored.get())!=PGRES_COMMAND_OK)
       throw std::runtime_error("image cache restore failed: "+
          std::string(PQerrorMessage(aConn.get())));
@@ -409,8 +411,9 @@ void ImportImages(postgres_database_ty const& aDatabase,
 
    auto const fnCountMissing=[&]() -> std::uint64_t {
       pg_result_ty aCount(PQexec(aConn.get(),
-         "SELECT count(*) FROM deckkernel_test.scryfall_image_assets "
-         "WHERE image_data IS NULL"));
+          "SELECT count(*) FROM deckkernel_test.scryfall_image_assets a "
+          "JOIN deckkernel_test.dom_card_face_image_types t ON t.code=a.image_kind "
+         "WHERE a.image_data IS NULL AND t.offline"));
       if(!aCount || PQresultStatus(aCount.get())!=PGRES_TUPLES_OK ||
          PQntuples(aCount.get())!=1)
          throw std::runtime_error("image count query failed: "+
@@ -425,7 +428,7 @@ void ImportImages(postgres_database_ty const& aDatabase,
    };
    std::uint64_t const uInitiallyMissing=fnCountMissing();
    std::println(
-      "[IMAGE] missing={}, limit={}, mode={}, interval={}ms (requested={}ms)",
+      "[IMAGE] eligible missing={}, limit={}, mode={}, interval={}ms (requested={}ms)",
       uInitiallyMissing,uLimit==0?"unlimited":std::to_string(uLimit),
       aOptions.bAllowNetwork?"network+cache":"offline cache only",
       aInterval.count(),aRequestedInterval.count());
@@ -467,8 +470,10 @@ void ImportImages(postgres_database_ty const& aDatabase,
       char const* arrCursor[]={strCursor.c_str()};
       Oid const arrTypes[]={20}; // PostgreSQL int8 for asset primary key
       pg_result_ty aPage(PQexecParams(aConn.get(),
-         "SELECT id,image_url FROM deckkernel_test.scryfall_image_assets "
-         "WHERE id > $1 AND image_data IS NULL ORDER BY id LIMIT 512",
+          "SELECT a.id,a.image_url FROM deckkernel_test.scryfall_image_assets a "
+          "JOIN deckkernel_test.dom_card_face_image_types t ON t.code=a.image_kind "
+         "WHERE a.id > $1 AND a.image_data IS NULL AND t.offline "
+          "ORDER BY a.id LIMIT 512",
          1,arrTypes,arrCursor,nullptr,nullptr,0));
       if(!aPage || PQresultStatus(aPage.get())!=PGRES_TUPLES_OK)
          throw std::runtime_error("image page query failed: "+
