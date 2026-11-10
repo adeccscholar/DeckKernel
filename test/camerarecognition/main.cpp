@@ -48,6 +48,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <chrono>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <condition_variable>
@@ -576,6 +577,25 @@ public:
    [[nodiscard]] std::string const& LastType() const noexcept{return m_strLastType;}
    [[nodiscard]] std::string const& LastName() const noexcept{return m_strLastName;}
    [[nodiscard]] std::string const& LastRules() const noexcept{return m_strLastRules;}
+   /**
+   \brief Recognize only the tiny printed set/collector-number region.
+   \details Last automatic escalation after artwork and complete-card matching.
+   Uses frozen pixels, never a continuously changing camera frame. No general
+   card-name or rules OCR is involved.
+   \param aBottom High-resolution lower 15 percent of the frozen card.
+   \returns Raw recognized characters with OCR confidence for candidate
+   validation. A low-confidence response must not identify a printing.
+   \throw cv::Exception If image preprocessing fails.
+   */
+   [[nodiscard]] std::pair<std::string,int> ReadPrintingMargin(
+      cv::Mat const& aBottom) {
+      if(aBottom.empty())return {{},0};
+      auto const aRead=ReadRegion(aBottom,
+         cv::Rect(0,0,aBottom.cols,aBottom.rows),
+         tesseract::PSM_SINGLE_LINE);
+      return {aRead.text,aRead.confidence};
+   }
+
    bool Read(cv::Mat const& card,unsigned eventNumber,unsigned attempt) {
       if(card.empty()||card.cols<100||card.rows<200)return false;
       auto zones=deckkernel_camera::ocr::Detect(card);
@@ -770,6 +790,11 @@ class Processor {
    std::string m_strOracleId;
    std::string m_strManaCost;
    std::string m_strStatus{"Waiting for card"};
+#if defined(DECKKERNEL_CAMERA_HAS_OCR)
+   std::string m_strPrintingOcrData;
+   std::future<std::pair<std::string,int>> m_printingOcr;
+   unsigned m_uPrintingOcrEvent{};
+#endif
    std::string m_strEdition{"Edition not verified"};
    bool m_recognitionReady{};
    bool m_cardLocked{};
@@ -789,6 +814,9 @@ public:
          ".cache/camera-recognition") {}
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
    void EnableOcr(std::string const& data){m_ocr=std::make_unique<CardOcr>(data,m_verbose);}
+   void EnablePrintingOcr(std::string const& data){
+      m_strPrintingOcrData=data;
+   }
 #endif
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
    void EnableArtwork(unsigned limit){m_artwork=std::make_unique<deckkernel::camera::CardImageMatcher>(limit);}
@@ -865,6 +893,106 @@ public:
       if(!m_recognitionReady)return "Card captured; identifying artwork / printing...";
       return "Card held; remove it for the next scan";
    }
+   /**
+   \brief Normalize printed set codes and collector numbers for OCR comparison.
+   \details Only ASCII alphanumeric candidates are compared. Original
+   Scryfall data remains unchanged in the identity model.
+   \param svValue OCR or DB source string.
+   \returns Uppercase alphanumeric comparison text.
+   \throw std::bad_alloc If allocation fails.
+   */
+   [[nodiscard]] static std::string NormalizePrintingText(
+      std::string_view svValue) {
+      std::string strResult;
+      for(unsigned char const ch:svValue) {
+         if(ch>='a'&&ch<='z')strResult.push_back(static_cast<char>(ch-'a'+'A'));
+         else if((ch>='A'&&ch<='Z')||(ch>='0'&&ch<='9'))
+            strResult.push_back(static_cast<char>(ch));
+      }
+      return strResult;
+   }
+
+   /**
+   \brief Escalate ambiguous printings to frozen lower-margin OCR.
+   \details Tesseract runs in its own thread; the camera and physical tracker
+   remain responsive and unchanged.
+   \returns Nothing.
+   \throw std::system_error If OCR worker creation fails.
+   */
+   void StartPrintingOcr() {
+#if defined(DECKKERNEL_CAMERA_HAS_OCR)
+      if(m_strPrintingOcrData.empty() || m_identity.Count()<2 ||
+         m_capture.Bottom().empty() || m_printingOcr.valid())return;
+      cv::Mat const aMargin=m_capture.Bottom().clone();
+      std::string const strData=m_strPrintingOcrData;
+      m_uPrintingOcrEvent=m_ocrCard.value_or(0);
+      // PHASE 08: OCR is a last-resort, read-only consumer of frozen evidence.
+      SetPhase(deckkernel::camera::RecognitionPhase::PrintingOcr);
+      m_strStatus="PRINTING AMBIGUOUS - reading frozen lower margin";
+      m_printingOcr=std::async(std::launch::async,
+         [aMargin,strData]() -> std::pair<std::string,int> {
+            CardOcr aOcr(strData);
+            return aOcr.ReadPrintingMargin(aMargin);
+         });
+#endif
+   }
+
+   /**
+   \brief Compare a completed lower-margin OCR result to known DB candidates.
+   \details Require both set code and collector number and sufficient OCR
+   confidence. OCR does not invent or eliminate database printings.
+   \returns Nothing.
+   \throw std::runtime_error If the asynchronous OCR worker failed.
+   */
+   void PollPrintingOcr() {
+#if defined(DECKKERNEL_CAMERA_HAS_OCR)
+      if(!m_printingOcr.valid() ||
+         m_printingOcr.wait_for(std::chrono::seconds(0))!=
+            std::future_status::ready)return;
+      auto const [strRecognized,iConfidence]=m_printingOcr.get();
+      if(!m_ocrCard || *m_ocrCard!=m_uPrintingOcrEvent ||
+         m_identity.Confirmed())return;
+      std::string const strNormalized=NormalizePrintingText(strRecognized);
+      std::optional<std::size_t> optMatch;
+      bool boMultiple{};
+      if(iConfidence>=65) {
+         auto const& vecCandidates=m_identity.Candidates();
+         for(std::size_t uIndex=0;uIndex<vecCandidates.size();++uIndex) {
+            auto const& aCandidate=vecCandidates[uIndex];
+            std::string const strSet=NormalizePrintingText(aCandidate.strSet);
+            std::string const strNumber=NormalizePrintingText(
+               aCandidate.strCollector);
+            if(strSet.size()<3||strNumber.empty()||
+               strNormalized.find(strSet)==std::string::npos ||
+               strNormalized.find(strNumber)==std::string::npos)continue;
+            if(optMatch)boMultiple=true;
+            else optMatch=uIndex;
+         }
+      }
+      if(optMatch && !boMultiple) {
+         // OCR corroboration is evidence for one candidate, not verification.
+         static_cast<void>(m_identity.SelectAt(*optMatch));
+#if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
+         if(m_artwork && m_identity.Selected())
+            m_artwork->Select(*m_identity.Selected(),*m_ocrCard);
+#endif
+         m_strStatus=std::format(
+            "PRINTING OCR SUPPORTS {}/{} - Enter to confirm",
+            *optMatch+1,m_identity.Count());
+      }
+      else {
+         m_strStatus=std::format(
+            "PRINTING OCR inconclusive (confidence {}) - select with arrows",
+            iConfidence);
+      }
+      SetPhase(deckkernel::camera::RecognitionPhase::Selecting);
+      std::println("[CAM-PRINT-OCR] card={} confidence={} text='{}' "
+         "unique_candidate={}",
+         *m_ocrCard,iConfidence,strRecognized,
+         optMatch && !boMultiple?std::to_string(*optMatch+1):"none");
+#endif
+   }
+
    void PollRecognition() {
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
       if(!m_artwork)return;
@@ -883,6 +1011,8 @@ public:
          SetPhase(m_identity.Count()>1 || m_identity.Truncated()?
             deckkernel::camera::RecognitionPhase::Selecting:
             deckkernel::camera::RecognitionPhase::Printing);
+         // PHASE 08 occurs only when complete-card comparison left alternatives.
+         StartPrintingOcr();
       }
       else if(!result->boComplete)
          SetPhase(result->strStatus.find("ARTWORK")!=std::string::npos?
@@ -1093,6 +1223,9 @@ public:
          m_capture.Clear();
          m_identity.Clear();
          m_tracker.Reset();
+#if defined(DECKKERNEL_CAMERA_HAS_OCR)
+         m_uPrintingOcrEvent=0;
+#endif
          SetPhase(deckkernel::camera::RecognitionPhase::Searching);
          m_strName="--";m_strType="--";m_strRules="--";
          m_strMana="No mana evidence";
@@ -1765,7 +1898,7 @@ int main(int argc,char** argv) {
       if(sources!=1)
          throw std::runtime_error("select exactly one of --image, --sequence or --camera");
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
-      if(ocr && tessdata.empty()) {
+      if((ocr || artwork) && tessdata.empty()) {
          if(auto const* env=std::getenv("TESSDATA_PREFIX");env&&*env)tessdata=env;
          else tessdata=(std::filesystem::path(argv[0]).parent_path()/"tessdata").string();
       }
@@ -1819,6 +1952,7 @@ int main(int argc,char** argv) {
 #endif
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
       if(ocr)processor.EnableOcr(tessdata);
+      if(artwork)processor.EnablePrintingOcr(tessdata);
 #endif
       if(!folder.empty()){
          std::vector<std::filesystem::path> frames;
@@ -1910,6 +2044,7 @@ int main(int argc,char** argv) {
          if(preview.ConsumeConfirmation())processor.ConfirmCandidate();
 #endif
          processor.PollRecognition();
+         processor.PollPrintingOcr();
          // Visual diagnostic: mark the four corners that pass card geometry checks.
          cv::Mat annotated=frame.clone();
          if(found && !processor.CardLocked()) {
