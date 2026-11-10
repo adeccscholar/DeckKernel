@@ -1512,6 +1512,18 @@ public:
       }
       m_displayCard=m_capture.Image().clone();
       SetPhase(deckkernel::camera::RecognitionPhase::Frozen);
+      if(m_save) {
+         std::filesystem::create_directories(m_root);
+         auto const aPath=m_root/std::format(
+            "event-{:06}-frozen-search-input.png",*m_ocrCard);
+         if(!cv::imwrite(aPath.string(),m_capture.Image()))
+            std::println(std::cerr,
+               "[CAM-EVIDENCE] could not save frozen image {}",
+               aPath.string());
+         else
+            std::println("[CAM-EVIDENCE] frozen-search-input={}",
+               aPath.string());
+      }
       auto const& aQuality=m_capture.Quality();
       std::println("[CAM-QUALITY] card={} source={}x{} rectified={}x{} "
          "sharpness={:.1f} printed-detail={:.1f} brightness={:.1f} "
