@@ -2515,6 +2515,7 @@ void Usage() {
    std::println("Usage: deckkernel_camera_recognition_test --self-test");
    std::println("   or: --sequence=folder [--save-events]");
    std::println("   or: --image=file.png [--ocr] [--save-events] (original phone photo)");
+   std::println("   or: --frozen-image=event-NNNNNN-frozen-search-input.png [--save-events] (direct DB matcher replay)");
    std::println("   or: --camera=0 [--backend=any|dshow|msmf] [--width=3840 --height=2160 --fps=30 --fourcc=mjpg|auto|yuy2] [--save-events]");
    std::println("   or: --probe-camera=0          test 4 Windows camera delivery modes");
    std::println("   optional: --ocr --tessdata=PATH_TO_TESSDATA (eng.traineddata required)");
@@ -2535,6 +2536,7 @@ int main(int argc,char** argv) {
       std::optional<int> probeCamera;
       std::string folder;
       std::string imageFile;
+      std::string frozenImageFile;
       std::optional<int> camera;
       for(int i=1;i<argc;++i){
          std::string_view arg(argv[i]);
@@ -2555,6 +2557,8 @@ int main(int argc,char** argv) {
          else if(arg.starts_with("--probe-camera="))probeCamera=CameraIndex(arg.substr(15));
          else if(arg.starts_with("--sequence="))folder=arg.substr(11);
          else if(arg.starts_with("--image="))imageFile=arg.substr(8);
+         else if(arg.starts_with("--frozen-image="))
+            frozenImageFile=arg.substr(15);
          else if(arg.starts_with("--camera="))camera=CameraIndex(arg.substr(9));
          else throw std::runtime_error("unknown argument (use --help)");
       }
@@ -2575,9 +2579,12 @@ int main(int argc,char** argv) {
          fpsRequested<1||fpsRequested>120)
          throw std::runtime_error("invalid camera width, height or fps");
       unsigned const sources=static_cast<unsigned>(!folder.empty())+
-         static_cast<unsigned>(camera.has_value())+static_cast<unsigned>(!imageFile.empty());
+         static_cast<unsigned>(camera.has_value())+
+         static_cast<unsigned>(!imageFile.empty())+
+         static_cast<unsigned>(!frozenImageFile.empty());
       if(sources!=1)
-         throw std::runtime_error("select exactly one of --image, --sequence or --camera");
+         throw std::runtime_error(
+            "select exactly one of --image, --frozen-image, --sequence or --camera");
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
       if((ocr || artwork) && tessdata.empty()) {
          if(auto const* env=std::getenv("TESSDATA_PREFIX");env&&*env)tessdata=env;
@@ -2586,6 +2593,52 @@ int main(int argc,char** argv) {
 #else
       if(ocr)throw std::runtime_error("OCR was not enabled at CMake configure time");
 #endif
+      if(!frozenImageFile.empty()) {
+#if !defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
+         throw std::runtime_error(
+            "offline frozen-image matcher was disabled at CMake configuration");
+#else
+         // REPLAY: process the EXACT previously frozen matcher input.
+         // No camera, contour detection, tracking or new capture is involved.
+         cv::Mat const aFrozen=cv::imread(
+            frozenImageFile,cv::IMREAD_COLOR);
+         if(aFrozen.empty())
+            throw std::runtime_error(
+               "cannot decode frozen matcher input: "+frozenImageFile);
+         deckkernel::camera::CardImageMatcher aMatcher(artworkLimit);
+         std::filesystem::path const aEvidenceDirectory=save?
+            std::filesystem::path(".cache/camera-recognition/replay"):
+            std::filesystem::path{};
+         std::println("[CAM-REPLAY] frozen={} dimensions={}x{}",
+            frozenImageFile,aFrozen.cols,aFrozen.rows);
+         aMatcher.Search(aFrozen,1,aEvidenceDirectory);
+         auto const aStart=std::chrono::steady_clock::now();
+         while(std::chrono::steady_clock::now()-aStart<
+            std::chrono::seconds(100)) {
+            if(auto optResult=aMatcher.Poll()) {
+               std::println("[CAM-REPLAY] status={} complete={} "
+                  "asset={} name={} set={} collector={} candidates={}",
+                  optResult->strStatus,optResult->boComplete,
+                  optResult->strAssetId,optResult->strName,
+                  optResult->strSet,optResult->strCollector,
+                  optResult->vecCandidates.size());
+               if(!optResult->boComplete)continue;
+               if(save && !optResult->aReferenceImage.empty()) {
+                  std::filesystem::create_directories(
+                     aEvidenceDirectory);
+                  cv::imwrite((aEvidenceDirectory/
+                     "matched-reference.png").string(),
+                     optResult->aReferenceImage);
+               }
+               return optResult->strAssetId.empty()?2:0;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+         }
+         std::println(std::cerr,
+            "[CAM-REPLAY] no terminal result within 100 seconds");
+         return 3;
+#endif
+      }
       if(!imageFile.empty()) {
 #if !defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
          if(artwork)throw std::runtime_error("artwork matching disabled at CMake configuration");
