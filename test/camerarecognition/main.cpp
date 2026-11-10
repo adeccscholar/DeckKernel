@@ -86,6 +86,7 @@ struct FoundCard {
    hash_ty fingerprint{};
    std::array<cv::Point,4> corners{};
    bool boRotate180{};
+   bool boLayoutRecognized{};
 };
 /**
 \brief Estimate actual card width from four raw camera-frame corners.
@@ -110,6 +111,9 @@ struct CardDetectionDiagnostics {
    unsigned aspectCandidates{};
    double selectedAreaPercent{};
    bool recoveredRectangle{};
+   unsigned layoutChecked{};
+   unsigned layoutRecognized{};
+   bool selectedLayoutRecognized{};
 };
 
 /** Refine only interior, finite corners on the detection image.
@@ -183,6 +187,7 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
    bool recoveredBest=false;
    std::vector<cv::Point> best;
    bool boBestRotate180{};
+   bool boBestLayoutRecognized{};
    CardDetectionDiagnostics stats;
 
    auto searchContours=[&](cv::Mat const& edgeMap) {
@@ -201,7 +206,10 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
       for(auto const& contour:contours) {
          double const area=std::abs(cv::contourArea(contour));
          // Exclude huge table/desk outlines, but retain small printed cards.
-         if(area<minArea||area>imageArea*0.20)continue;
+         // A sharply photographed card may occupy much more than 20% of
+         // a 4K frame; rejecting large cards prevents focusing close enough.
+         // Use card-like shape and boundary evidence, not an arbitrary 20%.
+         if(area<minArea||area>imageArea*0.85)continue;
          ++stats.areaCandidates;
          auto const rectangle=cv::minAreaRect(contour);
          double const shortSide=std::min(
@@ -280,8 +288,21 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
             cv::Scalar outside=cv::mean(gray(expanded),outsideMask);
             boundaryContrast=std::abs(inside[0]-outside[0]);
          }
+         // Geometric discovery is PHASE 01. The low-resolution standard
+         // layout is an advisory RANKING cue, not a hard precondition.
+         // Blur, glare, uncommon printing borders or a weak MJPG frame can
+         // easily invalidate these provisional separator thresholds.
+         // A physical contour may be tracked and refocused despite that.
+         double const flGeometryScore=area*fill*
+            (0.7+0.3*ratioFitness)*
+            (0.7+0.3*std::min(1.0,boundaryContrast/35.0));
+         // The bonus is capped at x2; skip candidates that cannot beat the
+         // current winner even if they receive the maximum layout bonus.
+         if(flGeometryScore*(boRequireStandardLayout?2.0:1.0)<=bestScore)
+            continue;
          double flLayoutEvidence=0.0;
          bool boRotate180{};
+         bool boLayoutRecognized{};
          if(boRequireStandardLayout) {
             // PHASE 01: a physical card must contain the expected outer
             // standard-card structure. Reject artwork-only rectangles before
@@ -318,21 +339,29 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
                cv::getPerspectiveTransform(
                   arrCandidate.data(),arrTarget.data()),
                cv::Size(240,336));
+            ++stats.layoutChecked;
             auto const aLayout=
                deckkernel::camera::InspectStandardCard(aCandidateImage);
-            if(!aLayout.boRecognized)continue;
-            flLayoutEvidence=aLayout.flEvidence;
-            boRotate180=aLayout.boRotate180;
+            if(aLayout.boRecognized) {
+               ++stats.layoutRecognized;
+               boLayoutRecognized=true;
+               flLayoutEvidence=aLayout.flEvidence;
+               boRotate180=aLayout.boRotate180;
+            }
+            // If layout is inconclusive, retain the geometrically valid
+            // outer contour. The matcher still tests both rotations.
+            // Never convert "unknown orientation" into "no physical card".
+
          }
-         double const score=area*fill*(0.7+0.3*ratioFitness)*
-            (0.7+0.3*std::min(1.0,boundaryContrast/35.0))*
-            (boRequireStandardLayout?
+         double const score=flGeometryScore*
+            (boLayoutRecognized?
                1.0+0.01*std::clamp(flLayoutEvidence,0.0,100.0):1.0);
          if(score<=bestScore)continue;
          bestScore=score;
          bestArea=area;
          recoveredBest=recovered;
          boBestRotate180=boRotate180;
+         boBestLayoutRecognized=boLayoutRecognized;
          best=std::move(corners);
       }
    };
@@ -347,6 +376,7 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
    }
    stats.selectedAreaPercent=bestArea*100.0/imageArea;
    stats.recoveredRectangle=recoveredBest;
+   stats.selectedLayoutRecognized=boBestLayoutRecognized;
    if(diagnostics)*diagnostics=stats;
    if(best.size()!=4)return std::nullopt;
 
@@ -392,7 +422,8 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
       quad[i]=cv::Point(cvRound(pts[i].x),cvRound(pts[i].y));
    if(boBestRotate180)
       cv::rotate(rectified,rectified,cv::ROTATE_180);
-   return FoundCard{rectified,DHash(rectified),quad,boBestRotate180};
+   return FoundCard{rectified,DHash(rectified),quad,
+      boBestRotate180,boBestLayoutRecognized};
 }
 /** High-resolution OCR warp only for an accepted card presentation.
     Corners are the ordered source-frame positions found by FindCard.
