@@ -1538,7 +1538,11 @@ public:
             "FROZEN CARD - searching indexed artwork":
             "LOW-QUALITY FROZEN CARD - trying indexed artwork";
          SetPhase(deckkernel::camera::RecognitionPhase::Artwork);
-         m_artwork->Search(m_capture.Image(),*m_ocrCard);
+         // PHASE 06: keep the frozen full card intact. The matcher owns
+         // artwork isolation and, when --save-events is active, exports
+         // both measured and fallback artwork crops for debugging.
+         m_artwork->Search(m_capture.Image(),*m_ocrCard,
+            m_save?m_root:std::filesystem::path{});
       }
       else {
          m_strStatus="SHARP FRAME SELECTED - image matcher disabled";
