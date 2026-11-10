@@ -757,6 +757,7 @@ class Processor {
    deckkernel::camera::CardCapture m_capture;
    // PHASE 06-10: CardIdentity owns Oracle identity and printing options.
    deckkernel::camera::CardIdentity m_identity;
+   bool m_boUserNavigated{};
    deckkernel::camera::RecognitionPhase m_ePhase{
       deckkernel::camera::RecognitionPhase::Searching};
    bool m_save{};
@@ -863,6 +864,7 @@ public:
    void NavigateCandidate(int iDelta) {
       // PHASE 09: switch database candidates, never reopen the physical search.
       if(!m_ocrCard || !m_identity.Navigate(iDelta))return;
+      m_boUserNavigated=true;
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
       if(m_artwork && m_identity.Selected())
          m_artwork->Select(*m_identity.Selected(),*m_ocrCard);
@@ -949,9 +951,21 @@ public:
       if(!m_printingOcr.valid() ||
          m_printingOcr.wait_for(std::chrono::seconds(0))!=
             std::future_status::ready)return;
-      auto const [strRecognized,iConfidence]=m_printingOcr.get();
+      std::pair<std::string,int> aRead;
+      try {
+         aRead=m_printingOcr.get();
+      }
+      catch(std::exception const& aException) {
+         if(!m_identity.Confirmed()) {
+            SetPhase(deckkernel::camera::RecognitionPhase::Selecting);
+            m_strStatus=std::format("PRINTING OCR unavailable: {}",
+               aException.what());
+         }
+         return;
+      }
+      auto const& [strRecognized,iConfidence]=aRead;
       if(!m_ocrCard || *m_ocrCard!=m_uPrintingOcrEvent ||
-         m_identity.Confirmed())return;
+         m_identity.Confirmed() || m_boUserNavigated)return;
       std::string const strNormalized=NormalizePrintingText(strRecognized);
       std::optional<std::size_t> optMatch;
       bool boMultiple{};
@@ -1209,7 +1223,13 @@ public:
          }
 #endif
       }
-      if(!event)return false;
+      if(!event) {
+         // PHASE 01/02: only the initial physical contour is globally detected.
+         if(!m_cardLocked)SetPhase(found?
+            deckkernel::camera::RecognitionPhase::Acquiring:
+            deckkernel::camera::RecognitionPhase::Searching);
+         return false;
+      }
       if(event->kind==StableCardTrigger::EventKind::Removed) {
          ++m_removedEvents;
          m_ocrCard.reset();m_ocrAccepted=false;m_ocrAttempts=0;
@@ -1225,6 +1245,7 @@ public:
          m_flCaptureScore=-1.0;
          m_capture.Clear();
          m_identity.Clear();
+         m_boUserNavigated=false;
          m_tracker.Reset();
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
          m_uPrintingOcrEvent=0;
@@ -1270,6 +1291,7 @@ public:
       m_flCaptureSharpness=0.0;
       m_focusStarted=std::chrono::steady_clock::now();
       m_identity.Clear();
+      m_boUserNavigated=false;
       SetPhase(deckkernel::camera::RecognitionPhase::Tracking);
       SetPhase(deckkernel::camera::RecognitionPhase::Focusing);
       m_strName="--";m_strType="--";m_strRules="--";
