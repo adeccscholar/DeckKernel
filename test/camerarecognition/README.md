@@ -660,3 +660,50 @@ recognition is no longer a hidden precondition for first acquisition.
 then the same camera invocation. Confirm that the log proceeds from
 ACQUIRING to TRACKING/FOCUSING. The earlier low artwork match rate must
 only be reassessed after reliable physical-card capture is restored.
+
+## 2026-11-10: distinguish a physical card from a mouse and its inner panels
+
+The observed camera behavior was the reverse of the desired classification:
+the detector sometimes selected the mouse, card artwork, or rules text box,
+while struggling with the physical outer card. The contour detector was
+ranking rectangles by area and a weak aspect-ratio bonus. In particular,
+a fallback minimum-area rotated rectangle accepted objects occupying just
+68 percent of that box, including rounded mouse-like shapes.
+
+Geometry-first corrections using the **existing OpenCV 5.0.0** modules:
+
+- Candidate outer shape: enforce a broad, perspective-tolerant physical
+  card ratio, with a tighter range for an axis-aligned rotated-box fallback.
+  A near-landscape inner artwork and very wide type/rules text panels no
+  longer compete with a complete portrait card solely by image area.
+- Nonrectangular contours: rotated-box recovery now requires at least
+  86 percent fill. True quadrilaterals are additionally checked for
+  reasonable perimeter approximation. These values are initial engineering
+  guards, not validated camera thresholds.
+- Strongly oblique real quadrilaterals can remain candidates when their
+  opposing edges differ, indicating genuine perspective rather than a
+  flat landscape painting.
+- Structural support: a physical card can contain several distinctly
+  nested rectangular regions. Such regions contribute to candidate
+  ranking as evidence for their *outer container* rather than becoming
+  alternative physical cards themselves. Internal layout remains optional
+  and must not veto an otherwise geometrically valid card.
+- Nested rectangular panels are precomputed once per contour pass to
+  avoid repeated quadratic contour approximation in the 4K camera loop.
+
+The synthetic `--self-test` now includes an oval mouse and isolated
+artwork/rules panels, which must not produce a physical-card event.
+The earlier standard-frame, upside-down and projective geometry tests
+remain in place.
+
+Use the existing `--verbose` switch to print `[CAM-DETECT]` once per
+two-second camera interval. It reports shape/aspect rejection counts,
+plausible quadrilaterals, layout assessments, chosen card ratio,
+nested panel count, and selected area percentage. The counters refer
+to the last observed frame of the interval, **not** all frames combined.
+
+Build and live-camera behavior are **not yet verified** on Windows/BCC64X.
+If the physical border is entirely invisible, inner-rectangle evidence
+alone does not determine its exact four corners: a future constrained
+outer-border reconstruction should require direct full-frame evidence,
+rather than inventing an outer quadrilateral and falsely locking a card.
