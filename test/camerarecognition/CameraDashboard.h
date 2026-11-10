@@ -34,6 +34,10 @@ class CameraDashboard {
    SDL_Texture* m_pRaw{};
    SDL_Texture* m_pCard{};
    SDL_Texture* m_pReference{};
+   unsigned char const* m_pUploadedCardPixels{};
+   unsigned char const* m_pUploadedReferencePixels{};
+   cv::Size m_aUploadedCardSize{};
+   cv::Size m_aUploadedReferenceSize{};
    bool m_bRunning{true};
    bool m_bFlip{};
    float m_cardZoom{1.0f};
@@ -265,9 +269,35 @@ public:
       cv::Mat const& aReference,int iCamera,double flFps,
       double flBrightness) {
       // Never upload the live image to the captured-card panel.
-      if(m_bCardLocked)Upload(m_pCard,aCard);
-      else Upload(m_pCard,aRaw);
-      Upload(m_pReference,aReference);
+      // PHASE 05: the captured card and selected DB reference are immutable.
+      // Reuse their SDL textures instead of converting the same RGB pixels
+      // every camera frame. Live input still refreshes every frame.
+      if(m_bCardLocked) {
+         if(aCard.empty()) {
+            Upload(m_pCard,aCard);
+            m_pUploadedCardPixels=nullptr;
+         }
+         else if(aCard.data!=m_pUploadedCardPixels ||
+            aCard.size()!=m_aUploadedCardSize) {
+            Upload(m_pCard,aCard);
+            m_pUploadedCardPixels=aCard.data;
+            m_aUploadedCardSize=aCard.size();
+         }
+      }
+      else {
+         Upload(m_pCard,aRaw);
+         m_pUploadedCardPixels=nullptr;
+      }
+      if(aReference.empty()) {
+         Upload(m_pReference,aReference);
+         m_pUploadedReferencePixels=nullptr;
+      }
+      else if(aReference.data!=m_pUploadedReferencePixels ||
+         aReference.size()!=m_aUploadedReferenceSize) {
+         Upload(m_pReference,aReference);
+         m_pUploadedReferencePixels=aReference.data;
+         m_aUploadedReferenceSize=aReference.size();
+      }
       int iWidth{},iHeight{};
       SDL_GetRendererOutputSize(m_pRenderer,&iWidth,&iHeight);
       if(iWidth<400 || iHeight<400)return;
