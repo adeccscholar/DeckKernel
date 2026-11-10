@@ -722,6 +722,7 @@ class Processor {
    std::string m_strStatus{"Waiting for card"};
    std::string m_strEdition{"Edition not verified"};
    bool m_recognitionReady{};
+   bool m_cardLocked{};
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
    std::unique_ptr<CardOcr> m_ocr;
 #endif
@@ -745,6 +746,13 @@ public:
    [[nodiscard]] std::string const& Type() const noexcept {return m_strType;}
    [[nodiscard]] std::string const& Status() const noexcept {return m_strStatus;}
    [[nodiscard]] std::string const& Edition() const noexcept {return m_strEdition;}
+   [[nodiscard]] bool CardLocked() const noexcept {return m_cardLocked;}
+   [[nodiscard]] bool IdentificationReady() const noexcept {return m_recognitionReady;}
+   [[nodiscard]] std::string Guidance() const {
+      if(!m_cardLocked)return "Waiting for a card in the camera";
+      if(!m_recognitionReady)return "Card captured; identifying artwork / printing...";
+      return "Card held; remove it for the next scan";
+   }
    void PollRecognition() {
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
       if(!m_artwork)return;
@@ -781,10 +789,7 @@ public:
             m_ocr->LastType(),m_ocr->TypeConfidence());
       merge(m_strRules,m_bestRulesConfidence,
          m_ocr->LastRules(),m_ocr->RulesConfidence());
-      if(!m_recognitionReady)
-         m_strStatus=std::format("Best OCR name {}% type {}% rules {}% ({} scans)",
-            m_bestNameConfidence,m_bestTypeConfidence,
-            m_bestRulesConfidence,m_ocrAttempts);
+      // OCR is supplemental metadata, never replace the recognition lifecycle status.
 #endif
    }
 
@@ -807,7 +812,7 @@ public:
    bool Process(std::optional<FoundCard> const& found,
       cv::Mat const& sourceFrame={}) {
       auto event=m_detector.Accept(found);
-      if(found && m_ocrCard) {
+      if(found && m_ocrCard && !m_recognitionReady) {
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
          if(m_ocr && m_ocrAttempts<4) {
             ++m_liveFrames;
@@ -848,6 +853,7 @@ public:
          m_strStatus="Card removed - waiting for next card";
          m_strEdition="Edition not verified";
          m_recognitionReady=false;
+         m_cardLocked=false;
          m_strName="--";m_strType="--";m_strRules="--";
          m_strMana="No mana evidence";
          m_strOrientation="Waiting for card orientation";
@@ -862,9 +868,10 @@ public:
       if(!sourceFrame.empty() && found)
          event->card=RectifyForOcr(sourceFrame,found->corners,m_manualOrientation);
       m_ocrCard=event->number;
-      m_strStatus="Card detected - identity unverified";
+      m_strStatus="CARD CAPTURED - preparing identification";
       m_strEdition="Edition not verified";
       m_recognitionReady=false;
+      m_cardLocked=true;
       m_strName="--";m_strType="--";m_strRules="--";
       m_bestNameConfidence=0;m_bestTypeConfidence=0;m_bestRulesConfidence=0;
       m_liveFrames=0;m_bestSharpness=0;m_ocrAttempts=0;m_ocrAccepted=false;
@@ -901,7 +908,14 @@ public:
          cv::imwrite(file.string(),deckkernel_camera::ocr::Diagram(event->card,zones));
       }
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
-      if(m_artwork)m_artwork->Search(event->card,event->number);
+      if(m_artwork) {
+         m_strStatus="CARD CAPTURED - searching artwork (0 / 180 deg)";
+         m_artwork->Search(event->card,event->number);
+      }
+      else {
+         m_strStatus="CARD CAPTURED - recognition disabled; start with --artwork";
+         m_strEdition="No image comparison requested";
+      }
 #endif
       if(m_save){
          std::filesystem::create_directories(m_root);
@@ -1195,30 +1209,35 @@ void SelfTest() {
       processor.Process(blank);
    if(processor.RemovedEvents()!=2)
       throw std::runtime_error("second recognized card did not emit removal");
-   // Replace A with B without any empty frame: old card must be removed
-   // and a new presentation emitted, with no repeated removal of B.
+   // Once captured, image-content changes must not restart a search.
    StableCardTrigger swap;
    auto a=FindCard(card);
-   if(!a)throw std::runtime_error("replacement sample A missing");
+   if(!a)throw std::runtime_error("locking sample A missing");
    unsigned presents=0,removes=0;
    for(int i=0;i<6;++i) {
       auto event=swap.Accept(a);
       if(event && event->kind==StableCardTrigger::EventKind::Presented)++presents;
    }
-   if(presents!=1)throw std::runtime_error("replacement test initial event");
    auto b=*a;
-   // Two distinct card faces with the same physical outline.
    cv::rectangle(b.rectified,cv::Rect(90,130,300,290),
       cv::Scalar(12,24,210),-1);
    b.fingerprint=DHash(b.rectified);
-   for(int i=0;i<12;++i) {
+   for(int i=0;i<30;++i) {
       auto event=swap.Accept(b);
-      if(!event)continue;
-      if(event->kind==StableCardTrigger::EventKind::Removed)++removes;
-      else ++presents;
+      if(event)throw std::runtime_error("locked card retriggered by artwork change");
    }
-   if(removes!=1||presents!=2)
-      throw std::runtime_error("card swap A->B must remove and present once");
+   for(unsigned i=0;i<StableCardTrigger::RemovalFrames();++i) {
+      auto event=swap.Accept(std::nullopt);
+      if(event && event->kind==StableCardTrigger::EventKind::Removed)++removes;
+   }
+   if(presents!=1 || removes!=1)
+      throw std::runtime_error("locked card removal lifecycle failed");
+   for(int i=0;i<6;++i) {
+      auto event=swap.Accept(b);
+      if(event && event->kind==StableCardTrigger::EventKind::Presented)++presents;
+   }
+   if(presents!=2)
+      throw std::runtime_error("new card not accepted after confirmed removal");
    // A wrong contour elsewhere must not keep an already-presented card
    // alive indefinitely. The right panel must be cleared on removal.
    Processor unrelated(false);
@@ -1589,36 +1608,28 @@ int main(int argc,char** argv) {
          processor.PollRecognition();
          // Visual diagnostic: mark the four corners that pass card geometry checks.
          cv::Mat annotated=frame.clone();
-         if(found) {
+         if(found && !processor.CardLocked()) {
             for(unsigned i=0;i<4;++i)
                cv::line(annotated,found->corners[i],found->corners[(i+1)%4],
                   cv::Scalar(0,220,0),2,cv::LINE_AA);
             cv::putText(annotated,"CARD CONTOUR",cv::Point(12,26),
+               cv::FONT_HERSHEY_SIMPLEX,0.7,cv::Scalar(0,220,0),2,cv::LINE_AA);
+         } else if(processor.CardLocked()) {
+            cv::putText(annotated,"CARD CAPTURED",cv::Point(12,26),
                cv::FONT_HERSHEY_SIMPLEX,0.7,cv::Scalar(0,220,0),2,cv::LINE_AA);
          } else {
             cv::putText(annotated,"NO CARD CONTOUR",cv::Point(12,26),
                cv::FONT_HERSHEY_SIMPLEX,0.7,cv::Scalar(0,170,240),2,cv::LINE_AA);
          }
 #if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
-         std::string qualityStatus=found?
-            std::format("Contour {} | stable {}/{} | area {:.2f}%",
-               detection.recoveredRectangle?"rotated box":"polygon",
-               processor.StableFrames(),processor.RequiredStableFrames(),
-               detection.selectedAreaPercent):
-            std::format("No contour | contours {} polygon {} rotated {}",
-               detection.contours,detection.quadrilaterals,
-               detection.rotatedCandidates);
-         if(found) {
-            auto const metrics=deckkernel_camera::quality::Measure(found->rectified);
-            qualityStatus+=std::format(" | light {:.0f} clipped {:.1f}% | {}",
-               metrics.brightness,metrics.clippedPercent,
-               metrics.GlareRisk()?"GLARE - reposition light":
-               metrics.LowLight()?"LOW LIGHT - add diffuse light":"OK");
-         }
+         std::string qualityStatus=processor.CardLocked()?
+            "Captured frame retained; no further card search until removal":
+            (found?"Card boundary found; stabilizing capture":
+               "Looking for a card boundary");
          preview.SetFields(processor.Name(),processor.Type(),processor.Rules(),
             processor.Mana(),processor.Status(),processor.Edition(),
             flip?"Manual 180 deg / "+processor.Orientation():processor.Orientation(),
-            qualityStatus);
+            qualityStatus,processor.CardLocked(),processor.Guidance());
 #endif
          // Only a confirmed card belongs in the right panel. Do not show
          // a transient candidate or a different contour after removal.
