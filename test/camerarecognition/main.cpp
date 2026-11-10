@@ -734,6 +734,11 @@ class Processor {
    std::string m_strEdition{"Edition not verified"};
    bool m_recognitionReady{};
    bool m_cardLocked{};
+   bool m_focusPending{};
+   unsigned m_uFocusFrames{};
+   double m_flCaptureScore{-1.0};
+   double m_flCaptureSharpness{};
+   std::chrono::steady_clock::time_point m_focusStarted{};
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
    std::unique_ptr<CardOcr> m_ocr;
 #endif
@@ -769,9 +774,11 @@ public:
    [[nodiscard]] std::string const& OracleId() const noexcept {return m_strOracleId;}
    [[nodiscard]] std::string const& ManaCost() const noexcept {return m_strManaCost;}
    [[nodiscard]] bool CardLocked() const noexcept {return m_cardLocked;}
+   [[nodiscard]] bool Focusing() const noexcept {return m_focusPending;}
    [[nodiscard]] bool IdentificationReady() const noexcept {return m_recognitionReady;}
    [[nodiscard]] std::string Guidance() const {
       if(!m_cardLocked)return "Waiting for a card in the camera";
+      if(m_focusPending)return "Autofocus settling; selecting the sharpest frame";
       if(!m_recognitionReady)return "Card captured; identifying artwork / printing...";
       return "Card held; remove it for the next scan";
    }
@@ -846,10 +853,60 @@ public:
          cv::rotate(m_displayCard,m_displayCard,cv::ROTATE_180);
       m_strOrientation=manualFlip?"Manual 180 deg":"Manual 0 deg";
    }
+   /**
+   \brief Accumulate the sharpest full-resolution perspective-rectified frame.
+   \details The autofocus device may respond slowly; image quality is measured
+   on the actual card, and matching starts only after settling or timeout.
+   \param aCandidate Detected card geometry.
+   \param aSource Original camera frame, if available.
+   \returns Nothing.
+   \throw cv::Exception If perspective transformation fails.
+   */
+   void EvaluateFocus(FoundCard const& aCandidate,
+      cv::Mat const& aSource) {
+      if(!m_focusPending)return;
+      cv::Mat aImage=aSource.empty()?aCandidate.rectified.clone():
+         RectifyForOcr(aSource,aCandidate.corners,m_manualOrientation);
+      auto const aQuality=deckkernel_camera::quality::Measure(aImage);
+      if(aQuality.score>m_flCaptureScore) {
+         m_flCaptureScore=aQuality.score;
+         m_flCaptureSharpness=aQuality.sharpness;
+         m_displayCard=std::move(aImage);
+      }
+      ++m_uFocusFrames;
+      auto const flSeconds=std::chrono::duration<double>(
+         std::chrono::steady_clock::now()-m_focusStarted).count();
+      // The time bound avoids stalling indefinitely with very low camera FPS.
+      if(m_uFocusFrames<18 && flSeconds<2.0)return;
+      m_focusPending=false;
+      m_strStatus=std::format(
+         "CARD CAPTURED - focus selected (sharpness {:.1f}, {} frames)",
+         m_flCaptureSharpness,m_uFocusFrames);
+#if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
+      if(m_artwork) {
+         m_strStatus="SHARP FRAME SELECTED - searching indexed artwork";
+         m_artwork->Search(m_displayCard,*m_ocrCard);
+      }
+      else {
+         m_strStatus="SHARP FRAME SELECTED - image matcher disabled";
+         m_recognitionReady=true;
+      }
+#else
+      m_strStatus="SHARP FRAME SELECTED - no image matcher compiled";
+      m_recognitionReady=true;
+#endif
+      std::println("[CAM-FOCUS] card #{} frames={} seconds={:.2f} "
+         "sharpness={:.2f} score={:.2f}",
+         *m_ocrCard,m_uFocusFrames,flSeconds,
+         m_flCaptureSharpness,m_flCaptureScore);
+   }
+
    bool Process(cv::Mat const& frame) {return Process(FindCard(frame));}
    bool Process(std::optional<FoundCard> const& found,
       cv::Mat const& sourceFrame={}) {
       auto event=m_detector.Accept(found);
+      if(m_focusPending && found && m_ocrCard)
+         EvaluateFocus(*found,sourceFrame);
       // The sharpest accepted card is captured once. Do not continuously
       // rewrite OCR text while the viewer is inspecting the captured card.
       if(found && m_ocrCard && !m_cardLocked && !m_recognitionReady) {
@@ -894,6 +951,9 @@ public:
          m_strEdition="Edition not verified";
          m_recognitionReady=false;
          m_cardLocked=false;
+         m_focusPending=false;
+         m_uFocusFrames=0;
+         m_flCaptureScore=-1.0;
          m_strName="--";m_strType="--";m_strRules="--";
          m_strMana="No mana evidence";
          m_strOrientation="Waiting for card orientation";
@@ -918,6 +978,11 @@ public:
       m_strEdition="Edition not verified";
       m_recognitionReady=false;
       m_cardLocked=true;
+      m_focusPending=true;
+      m_uFocusFrames=0;
+      m_flCaptureScore=-1.0;
+      m_flCaptureSharpness=0.0;
+      m_focusStarted=std::chrono::steady_clock::now();
       m_strName="--";m_strType="--";m_strRules="--";
       m_referenceCard.release();
       m_strReferenceLabel="Searching Scryfall references...";
@@ -962,15 +1027,10 @@ public:
          auto const file=m_root/std::format("event-{:06}-zones.png",event->number);
          cv::imwrite(file.string(),deckkernel_camera::ocr::Diagram(event->card,zones));
       }
+      m_strStatus="CARD CAPTURED - waiting for autofocus / sharper input";
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
-      if(m_artwork) {
-         m_strStatus="CARD CAPTURED - searching artwork (0 / 180 deg)";
-         m_artwork->Search(event->card,event->number);
-      }
-      else {
-         m_strStatus="CARD CAPTURED - recognition disabled; start with --artwork";
-         m_strEdition="No image comparison requested";
-      }
+      if(!m_artwork)
+         m_strEdition="Image matcher disabled";
 #endif
       if(m_save){
          std::filesystem::create_directories(m_root);
