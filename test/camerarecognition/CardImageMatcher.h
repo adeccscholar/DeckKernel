@@ -903,13 +903,33 @@ namespace deckkernel::camera {
             if(iOrientation==180)
                cv::rotate(aTask.aCard,aOriented,cv::ROTATE_180);
             for(int iVariant=0;iVariant<2;++iVariant) {
+               ArtworkRegion const aRegion=Artwork(aOriented,iVariant);
+               if(aRegion.aImage.empty())continue;
+               if(!aTask.aEvidenceDirectory.empty()) {
+                  std::filesystem::create_directories(
+                     aTask.aEvidenceDirectory);
+                  std::filesystem::path const aImagePath=
+                     aTask.aEvidenceDirectory/std::format(
+                        "event-{:06}-artwork-{}-window-{}.png",
+                        aTask.uEvent,iOrientation,iVariant+1);
+                  if(!cv::imwrite(aImagePath.string(),aRegion.aImage))
+                     std::println(std::cerr,
+                        "[CAM-ART] cannot save {}",aImagePath.string());
+               }
+               std::println("[CAM-ART-CROP] card={} orientation={} window={} "
+                  "origin={},{} size={}x{} measured={} separators={:.2f}/{:.2f}",
+                  aTask.uEvent,iOrientation,iVariant+1,
+                  aRegion.aRect.x,aRegion.aRect.y,
+                  aRegion.aRect.width,aRegion.aRect.height,
+                  aRegion.boDetected,aRegion.flTopCoverage,
+                  aRegion.flBottomCoverage);
                Publish(CardImageMatchResult{
                   aTask.uEvent,std::format(
                      "SEARCHING ARTWORK - {} deg, window {}",
                      iOrientation,iVariant+1),
                   "Comparing indexed illustrations",false});
                std::optional<Ranked> optCandidate=FindArtwork(
-                  pConnection,Artwork(aOriented,iVariant));
+                  pConnection,aRegion.aImage);
                bool const boAccepted=optCandidate &&
                   AcceptArtwork(*optCandidate);
                std::println("[CAM-ART] card={} orientation={} window={} "
@@ -1021,12 +1041,24 @@ namespace deckkernel::camera {
                m_pending.reset();
             }
             try {
-               if(!aConnection || PQstatus(aConnection.get())!=CONNECTION_OK)
+               auto const aStart=std::chrono::steady_clock::now();
+               std::println("[CAM-MATCH] card #{} worker started selection={}",
+                  aTask.uEvent,aTask.optSelection.has_value());
+               if(!aConnection || PQstatus(aConnection.get())!=CONNECTION_OK) {
+                  Publish(CardImageMatchResult{aTask.uEvent,
+                     "CONNECTING TO POSTGRESQL - image index",
+                     "Waiting for database connection",false});
                   aConnection=Connect();
+               }
+               std::println("[CAM-MATCH] card #{} database ready",
+                  aTask.uEvent);
                if(aTask.optSelection)
                   Publish(DisplaySelection(aConnection.get(),aTask));
                else
                   Publish(Match(aConnection.get(),aTask));
+               std::println("[CAM-MATCH] card #{} worker finished elapsed={:.2f}s",
+                  aTask.uEvent,std::chrono::duration<double>(
+                     std::chrono::steady_clock::now()-aStart).count());
             }
             catch(std::exception const& aException) {
                std::println(std::cerr,"[CAM-MATCH] card #{} failed: {}",
@@ -1074,14 +1106,15 @@ namespace deckkernel::camera {
           \returns Nothing.
           \throw std::bad_alloc If image cloning fails.
       */
-      void Search(cv::Mat const& aCard, unsigned uEvent) {
+      void Search(cv::Mat const& aCard,unsigned uEvent,
+         std::filesystem::path const& aEvidenceDirectory={}) {
          {
             std::lock_guard const aLock(m_mutex);
-            m_pending = Task{uEvent, aCard.clone()};
+            m_pending=Task{uEvent,aCard.clone(),{},0,aEvidenceDirectory};
          }
          m_signal.notify_one();
-         std::println("[CAM-MATCH] card #{} queued: art 0/180, then full card",
-            uEvent);
+         std::println("[CAM-MATCH] card #{} queued: art 0/180, then full card; "
+            "capture={}x{}",uEvent,aCard.cols,aCard.rows);
       }
 
       /**
