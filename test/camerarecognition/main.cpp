@@ -2746,12 +2746,13 @@ int main(int argc,char** argv) {
                if(!processor.CardLocked())
                   std::println("[CAM-DETECT] contours={} candidates={} "
                      "quadrilaterals={} rotated={} plausible={} "
-                     "shape-rejected={} aspect-rejected={} layout={}/{} "
-                     "chosen-ratio={:.3f} nested-panels={} area={:.2f}%",
+                     "shape-rejected={} aspect-rejected={} full-frame-rejected={} "
+                     "layout={}/{} chosen-ratio={:.3f} nested-panels={} area={:.2f}%",
                      detection.contours,detection.areaCandidates,
                      detection.quadrilaterals,detection.rotatedCandidates,
                      detection.aspectCandidates,detection.rejectedShape,
-                     detection.rejectedAspect,detection.layoutRecognized,
+                     detection.rejectedAspect,detection.rejectedPartialFrame,
+                     detection.layoutRecognized,
                      detection.layoutChecked,detection.selectedRatio,
                      detection.selectedInnerPanels,
                      detection.selectedAreaPercent);
