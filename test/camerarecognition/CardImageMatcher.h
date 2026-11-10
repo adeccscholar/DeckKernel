@@ -466,6 +466,50 @@ namespace deckkernel::camera {
           \returns An explicitly unverified result.
           \throw std::runtime_error On database errors.
       */
+      /**
+      \brief Inspect source and feature availability when a search fails.
+      \details SHA-256 is a download-integrity field, not a recognition signal.
+      \param pConnection Worker PostgreSQL connection.
+      \returns Explicit diagnosis, or no message if matching features exist.
+      \throw std::runtime_error If the diagnostic query fails.
+      */
+      static std::string DiagnoseIndex(PGconn* pConnection) {
+         result_ty aRows(PQexec(pConnection,
+            "SELECT count(*)::text, "
+            "count(*) FILTER (WHERE a.image_data IS NOT NULL)::text, "
+            "count(*) FILTER (WHERE a.image_data IS NOT NULL "
+            " AND (a.sha256 IS NULL OR a.sha256=''))::text, "
+            "count(*) FILTER (WHERE f.asset_id IS NOT NULL "
+            " AND f.algorithm='dhash64-orb' AND f.algorithm_version=1 "
+            " AND f.perceptual_hash IS NOT NULL)::text, "
+            "count(*) FILTER (WHERE f.asset_id IS NOT NULL "
+            " AND (f.orb_descriptors IS NULL OR octet_length(f.orb_descriptors)=0))::text "
+            "FROM deckkernel_test.scryfall_image_assets a "
+            "LEFT JOIN deckkernel_test.scryfall_image_features f ON f.asset_id=a.id"));
+         if(!aRows || PQresultStatus(aRows.get())!=PGRES_TUPLES_OK ||
+            PQntuples(aRows.get())!=1) {
+            throw std::runtime_error(std::format(
+               "image index diagnostic unavailable: {}",PQerrorMessage(pConnection)));
+         }
+         auto const uTotal=std::stoull(PQgetvalue(aRows.get(),0,0));
+         auto const uDownloaded=std::stoull(PQgetvalue(aRows.get(),0,1));
+         auto const uMissingSha=std::stoull(PQgetvalue(aRows.get(),0,2));
+         auto const uIndexed=std::stoull(PQgetvalue(aRows.get(),0,3));
+         auto const uMissingOrb=std::stoull(PQgetvalue(aRows.get(),0,4));
+         std::println("[CAM-INDEX] assets={} downloaded={} indexed={} missing-sha256={} empty-orb={}",
+            uTotal,uDownloaded,uIndexed,uMissingSha,uMissingOrb);
+         if(uTotal==0)return "NO IMAGE ASSETS in database";
+         if(uDownloaded==0)return "NO IMAGE DATA downloaded";
+         if(uIndexed==0)return "NO FEATURE INDEX: run scantest --all";
+         if(uMissingOrb>=uIndexed)return "ORB DESCRIPTORS EMPTY: recheck feature indexing";
+         if(uMissingSha!=0)return std::format(
+            "NO MATCH; {} downloaded assets missing SHA-256 (integrity metadata)",
+            uMissingSha);
+         if(uDownloaded>uIndexed)return std::format(
+            "NO MATCH; indexed {} of {} downloaded assets",uIndexed,uDownloaded);
+         return "NO VISUAL MATCH: index available, candidate evidence too weak";
+      }
+
       CardImageMatchResult Match(PGconn* pConnection, Task const& aTask) const {
          cv::Mat aCard = aTask.aCard;
          for(int iOrientation : {0, 180}) {
@@ -517,9 +561,9 @@ namespace deckkernel::camera {
                cv::rotate(aCard, aCard, cv::ROTATE_180);
             }
          }
-         return optBest.value_or(CardImageMatchResult{
-            aTask.uEvent, "UNKNOWN; no reliable artwork or full-card match",
-            "Edition not verified"});
+         if(optBest)return std::move(*optBest);
+         return CardImageMatchResult{aTask.uEvent,DiagnoseIndex(pConnection),
+            "Edition not verified"};
       }
 
       /** \brief Publish a worker result without touching capture-thread state.
@@ -569,6 +613,15 @@ namespace deckkernel::camera {
          catch(std::exception const& aException) {
             std::println(std::cerr, "[CAM-MATCH] worker unavailable: {}",
                aException.what());
+            std::optional<Task> optTask;
+            {
+               std::lock_guard const aLock(m_mutex);
+               optTask=std::move(m_pending);
+               m_pending.reset();
+            }
+            if(optTask)Publish(CardImageMatchResult{optTask->uEvent,
+               std::format("DATABASE UNAVAILABLE: {}",aException.what()),
+               "Edition not verified"});
          }
       }
 
