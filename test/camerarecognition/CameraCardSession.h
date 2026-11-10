@@ -87,7 +87,7 @@ namespace deckkernel::camera {
       void Begin(cv::Mat const& aInitial) {
          Clear();
          m_started=std::chrono::steady_clock::now();
-         Offer(aInitial);
+         static_cast<void>(Offer(aInitial));
       }
 
       /**
@@ -101,7 +101,8 @@ namespace deckkernel::camera {
          if(m_boFrozen || aRectified.empty())return false;
          auto const aMetrics=deckkernel_camera::quality::Measure(aRectified);
          ++m_uSamples;
-         if(aMetrics.score<=m_flBestScore)return false;
+         if(!m_aBest.empty() && aMetrics.score<=m_flBestScore)
+            return false;
          m_flBestScore=aMetrics.score;
          m_flSharpness=aMetrics.sharpness;
          m_aBest=aRectified.clone();
