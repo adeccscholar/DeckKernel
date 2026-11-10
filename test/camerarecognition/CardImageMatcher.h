@@ -583,45 +583,31 @@ namespace deckkernel::camera {
           \throw None.
       */
       void Run() noexcept {
-         try {
-            connection_ty aConnection = Connect();
-            for(;;) {
-               Task aTask;
-               {
-                  std::unique_lock aLock(m_mutex);
-                  m_signal.wait(aLock, [this] {
-                     return m_stopping || m_pending.has_value();
-                  });
-                  if(m_stopping && !m_pending) {
-                     break;
-                  }
-                  aTask = std::move(*m_pending);
-                  m_pending.reset();
-               }
-               try {
-                  Publish(Match(aConnection.get(), aTask));
-               }
-               catch(std::exception const& aException) {
-                  std::println(std::cerr,
-                     "[CAM-MATCH] card #{} error: {}",
-                     aTask.uEvent, aException.what());
-                  Publish(CardImageMatchResult{aTask.uEvent,
-                     "MATCH_ERROR; see diagnostics", "Edition not verified"});
-               }
-            }
-         }
-         catch(std::exception const& aException) {
-            std::println(std::cerr, "[CAM-MATCH] worker unavailable: {}",
-               aException.what());
-            std::optional<Task> optTask;
+         connection_ty aConnection;
+         for(;;) {
+            Task aTask;
             {
-               std::lock_guard const aLock(m_mutex);
-               optTask=std::move(m_pending);
+               std::unique_lock aLock(m_mutex);
+               m_signal.wait(aLock,[this] {
+                  return m_stopping || m_pending.has_value();
+               });
+               if(m_stopping && !m_pending)break;
+               aTask=std::move(*m_pending);
                m_pending.reset();
             }
-            if(optTask)Publish(CardImageMatchResult{optTask->uEvent,
-               std::format("DATABASE UNAVAILABLE: {}",aException.what()),
-               "Edition not verified"});
+            try {
+               if(!aConnection || PQstatus(aConnection.get())!=CONNECTION_OK)
+                  aConnection=Connect();
+               Publish(Match(aConnection.get(),aTask));
+            }
+            catch(std::exception const& aException) {
+               std::println(std::cerr,"[CAM-MATCH] card #{} failed: {}",
+                  aTask.uEvent,aException.what());
+               aConnection.reset();
+               Publish(CardImageMatchResult{aTask.uEvent,
+                  std::format("RECOGNITION ERROR: {}",aException.what()),
+                  "Edition not verified"});
+            }
          }
       }
 
