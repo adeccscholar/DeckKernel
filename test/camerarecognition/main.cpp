@@ -732,6 +732,7 @@ std::string ReportManaColorCandidates(cv::Mat const& card,
 class Processor {
    // PHASE 01/02: PhysicalCard owns the capture/release lifecycle.
    StableCardTrigger m_detector;
+   deckkernel::camera::PhysicalCardTracker m_tracker;
    // PHASE 04/05: CardCapture owns quality and immutable image evidence.
    deckkernel::camera::CardCapture m_capture;
    // PHASE 06-10: CardIdentity owns Oracle identity and printing options.
@@ -1010,7 +1011,32 @@ public:
          m_flCaptureSharpness,m_flCaptureScore);
    }
 
-   bool Process(cv::Mat const& frame) {return Process(FindCard(frame));}
+   /**
+   \brief Determine the next observation without rediscovering inner art.
+   \details PHASE 01 uses global card contours only when there is no active
+   physical card. PHASE 03 uses only optical flow from the existing object.
+   A lost track is reported as absent; it never selects a new rectangle
+   inside the old card during the same presentation.
+   \param aFrame Original camera pixels.
+   \returns A card observation or none when tracking is temporarily lost.
+   \throw cv::Exception If the OpenCV tracker fails.
+   */
+   [[nodiscard]] std::optional<FoundCard> Observe(cv::Mat const& aFrame) {
+      if(!m_tracker.Active())return FindCard(aFrame);
+      auto optCorners=m_tracker.Track(aFrame);
+      if(!optCorners)return std::nullopt;
+      FoundCard aCard;
+      for(std::size_t uIndex=0;uIndex<4;++uIndex)
+         aCard.corners[uIndex]=cv::Point(
+            cvRound((*optCorners)[uIndex].x),cvRound((*optCorners)[uIndex].y));
+      aCard.rectified=RectifyForOcr(aFrame,aCard.corners,false);
+      aCard.fingerprint=DHash(aCard.rectified);
+      return aCard;
+   }
+
+   bool Process(cv::Mat const& frame) {
+      return Process(Observe(frame),frame);
+   }
    bool Process(std::optional<FoundCard> const& found,
       cv::Mat const& sourceFrame={}) {
       auto event=m_detector.Accept(found);
@@ -1066,6 +1092,7 @@ public:
          m_flCaptureScore=-1.0;
          m_capture.Clear();
          m_identity.Clear();
+         m_tracker.Reset();
          SetPhase(deckkernel::camera::RecognitionPhase::Searching);
          m_strName="--";m_strType="--";m_strRules="--";
          m_strMana="No mana evidence";
@@ -1087,6 +1114,16 @@ public:
       if(!sourceFrame.empty() && found)
          event->card=RectifyForOcr(sourceFrame,found->corners,m_manualOrientation);
       m_ocrCard=event->number;
+      // PHASE 03: lock the outer physical card before examining its artwork.
+      if(!sourceFrame.empty() && found) {
+         std::array<cv::Point2f,4> arrCorners{};
+         for(std::size_t uIndex=0;uIndex<4;++uIndex)
+            arrCorners[uIndex]=cv::Point2f(
+               static_cast<float>(found->corners[uIndex].x),
+               static_cast<float>(found->corners[uIndex].y));
+         if(!m_tracker.Begin(sourceFrame,arrCorners))
+            std::println("[CAM-TRACK] insufficient full-card optical-flow features");
+      }
       m_strStatus="CARD CAPTURED - preparing identification";
       m_strEdition="Edition not verified";
       m_recognitionReady=false;
@@ -1097,6 +1134,7 @@ public:
       m_flCaptureSharpness=0.0;
       m_focusStarted=std::chrono::steady_clock::now();
       m_identity.Clear();
+      SetPhase(deckkernel::camera::RecognitionPhase::Tracking);
       SetPhase(deckkernel::camera::RecognitionPhase::Focusing);
       m_strName="--";m_strType="--";m_strRules="--";
       m_referenceCard.release();
@@ -1850,7 +1888,7 @@ int main(int argc,char** argv) {
          // One contour detection/rectification per frame. Use precisely the
          // same pixels for the side panel, the OCR and the artwork worker.
          CardDetectionDiagnostics detection;
-         auto found=signal.nonblack?FindCard(frame,&detection):
+         auto found=signal.nonblack?processor.Observe(frame):
             std::optional<FoundCard>{};
          bool const flip=preview.Flip180();
          if(flip!=appliedFlip) {
