@@ -830,7 +830,7 @@ namespace deckkernel::camera {
             LoadReference(pConnection,aArtworkResult);
             Publish(aArtworkResult);
             std::vector<Ranked> vecPrintings=FindPrintings(
-               pConnection,aOriented,aArt);
+               pConnection,aOriented,std::optional<Ranked>{aArt});
             RefinePrintingImages(pConnection,aOriented,vecPrintings);
             CardImageMatchResult aResult=SummarizePrintings(
                vecPrintings,true,aTask.uEvent,iOrientation);
@@ -846,6 +846,7 @@ namespace deckkernel::camera {
             return aResult;
          }
          // Both artwork orientations failed: the full card becomes the fallback.
+         cv::Mat aCard=aTask.aCard;
          std::optional<CardImageMatchResult> optBest;
          int iBestOrb = -1, iBestHash = 65;
          aCard = aTask.aCard;
