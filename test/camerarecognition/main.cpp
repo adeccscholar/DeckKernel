@@ -114,6 +114,11 @@ struct CardDetectionDiagnostics {
    unsigned layoutChecked{};
    unsigned layoutRecognized{};
    bool selectedLayoutRecognized{};
+   unsigned rejectedShape{};
+   unsigned rejectedAspect{};
+   unsigned selectedInnerPanels{};
+   double selectedRatio{};
+   bool inferredOuterFrame{};
 };
 
 /** Refine only interior, finite corners on the detection image.
@@ -188,6 +193,8 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
    std::vector<cv::Point> best;
    bool boBestRotate180{};
    bool boBestLayoutRecognized{};
+   unsigned uBestInnerPanels{};
+   double flBestRatio{};
    CardDetectionDiagnostics stats;
 
    auto searchContours=[&](cv::Mat const& edgeMap) {
@@ -240,7 +247,12 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
             // Recover the quadrilateral from the rotated minimum-area box.
             // Only accept contours filling most of that box, not arbitrary
             // elongated edges, hands or a tabletop boundary.
-            if(fill<0.68)continue;
+            // A mouse/oval fills about 78% of its bounding rectangle.
+            // Card corners are nearly straight, including rounded corners.
+            if(fill<0.86) {
+               ++stats.rejectedShape;
+               continue;
+            }
             cv::Point2f points[4];
             rectangle.points(points);
             corners.clear();
@@ -260,8 +272,47 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
             if(flMin<18.0 || flMax/flMin>3.5)continue;
             ++stats.quadrilaterals;
          }
-         ++stats.aspectCandidates;
+         // PHASE 01: compare the contour to the 63 x 88 mm physical
+         // card. The original code only rewarded the ratio weakly, so an
+         // artwork or type rectangle could still win by area. Distortion
+         // widens the range, but a flat artwork panel must not be confused
+         // with an unusually foreshortened whole card.
          double const ratio=longSide/shortSide;
+         if(ratio<1.14 || ratio>1.90) {
+            ++stats.rejectedAspect;
+            continue;
+         }
+         if(recovered && (ratio<1.22 || ratio>1.64)) {
+            ++stats.rejectedAspect;
+            continue;
+         }
+         if(!recovered) {
+            double const flPerimeter=cv::arcLength(contour,true);
+            double const flQuadPerimeter=cv::arcLength(corners,true);
+            if(flQuadPerimeter<=0.0 ||
+               flPerimeter/flQuadPerimeter>1.15) {
+               ++stats.rejectedShape;
+               continue;
+            }
+            // A typical isolated artwork is wider than a physical card.
+            // Preserve strongly skewed real cards: their opposing edge
+            // lengths differ because of perspective projection.
+            if(ratio>1.66) {
+               std::array<double,4> arrSides{};
+               for(int iSide=0;iSide<4;++iSide)
+                  arrSides[iSide]=cv::norm(
+                     corners[iSide]-corners[(iSide+1)%4]);
+               double const flOppositeA=std::max(arrSides[0],arrSides[2])/
+                  std::max(1.0,std::min(arrSides[0],arrSides[2]));
+               double const flOppositeB=std::max(arrSides[1],arrSides[3])/
+                  std::max(1.0,std::min(arrSides[1],arrSides[3]));
+               if(std::max(flOppositeA,flOppositeB)<1.20) {
+                  ++stats.rejectedAspect;
+                  continue;
+               }
+            }
+         }
+         ++stats.aspectCandidates;
          // Favor the rectangular printed card over partial inner borders.
          double const ratioFitness=std::max(0.0,
             1.0-std::abs(ratio-1.40)/0.50);
@@ -293,9 +344,51 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
          // Blur, glare, uncommon printing borders or a weak MJPG frame can
          // easily invalidate these provisional separator thresholds.
          // A physical contour may be tracked and refocused despite that.
+         // A physical card encloses multiple rectangular elements, while
+         // a mouse or isolated artwork does not. Count substantial, distinct
+         // nested panels (art and rules) as additional evidence; do not
+         // require them, because blur or unconventional printings hide them.
+         unsigned uInnerPanels{};
+         std::array<cv::Rect,3> arrPanels{};
+         for(auto const& aInner:contours) {
+            if(&aInner==&contour)continue;
+            double const flInnerArea=std::abs(cv::contourArea(aInner));
+            if(flInnerArea<area*0.075 || flInnerArea>area*0.70)
+               continue;
+            cv::Rect const aInnerBox=cv::boundingRect(aInner);
+            double const flInnerAspect=static_cast<double>(
+               std::max(aInnerBox.width,aInnerBox.height))/
+               std::max(1,std::min(aInnerBox.width,aInnerBox.height));
+            if(flInnerAspect<1.3 || flInnerAspect>4.0)continue;
+            std::vector<cv::Point> vecInnerCorners;
+            cv::approxPolyDP(aInner,vecInnerCorners,
+               cv::arcLength(aInner,true)*0.025,true);
+            if(vecInnerCorners.size()!=4 ||
+               !cv::isContourConvex(vecInnerCorners))continue;
+            cv::Point2f const aCenter(
+               aInnerBox.x+aInnerBox.width*0.5f,
+               aInnerBox.y+aInnerBox.height*0.5f);
+            if(cv::pointPolygonTest(corners,aCenter,true)<
+               shortSide*0.06)continue;
+            bool boDuplicate{};
+            for(unsigned uPanel=0;uPanel<uInnerPanels;++uPanel) {
+               cv::Rect const aCommon=aInnerBox&arrPanels[uPanel];
+               double const flOverlap=static_cast<double>(aCommon.area())/
+                  std::max(1,std::min(aInnerBox.area(),
+                     arrPanels[uPanel].area()));
+               if(flOverlap>0.75) {
+                  boDuplicate=true;
+                  break;
+               }
+            }
+            if(boDuplicate)continue;
+            arrPanels[uInnerPanels++]=aInnerBox;
+            if(uInnerPanels==arrPanels.size())break;
+         }
          double const flGeometryScore=area*fill*
-            (0.7+0.3*ratioFitness)*
-            (0.7+0.3*std::min(1.0,boundaryContrast/35.0));
+            (0.65+0.35*ratioFitness)*
+            (0.7+0.3*std::min(1.0,boundaryContrast/35.0))*
+            (1.0+0.30*static_cast<double>(uInnerPanels));
          // The bonus is capped at x2; skip candidates that cannot beat the
          // current winner even if they receive the maximum layout bonus.
          if(flGeometryScore*(boRequireStandardLayout?2.0:1.0)<=bestScore)
@@ -360,6 +453,8 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
          bestScore=score;
          bestArea=area;
          recoveredBest=recovered;
+         uBestInnerPanels=uInnerPanels;
+         flBestRatio=ratio;
          boBestRotate180=boRotate180;
          boBestLayoutRecognized=boLayoutRecognized;
          best=std::move(corners);
@@ -377,6 +472,8 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
    stats.selectedAreaPercent=bestArea*100.0/imageArea;
    stats.recoveredRectangle=recoveredBest;
    stats.selectedLayoutRecognized=boBestLayoutRecognized;
+   stats.selectedInnerPanels=uBestInnerPanels;
+   stats.selectedRatio=flBestRatio;
    if(diagnostics)*diagnostics=stats;
    if(best.size()!=4)return std::nullopt;
 
