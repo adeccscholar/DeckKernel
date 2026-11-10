@@ -258,6 +258,21 @@ namespace deckkernel::camera {
          return true;
       }
 
+      /**
+      \brief Select a printing from independent OCR evidence.
+      \details This does not confirm it or erase remaining candidates.
+      \param uIndex Candidate index.
+      \returns True if index is valid and the selection is not confirmed.
+      \throw None.
+      */
+      [[nodiscard]] bool SelectAt(std::size_t uIndex) noexcept {
+         if(m_boConfirmed || uIndex>=m_vecCandidates.size())return false;
+         m_uSelected=uIndex;
+         return true;
+      }
+      [[nodiscard]] std::vector<PrintingCandidate> const& Candidates()
+         const noexcept {return m_vecCandidates;}
+
       [[nodiscard]] PrintingCandidate const* Selected() const noexcept {
          return m_uSelected<m_vecCandidates.size()?
             &m_vecCandidates[m_uSelected]:nullptr;
