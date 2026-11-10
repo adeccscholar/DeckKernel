@@ -515,3 +515,42 @@ original card metadata is displayed without requiring OCR.
 This has not been compiled or tested with the user's Windows/BCC64X
 camera. Curved cards, partially hidden corners, heavy glare and severe
 perspective distortion require dedicated physical-sample tests.
+
+## 2026-11-10: separated physical, capture, and identity state
+
+The camera recognizer now has three independently owned concepts:
+
+- Physical card: the first stable outer contour starts a session. Sparse
+  optical flow with region-bounded RANSAC homography follows the whole
+  physical card, with feature points distributed over its surface.
+  While this lock exists, the live camera no longer globally searches
+  for another rectangle inside the card.
+- Card capture: a quality-selection window retains the best registered
+  high-resolution card image and freezes it once. It also saves a separate
+  copy of the same frame's lower 15 percent for printing OCR. Recognition
+  and navigation can never silently replace these pixels.
+- Card identity: an Oracle name/ID is separate from a ranked set of
+  distinct Scryfall printing IDs. The user can browse candidate printings
+  with Left/Right and confirm one with Enter.
+
+The post-artwork comparison now considers the normal/large full-card
+renderings and two local image regions: set-symbol neighborhood and
+lower printed strip. When the image evidence is ambiguous, optional
+Tesseract reads only the frozen lower strip as a final escalation,
+checking its text against known set codes and collector numbers.
+OCR never creates a candidate or claims optical certainty.
+
+The dashboard labels each phase, keeps the camera capture on the
+left with its Oracle name, and displays the DB reference on the right
+with set and collector number. The printing reference changes on
+Left/Right; the locked physical image stays fixed.
+
+See [DEMONSTRATION.md](DEMONSTRATION.md) for the ten stages, invariants,
+state machine, keyboard controls, example walkthrough and specific
+regression tests. This section supersedes previous descriptions of a
+global contour scan running on every frame.
+
+The source now contains PHASE comments at stage boundaries to support
+step-by-step teaching. The stage-specific implementation is not yet
+validated by a Windows/BCC64X build and physical camera tests. Similarity
+thresholds and layout-specific OCR positions remain provisional.
