@@ -2130,7 +2130,9 @@ int main(int argc,char** argv) {
             processor.ReferenceLabel(),processor.ReferenceDiagnostic(),
             processor.Set(),processor.SetName(),processor.Collector(),
             processor.Language(),processor.Rarity(),processor.PrintingId(),
-            processor.OracleId(),processor.ManaCost());
+            processor.OracleId(),processor.ManaCost(),
+            processor.CandidateIndex(),processor.CandidateCount(),
+            processor.SelectionConfirmed());
 #endif
          // Only a confirmed card belongs in the right panel. Do not show
          // a transient candidate or a different contour after removal.
