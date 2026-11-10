@@ -23,7 +23,7 @@ if(NOT DEFINED ADECC_TP_SDL2_ROOT OR NOT DEFINED ADECC_TP_SKIA_ROOT)
 endif()
 find_package(SDL2 CONFIG REQUIRED PATHS "${ADECC_TP_SDL2_ROOT}" NO_DEFAULT_PATH)
 find_package(Skia CONFIG REQUIRED PATHS "${ADECC_TP_SKIA_ROOT}" NO_DEFAULT_PATH)
-add_executable(deckkernel_camera_recognition_test main.cpp CameraDashboard.h CameraOcrZones.h CameraImageQuality.h CameraTypography.h)
+add_executable(deckkernel_camera_recognition_test main.cpp CardImageMatcher.h CameraDashboard.h CameraOcrZones.h CameraImageQuality.h CameraTypography.h)
 if(TARGET SDL2::SDL2 AND TARGET Skia::skia)
    target_link_libraries(deckkernel_camera_recognition_test PRIVATE SDL2::SDL2 Skia::skia)
    target_compile_definitions(deckkernel_camera_recognition_test PRIVATE
@@ -43,8 +43,8 @@ if(TARGET opencv_videoio)
 else()
    message(STATUS "CameraRecognitionTest: no videoio; replay and self-test remain available")
 endif()
-# Artwork candidates are read directly from stored Scryfall art_crop images.
-# The feature indexer / scantest is NOT required.
+# Offline artwork and full-card candidates reuse scantest's persisted
+# version-1 dHash64/ORB features. Run scantest --all before recognition.
 option(DECKKERNEL_CAMERA_ENABLE_ARTWORK "Enable offline PostgreSQL artwork candidates" ON)
 if(DECKKERNEL_CAMERA_ENABLE_ARTWORK)
    find_package(PostgreSQL REQUIRED)
