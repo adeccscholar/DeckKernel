@@ -124,7 +124,7 @@ namespace deckkernel::camera {
             std::chrono::steady_clock::now()-m_started).count();
          // Wait for both autofocus settling and usable image evidence.
          // Poor frames get additional time, bounded to six seconds.
-         return (m_uSamples>=18 && flElapsed>=1.0 &&
+         return (m_uSamples>=18 && flElapsed>=2.0 &&
             m_bestMetrics.UsableForMatching()) || flElapsed>=6.0;
       }
 
