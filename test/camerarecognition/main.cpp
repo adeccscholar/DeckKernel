@@ -305,8 +305,12 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
          // actually contain four such supported sides.
          std::array<double,4> arrEdgeCoverage{};
          for(int iSide=0;iSide<4;++iSide) {
-            cv::Point const aFrom=corners[iSide];
-            cv::Point const aTo=corners[(iSide+1)%4];
+            cv::Point aFrom=corners[iSide];
+            cv::Point aTo=corners[(iSide+1)%4];
+            if(!cv::clipLine(closed.size(),aFrom,aTo)) {
+               arrEdgeCoverage[iSide]=0.0;
+               continue;
+            }
             cv::LineIterator aLine(closed,aFrom,aTo,8,false);
             int const iStep=std::max(1,aLine.count/120);
             unsigned uSamples{},uPresent{};
