@@ -33,9 +33,11 @@ struct Metrics {
    \throw None.
    */
    [[nodiscard]] bool UsableForMatching() const noexcept {
-      return sourceWidth>=360 && sourceHeight>=500 &&
-         brightness>=65.0 && clippedPercent<12.0 &&
-         sharpness>=15.0 && detailSharpness>=18.0;
+      // Conservative, provisional starting values. Use actual camera source
+      // pixels instead of the upscaled rectangle dimensions.
+      return sourceWidth>=320 && sourceHeight>=440 &&
+         brightness>=55.0 && clippedPercent<12.0 &&
+         sharpness>=12.0 && detailSharpness>=15.0;
    }
    [[nodiscard]] bool GlareRisk() const noexcept {
       return clippedPercent>=4.0;
@@ -46,7 +48,8 @@ struct Metrics {
 };
 
 /** Sample only card pixels, not the background or 4K camera framebuffer. */
-[[nodiscard]] inline Metrics Measure(cv::Mat const& card) {
+[[nodiscard]] inline Metrics Measure(cv::Mat const& card,
+   int iNativeWidth=0) {
    if(card.empty())return {};
    cv::Mat sample,bgr,gray,hsv;
    cv::resize(card,sample,cv::Size(240,336),0,0,cv::INTER_AREA);
@@ -78,8 +81,8 @@ struct Metrics {
    cv::Scalar avg,dev;
    cv::meanStdDev(lap,avg,dev);
    Metrics m;
-   m.sourceWidth=card.cols;
-   m.sourceHeight=card.rows;
+   m.sourceWidth=iNativeWidth>0?iNativeWidth:card.cols;
+   m.sourceHeight=iNativeWidth>0?iNativeWidth*7/5:card.rows;
    m.brightness=mean[0];
    m.clippedPercent=100.0*clipped/count;
    m.darkPercent=100.0*dark/count;
