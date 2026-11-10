@@ -77,8 +77,6 @@ hash_ty DHash(cv::Mat const& source) {
             (small.at<unsigned char>(y,x)>small.at<unsigned char>(y,x+1)?1ULL:0ULL);
    return uResult;
 }
-#endif
-
 struct FoundCard {
    cv::Mat rectified;
    hash_ty fingerprint{};
