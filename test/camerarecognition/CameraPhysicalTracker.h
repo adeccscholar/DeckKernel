@@ -45,10 +45,15 @@ namespace deckkernel::camera {
       */
       static std::vector<cv::Point2f> Features(cv::Mat const& aGray,
          std::array<cv::Point2f,4> const& arrCorners) {
-         cv::Mat aMask(aGray.size(),CV_8UC1,cv::Scalar(0));
          std::vector<cv::Point> vecPolygon;
          for(auto const& aPoint:arrCorners)
             vecPolygon.emplace_back(cvRound(aPoint.x),cvRound(aPoint.y));
+         cv::Rect const aBounds=cv::boundingRect(vecPolygon) &
+            cv::Rect(0,0,aGray.cols,aGray.rows);
+         if(aBounds.width<16||aBounds.height<16)return {};
+         // Work only on the known physical-card ROI, not the entire 4K scene.
+         cv::Mat aMask(aBounds.size(),CV_8UC1,cv::Scalar(0));
+         for(cv::Point& aPoint:vecPolygon)aPoint-=aBounds.tl();
          cv::fillConvexPoly(aMask,vecPolygon,cv::Scalar(255));
          std::array<cv::Point2f,4> const arrCanonical{{
             {0.f,0.f},{3.f,0.f},{3.f,3.f},{0.f,3.f}
@@ -56,7 +61,12 @@ namespace deckkernel::camera {
          cv::Mat const aH=cv::getPerspectiveTransform(
             arrCorners.data(),arrCanonical.data());
          std::vector<cv::Point2f> vecAll;
-         cv::goodFeaturesToTrack(aGray,vecAll,300,0.008,5.0,aMask,3,false);
+         cv::goodFeaturesToTrack(aGray(aBounds),vecAll,
+            300,0.008,5.0,aMask,3,false);
+         for(cv::Point2f& aPoint:vecAll) {
+            aPoint.x+=static_cast<float>(aBounds.x);
+            aPoint.y+=static_cast<float>(aBounds.y);
+         }
          std::vector<cv::Point2f> vecCanonical;
          cv::perspectiveTransform(vecAll,vecCanonical,aH);
          std::array<unsigned,9> arrCount{};
@@ -151,9 +161,34 @@ namespace deckkernel::camera {
          std::vector<unsigned char> vecStatus;
          std::vector<float> vecError;
          if(m_vecPoints.size()>=12) {
-            cv::calcOpticalFlowPyrLK(m_aPreviousGray,aCurrent,
-               m_vecPoints,vecNext,vecStatus,vecError,
+            // Keep LK pyramids bounded to the last known object and a
+            // 20-percent motion margin instead of processing the full frame.
+            std::vector<cv::Point2f> vecPolygon(
+               m_arrCorners.begin(),m_arrCorners.end());
+            cv::Rect const aBox=cv::boundingRect(vecPolygon);
+            int const iMargin=std::max(25,
+               std::max(aBox.width,aBox.height)/5);
+            cv::Rect const aRegion=cv::Rect(
+               aBox.x-iMargin,aBox.y-iMargin,
+               aBox.width+2*iMargin,aBox.height+2*iMargin) &
+               cv::Rect(0,0,aCurrent.cols,aCurrent.rows);
+            if(aRegion.width<=40||aRegion.height<=40) {
+               ++m_uMissed;
+               return std::nullopt;
+            }
+            std::vector<cv::Point2f> vecLocal=m_vecPoints;
+            for(cv::Point2f& aPoint:vecLocal) {
+               aPoint.x-=static_cast<float>(aRegion.x);
+               aPoint.y-=static_cast<float>(aRegion.y);
+            }
+            cv::calcOpticalFlowPyrLK(
+               m_aPreviousGray(aRegion),aCurrent(aRegion),
+               vecLocal,vecNext,vecStatus,vecError,
                cv::Size(21,21),3);
+            for(cv::Point2f& aPoint:vecNext) {
+               aPoint.x+=static_cast<float>(aRegion.x);
+               aPoint.y+=static_cast<float>(aRegion.y);
+            }
             std::vector<cv::Point2f> vecBefore,vecAfter;
             for(std::size_t uIndex=0;uIndex<vecStatus.size();++uIndex) {
                if(vecStatus[uIndex] && vecError[uIndex]<30.f) {
