@@ -1478,6 +1478,60 @@ public:
 #endif
 
 void SelfTest() {
+   // DEMO TEST 04/05: the capture becomes immutable after Freeze().
+   deckkernel::camera::CardCapture aCapture;
+   cv::Mat aInitial(672,480,CV_8UC3,cv::Scalar(75,115,155));
+   aCapture.Begin(aInitial);
+   if(!aCapture.Freeze() || aCapture.Image().empty() ||
+      aCapture.Bottom().empty())
+      throw std::runtime_error("frozen capture could not be established");
+   cv::Mat const aSnapshot=aCapture.Image().clone();
+   cv::Mat aChanged(672,480,CV_8UC3,cv::Scalar(190,220,240));
+   if(aCapture.Offer(aChanged) ||
+      cv::norm(aSnapshot,aCapture.Image(),cv::NORM_INF)!=0)
+      throw std::runtime_error("frozen capture was modified");
+
+   // DEMO TEST 09/10: switching printings never mutates card pixels.
+   deckkernel::camera::CardIdentity aIdentity;
+   std::vector<deckkernel::camera::PrintingCandidate> vecPrintings(3);
+   for(unsigned uIndex=0;uIndex<vecPrintings.size();++uIndex) {
+      vecPrintings[uIndex].strOracleId="oracle-demo";
+      vecPrintings[uIndex].strName="Demo Card";
+      vecPrintings[uIndex].strPrintingId=std::format("printing-{}",uIndex);
+   }
+   aIdentity.SetCandidates(std::move(vecPrintings));
+   if(aIdentity.Count()!=3 || !aIdentity.Navigate(-1) ||
+      aIdentity.Index()!=2 || !aIdentity.Navigate(1) ||
+      aIdentity.Index()!=0 || !aIdentity.Confirm() ||
+      aIdentity.Navigate(1) || !aIdentity.Confirmed())
+      throw std::runtime_error("printing navigation/confirmation lifecycle failed");
+   aIdentity.Clear();
+   if(aIdentity.Count()!=0 || aIdentity.Confirmed())
+      throw std::runtime_error("printing identity not cleared");
+
+   // DEMO TEST 03: follow a textured physical card without new contours.
+   cv::Mat aTexture(720,960,CV_8UC3,cv::Scalar(20,25,30));
+   cv::rectangle(aTexture,cv::Rect(260,150,290,400),
+      cv::Scalar(210,220,230),-1);
+   for(int iY=0;iY<8;++iY) {
+      for(int iX=0;iX<7;++iX) {
+         cv::circle(aTexture,cv::Point(280+iX*37,175+iY*48),5,
+            cv::Scalar((iX*37+iY*17)%220,
+               (iX*53+iY*27)%220,(iX*29+iY*41)%220),-1);
+      }
+   }
+   deckkernel::camera::PhysicalCardTracker aTracker;
+   std::array<cv::Point2f,4> const arrCard{{
+      {260.f,150.f},{550.f,150.f},{550.f,550.f},{260.f,550.f}
+   }};
+   if(!aTracker.Begin(aTexture,arrCard))
+      throw std::runtime_error("textured card did not establish optical-flow lock");
+   if(!aTracker.Track(aTexture))
+      throw std::runtime_error("stationary physical card lost during optical flow");
+   aTracker.Reset();
+   if(aTracker.Active())
+      throw std::runtime_error("physical tracker did not release its lock");
+
    Processor processor(false);
    cv::Mat const brightCard(672,480,CV_8UC3,cv::Scalar(255,255,255));
    cv::Mat const dimCard(672,480,CV_8UC3,cv::Scalar(15,15,15));
