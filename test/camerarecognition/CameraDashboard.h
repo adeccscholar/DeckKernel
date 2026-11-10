@@ -44,6 +44,8 @@ class CameraDashboard {
    std::string m_strStatus{"Waiting for card"};
    std::string m_strIdentity{"No verified identity"};
    std::string m_strOrientation{"Automatic orientation pending"};
+   std::string m_strGuidance{"Place a card in the camera"};
+   bool m_bCardLocked{};
    static sk_sp<SkTypeface>& Typeface() {
       static sk_sp<SkTypeface> face=[] {
          auto manager=SkFontMgr_New_DirectWrite();
@@ -157,7 +159,8 @@ public:
       std::string strMana,std::string strStatus,
       std::string strIdentity="No verified identity",
       std::string strOrientation="Automatic orientation pending",
-      std::string strQuality="Waiting for card") {
+      std::string strQuality="Waiting for card",bool boCardLocked=false,
+      std::string strGuidance="Place a card in the camera") {
       m_strName=std::move(strName);
       m_strType=std::move(strType);
       m_strRules=std::move(strRules);
@@ -166,6 +169,8 @@ public:
       m_strIdentity=std::move(strIdentity);
       m_strOrientation=std::move(strOrientation);
       m_qualityStatus=std::move(strQuality);
+      m_bCardLocked=boCardLocked;
+      m_strGuidance=std::move(strGuidance);
    }
    void Show(cv::Mat const& aRaw,cv::Mat const& aCard,
       int iCamera,double flFps,double flBrightness) {
@@ -178,16 +183,21 @@ public:
       if(!aSurface)return;
       SkCanvas* pCanvas=aSurface->getCanvas();
       pCanvas->clear(0xff0a141d);
-      Fill(pCanvas,SkRect::MakeXYWH(16,55,(iWidth-48)*0.56f,iHeight*0.57f),0xff142633);
-      Fill(pCanvas,SkRect::MakeXYWH(32+(iWidth-48)*0.56f,55,
-         (iWidth-48)*0.44f,iHeight*0.57f),0xff142633);
+      // After capture the retained card is the primary display, not the search feed.
+      float const flRawShare=m_bCardLocked?0.22f:0.56f;
+      Fill(pCanvas,SkRect::MakeXYWH(16,55,(iWidth-48)*flRawShare,iHeight*0.57f),0xff142633);
+      Fill(pCanvas,SkRect::MakeXYWH(32+(iWidth-48)*flRawShare,55,
+         (iWidth-48)*(1.0f-flRawShare),iHeight*0.57f),0xff142633);
       float const flBottom=75.f+iHeight*0.57f;
       Fill(pCanvas,SkRect::MakeXYWH(16,flBottom,iWidth-32,
          iHeight-flBottom-16),0xff172936);
       Text(pCanvas,25,36,"DECKKERNEL  /  CAMERA RECOGNITION",24,0xfff5f7fa);
-      Text(pCanvas,32,84,"LIVE CAMERA",17,0xff8ed5ee);
-      Text(pCanvas,48+(iWidth-48)*0.56f,84,"RECTIFIED / ROTATED CARD",17,0xff8ed5ee);
-      Text(pCanvas,32,flBottom+28,"CARD INFORMATION / OCR (UNVERIFIED)",19,0xfff5f7fa);
+      Text(pCanvas,32,84,m_bCardLocked?"CAMERA / PRESENCE":"LIVE CAMERA",17,0xff8ed5ee);
+      Text(pCanvas,48+(iWidth-48)*flRawShare,84,
+         m_bCardLocked?"CAPTURED CARD":"RECTIFIED / ROTATED CARD",17,0xff8ed5ee);
+      Text(pCanvas,32,flBottom+28,m_bCardLocked?
+         "CARD CAPTURED / RECOGNITION":"SEARCHING FOR A CARD",19,
+         m_bCardLocked?0xff9dddb9:0xfff5f7fa);
       Text(pCanvas,32,flBottom+55,"Name: "+m_strName,17,0xfff5f7fa);
       Text(pCanvas,32,flBottom+77,"Type: "+m_strType,16,0xffc9d9e2);
       Text(pCanvas,32,flBottom+99,"Mana: "+m_strMana,15,0xffc9d9e2);
@@ -213,13 +223,23 @@ public:
          while(!strRemaining.empty() && strRemaining.front()==' ')
             strRemaining.erase(0,1);
       }
-      Text(pCanvas,32,flBottom+179,"Recognition: "+m_strStatus,16,0xffffcc79);
-      Text(pCanvas,32,flBottom+204,"Identity: "+m_strIdentity,15,0xff9dddb9);
-      Text(pCanvas,32,flBottom+229,"Orientation: "+m_strOrientation,15,0xffc9d9e2);
-      Text(pCanvas,32,flBottom+253,"Image: "+m_qualityStatus,14,0xff9dddb9);
+      auto const strClip=[&](std::string const& strValue) {
+         std::size_t const uMax=static_cast<std::size_t>(
+            std::max(25,(iWidth-90)/9));
+         return strValue.size()>uMax?
+            strValue.substr(0,uMax-3)+"...":strValue;
+      };
+      Text(pCanvas,32,flBottom+179,strClip("Recognition: "+m_strStatus),
+         16,0xffffcc79);
+      Text(pCanvas,32,flBottom+204,strClip("Identity: "+m_strIdentity),
+         15,0xff9dddb9);
+      Text(pCanvas,32,flBottom+229,strClip("Next: "+m_strGuidance),
+         15,0xff8ed5ee);
+      Text(pCanvas,32,flBottom+253,strClip("Image: "+m_qualityStatus),
+         14,0xff9dddb9);
       Text(pCanvas,32,flBottom+276,
-         std::format("Camera {} | {:.1f} fps | brightness {:.0f} | Zoom {:.1f}x (+/-) | R rotate | Esc",
-            iCamera,flFps,flBrightness,m_cardZoom),14,0xff8fa5b2);
+         std::format("Camera {} | {:.1f} fps | Zoom {:.1f}x (+/-) | R rotate | Esc",
+            iCamera,flFps,m_cardZoom),14,0xff8fa5b2);
       SkPixmap aPixels;
       if(aSurface->peekPixels(&aPixels)) {
          SDL_Texture* pBackground=SDL_CreateTexture(m_pRenderer,
@@ -232,10 +252,12 @@ public:
          }
       }
       Image(m_pRaw,SDL_Rect{30,98,
-         static_cast<int>((iWidth-48)*0.56f)-28,static_cast<int>(iHeight*0.57f)-54},m_bFlip);
+         static_cast<int>((iWidth-48)*flRawShare)-28,
+         static_cast<int>(iHeight*0.57f)-54},false);
       Image(m_pCard,SDL_Rect{
-         static_cast<int>(46+(iWidth-48)*0.56f),98,
-         static_cast<int>((iWidth-48)*0.44f)-30,static_cast<int>(iHeight*0.57f)-54},false,m_cardZoom);
+         static_cast<int>(46+(iWidth-48)*flRawShare),98,
+         static_cast<int>((iWidth-48)*(1.0f-flRawShare))-30,
+         static_cast<int>(iHeight*0.57f)-54},false,m_cardZoom);
       SDL_RenderPresent(m_pRenderer);
    }
 };
