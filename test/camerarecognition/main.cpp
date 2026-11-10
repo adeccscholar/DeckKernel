@@ -2156,6 +2156,24 @@ void SelfTest() {
    // PHASE 01 regression: an unstructured rectangle is not sufficient
    // evidence for a complete standard card. It must not be locked in the
    // live detection path merely because it has a card-like aspect ratio.
+   // Artwork can itself form a portrait-looking crop when a rotated
+   // minimum-area rectangle is warped. Color/texture alone is not a card.
+   cv::Mat aArtworkOnlyScene(900,1300,CV_8UC3,cv::Scalar(25,29,35));
+   cv::Rect const aArtworkOnly(430,135,300,420);
+   cv::rectangle(aArtworkOnlyScene,aArtworkOnly,
+      cv::Scalar(24,75,132),-1);
+   for(int iMark=0;iMark<28;++iMark) {
+      cv::circle(aArtworkOnlyScene,
+         cv::Point(445+(iMark*47)%270,155+(iMark*67)%370),
+         8+(iMark%6),cv::Scalar((iMark*31)%210,
+            (iMark*53)%240,(iMark*67)%225),-1);
+   }
+   cv::rectangle(aArtworkOnlyScene,aArtworkOnly,
+      cv::Scalar(12,15,22),4);
+   if(FindCard(aArtworkOnlyScene,nullptr,true))
+      throw std::runtime_error(
+         "portrait artwork without title/type frame acquired as physical card");
+
    auto const aUnusual=FindCard(aUnusualScene,nullptr,true);
    if(aUnusual)
       throw std::runtime_error(
