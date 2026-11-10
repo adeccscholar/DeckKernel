@@ -752,3 +752,42 @@ successful acquisition should now log `05 FROZEN` followed by
 `06 ARTWORK` and a new `[CAM-ART]` search, even if
 `[CAM-QUALITY]` reports `usable=false`. Confirm separately that the
 mouse is rejected while ordinary cards still acquire.
+
+## 2026-11-11: stop locking artwork as the physical card
+
+A real camera screenshot showed a crop containing only the illustration,
+stretched into a portrait-sized frozen input and then submitted to artwork
+matching. This confirmed that the physical-object detector was still
+equating a rectangular contour with an entire card. Additional aspect,
+area, fill or confidence adjustments had not solved that semantic error.
+
+The **live standard-card acquisition path** now inspects the entire
+rectified candidate before creating a physical-card session. It requires
+two distinct, widely supported horizontal frame transitions: the upper
+title-to-artwork transition and the lower artwork-to-type/text transition.
+The check is applied to both 0 and 180-degree orientations. This is not
+OCR and does not determine the Oracle or printing identity. A landscape
+artwork rotated or stretched into a portrait cannot satisfy the missing
+name and text frame evidence merely because its rectangular boundary
+looks card-like.
+
+Geometric candidate rejection is separate from the quality of the
+eventual camera capture. Once a real complete card is acquired, focus
+settling and the image matcher continue as previously separated phases.
+The diagnostic `[CAM-DETECT]` line now includes
+`full-frame-rejected`, enabling a specific distinction between missing
+outer geometry and a partial-card/artwork candidate.
+
+The synthetic tests now explicitly reject an unstructured card-shaped
+rectangle and portrait artwork without title/type framing, while keeping
+the standard-card and inverted-standard-card fixtures.
+
+**Scope and limitations:** this strict structural acquisition criterion
+is for framed standard cards. Full-art, split, textless, adventure and
+other nonstandard front designs need separate, validated layout detectors,
+not an unconditional bypass. Current checks are deliberately conservative
+and have not yet been calibrated on recorded original 4K frames. The UI
+screenshot is insufficient to calculate camera-space corner accuracy.
+A BCC64X build and the existing `--self-test` and actual camera replay
+must validate both false positives and missed real cards before claiming
+improved recognition reliability.
