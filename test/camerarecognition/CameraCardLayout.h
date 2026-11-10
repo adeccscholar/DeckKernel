@@ -32,6 +32,103 @@ namespace deckkernel::camera {
    };
 
    /**
+   \brief Evidence that a rectangle contains the entire standard card frame.
+   \details In contrast to an artwork-only rectangle, a standard card has
+   a title-to-art boundary near its top AND an art-to-text boundary below.
+   \note Scores are structural evidence, not card identity or OCR.
+   */
+   struct WholeCardFrameEvidence {
+      bool boWholeCard{};
+      bool boRotate180{};
+      bool boOrientationReliable{};
+      double flTitleBoundary{};
+      double flTextBoundary{};
+      double flScore{};
+   };
+
+   /**
+   \brief Reject artwork-only rectangles before a physical-card lock.
+   \details Works in both 0 and 180 degree views of a rectified portrait
+   candidate. Two geographically separated, nearly horizontal frame
+   separators must be visible. A landscape artwork rotated into portrait
+   by minAreaRect geometry does not acquire these missing text/name bands.
+   \param aRectified A geometrically normalized physical-card candidate.
+   \returns Whole-card structural evidence and optional orientation.
+   \throw cv::Exception If OpenCV processing fails.
+   \note This classifier is deliberately restricted to framed standard cards.
+   Unusual layouts require their own detection path rather than weakening
+   physical-card validation globally.
+   */
+   [[nodiscard]] inline WholeCardFrameEvidence InspectWholeCardFrame(
+      cv::Mat const& aRectified) {
+      WholeCardFrameEvidence aEvidence;
+      if(aRectified.empty() || aRectified.cols<80 ||
+         aRectified.rows<110)return aEvidence;
+      cv::Mat aSample,aGray;
+      cv::resize(aRectified,aSample,cv::Size(240,336),
+         0.0,0.0,cv::INTER_AREA);
+      if(aSample.channels()==4)
+         cv::cvtColor(aSample,aGray,cv::COLOR_BGRA2GRAY);
+      else if(aSample.channels()==3)
+         cv::cvtColor(aSample,aGray,cv::COLOR_BGR2GRAY);
+      else
+         aGray=aSample;
+
+      struct Direction {
+         double flTitle{};
+         double flText{};
+         double flScore{};
+         bool boValid{};
+      };
+      auto const Evaluate=[&](cv::Mat const& aDirection)->Direction {
+         cv::Mat aVertical;
+         cv::Sobel(aDirection,aVertical,CV_16S,0,1,3);
+         // Ignore left/right frame borders and require an edge extending
+         // across much of the central card width, not just art texture.
+         int const iLeft=aDirection.cols*17/100;
+         int const iRight=aDirection.cols*83/100;
+         auto const BandCoverage=[&](int iFirst,int iLast)->double {
+            double flMaximum{};
+            int const iStart=aDirection.rows*iFirst/100;
+            int const iEnd=aDirection.rows*iLast/100;
+            for(int iY=iStart;iY<iEnd;++iY) {
+               short const* pRow=aVertical.ptr<short>(iY);
+               unsigned uEdges{};
+               for(int iX=iLeft;iX<iRight;++iX)
+                  uEdges+=std::abs(static_cast<int>(pRow[iX]))>=85;
+               flMaximum=std::max(flMaximum,
+                  static_cast<double>(uEdges)/(iRight-iLeft));
+            }
+            return flMaximum;
+         };
+         // Printed title/art boundary is commonly in the upper 6..20%.
+         // The distinct art/type or type/rules boundary appears lower down.
+         double const flTitle=BandCoverage(6,20);
+         double const flText=BandCoverage(45,70);
+         bool const boValid=flTitle>=0.32 && flText>=0.32;
+         return Direction{flTitle,flText,
+            std::min(flTitle,flText)+0.15*(flTitle+flText),boValid};
+      };
+      Direction const aNormal=Evaluate(aGray);
+      cv::Mat aInverted;
+      cv::rotate(aGray,aInverted,cv::ROTATE_180);
+      Direction const aReverse=Evaluate(aInverted);
+      aEvidence.boWholeCard=aNormal.boValid || aReverse.boValid;
+      if(!aEvidence.boWholeCard)return aEvidence;
+      bool const boReverse=aReverse.boValid && (!aNormal.boValid ||
+         aReverse.flScore>aNormal.flScore+0.08);
+      Direction const& aSelected=boReverse?aReverse:aNormal;
+      aEvidence.boRotate180=boReverse;
+      aEvidence.boOrientationReliable=
+         (aNormal.boValid!=aReverse.boValid) ||
+         std::abs(aNormal.flScore-aReverse.flScore)>=0.08;
+      aEvidence.flTitleBoundary=aSelected.flTitle;
+      aEvidence.flTextBoundary=aSelected.flText;
+      aEvidence.flScore=aSelected.flScore;
+      return aEvidence;
+   }
+
+   /**
    \brief Evaluate a standard frame and identify its correct 180-degree orientation.
    \details The illustration of a standard card occupies the upper middle,
    with a title bar above and a less colorful text panel below. Its top
