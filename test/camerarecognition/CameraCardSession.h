@@ -69,7 +69,9 @@ namespace deckkernel::camera {
    */
    class CardCapture final {
       cv::Mat m_aBest;
+      cv::Mat m_aBestOverscan;
       cv::Mat m_aFrozen;
+      cv::Mat m_aFrozenOverscan;
       cv::Mat m_aBottom;
       double m_flBestScore{-1.0};
       double m_flSharpness{};
@@ -85,10 +87,11 @@ namespace deckkernel::camera {
       \returns Nothing.
       \throw cv::Exception If image processing fails.
       */
-      void Begin(cv::Mat const& aInitial,int iNativeWidth=0) {
+      void Begin(cv::Mat const& aInitial,int iNativeWidth=0,
+         cv::Mat const& aOverscan={}) {
          Clear();
          m_started=std::chrono::steady_clock::now();
-         static_cast<void>(Offer(aInitial,iNativeWidth));
+         static_cast<void>(Offer(aInitial,iNativeWidth,aOverscan));
       }
 
       /**
@@ -99,7 +102,7 @@ namespace deckkernel::camera {
       \throw cv::Exception If image processing fails.
       */
       [[nodiscard]] bool Offer(cv::Mat const& aRectified,
-         int iNativeWidth=0) {
+         int iNativeWidth=0,cv::Mat const& aOverscan={}) {
          if(m_boFrozen || aRectified.empty())return false;
          auto const aMetrics=deckkernel_camera::quality::Measure(
             aRectified,iNativeWidth);
@@ -110,6 +113,9 @@ namespace deckkernel::camera {
          m_flSharpness=aMetrics.sharpness;
          m_bestMetrics=aMetrics;
          m_aBest=aRectified.clone();
+         // Same source frame, same outer corners, larger acquisition field.
+         // Do not use a separately timed frame for the OCR margin.
+         m_aBestOverscan=(aOverscan.empty()?aRectified:aOverscan).clone();
          return true;
       }
 
@@ -141,11 +147,14 @@ namespace deckkernel::camera {
          if(m_boFrozen)return true;
          if(m_aBest.empty())return false;
          m_aFrozen=std::move(m_aBest);
-         // Final OCR escalation uses original frozen pixels, never upscaled
-         // synthetic details. The crop is independent of artwork extraction.
-         int const iTop=m_aFrozen.rows*85/100;
-         m_aBottom=m_aFrozen(cv::Rect(0,iTop,
-            m_aFrozen.cols,m_aFrozen.rows-iTop)).clone();
+         m_aFrozenOverscan=std::move(m_aBestOverscan);
+         if(m_aFrozenOverscan.empty())
+            m_aFrozenOverscan=m_aFrozen.clone();
+         // OCR is based on the extended original-frame field, not the
+         // canonical crop which may end above the printed collector number.
+         int const iTop=m_aFrozenOverscan.rows*80/100;
+         m_aBottom=m_aFrozenOverscan(cv::Rect(0,iTop,
+            m_aFrozenOverscan.cols,m_aFrozenOverscan.rows-iTop)).clone();
          m_boFrozen=true;
          return true;
       }
@@ -157,7 +166,8 @@ namespace deckkernel::camera {
       \throw None.
       */
       void Clear() noexcept {
-         m_aBest.release();m_aFrozen.release();m_aBottom.release();
+         m_aBest.release();m_aBestOverscan.release();
+         m_aFrozen.release();m_aFrozenOverscan.release();m_aBottom.release();
          m_flBestScore=-1.0;m_flSharpness=0.0;m_uSamples=0;
          m_bestMetrics={};
          m_boFrozen=false;
@@ -171,6 +181,16 @@ namespace deckkernel::camera {
       }
       [[nodiscard]] cv::Mat const& Image() const noexcept{
          return m_boFrozen?m_aFrozen:m_aBest;
+      }
+      /**
+      \brief Return the margin-preserving image from the SAME selected frame.
+      \details Image matching continues to consume the original canonical
+      crop through Image(). OCR and the dashboard use this overscan image.
+      \returns Immutable extended image after Freeze().
+      \throw None.
+      */
+      [[nodiscard]] cv::Mat const& Overscan() const noexcept {
+         return m_boFrozen?m_aFrozenOverscan:m_aBestOverscan;
       }
       [[nodiscard]] cv::Mat const& Bottom() const noexcept{return m_aBottom;}
       [[nodiscard]] double Sharpness() const noexcept{return m_flSharpness;}
