@@ -1290,7 +1290,8 @@ public:
       cv::Mat const& sourceFrame={},bool boTrustedTracking=false) {
       auto event=m_detector.Accept(found,boTrustedTracking);
       if(m_focusPending && m_ocrCard)
-         EvaluateFocus(found && m_detector.SameCardPosition(*found)?
+         EvaluateFocus(found &&
+            (boTrustedTracking || m_detector.SameCardPosition(*found))?
             &*found:nullptr,sourceFrame);
       // The sharpest accepted card is captured once. Do not continuously
       // rewrite OCR text while the viewer is inspecting the captured card.
