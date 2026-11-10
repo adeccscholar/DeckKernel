@@ -299,6 +299,49 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
             if(flMin<18.0 || flMax/flMin>3.5)continue;
             ++stats.quadrilaterals;
          }
+         // PHASE 01: the perimeter of a physical card is supported by
+         // straight, visible edges on all four sides. An oval mouse can
+         // acquire a plausible minimum-area rectangle but it does not
+         // actually contain four such supported sides.
+         std::array<double,4> arrEdgeCoverage{};
+         for(int iSide=0;iSide<4;++iSide) {
+            cv::Point const aFrom=corners[iSide];
+            cv::Point const aTo=corners[(iSide+1)%4];
+            cv::LineIterator aLine(closed,aFrom,aTo,8,false);
+            int const iStep=std::max(1,aLine.count/120);
+            unsigned uSamples{},uPresent{};
+            for(int iSample=0;iSample<aLine.count;++iSample,++aLine) {
+               if(iSample%iStep!=0)continue;
+               cv::Point const aPixel=aLine.pos();
+               if(aPixel.x<2||aPixel.y<2||
+                  aPixel.x>=closed.cols-2||aPixel.y>=closed.rows-2)
+                  continue;
+               ++uSamples;
+               bool boEdge{};
+               for(int iDy=-2;iDy<=2 && !boEdge;++iDy) {
+                  unsigned char const* pRow=closed.ptr<unsigned char>(
+                     aPixel.y+iDy);
+                  for(int iDx=-2;iDx<=2;++iDx) {
+                     if(pRow[aPixel.x+iDx]) {
+                        boEdge=true;
+                        break;
+                     }
+                  }
+               }
+               uPresent+=boEdge;
+            }
+            arrEdgeCoverage[iSide]=uSamples?
+               static_cast<double>(uPresent)/uSamples:0.0;
+         }
+         unsigned uSupportedSides{};
+         for(double const flCoverage:arrEdgeCoverage)
+            uSupportedSides+=flCoverage>=0.45;
+         // A closed four-corner contour needs evidence for at least three
+         // sides, while allowing one weak edge under glare/occlusion.
+         if(uSupportedSides<3) {
+            ++stats.rejectedShape;
+            continue;
+         }
          // PHASE 01: compare the contour to the 63 x 88 mm physical
          // card. The original code only rewarded the ratio weakly, so an
          // artwork or type rectangle could still win by area. Distortion
