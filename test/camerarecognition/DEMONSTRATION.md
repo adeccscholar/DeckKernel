@@ -67,10 +67,10 @@ late background-worker results from earlier cards.
 PhysicalCardTracker distributes Shi-Tomasi features over the complete
 card: borders, header, artwork, type bar and lower print margin.
 Lucas-Kanade optical flow moves those features across frames, and
-a RANSAC homography predicts new outer corners. The homography estimator
-uses OpenCV core/imgproc (four-point perspective transforms and normalized
-SVD refinement) rather than the unavailable calib3d component in the
-pinned OpenCV 5.0.0 distribution. Tracking failure
+a RANSAC homography predicts new outer corners. OpenCV 5.0.0 provides
+findHomography, projective transforms, contour geometry and related
+functions through its geometry module; goodFeaturesToTrack is declared
+by the features module. No private RANSAC solver is necessary. Tracking failure
 temporarily counts as absence; no competing global contour is selected.
 A persistent absence releases the card after debounce.
 
