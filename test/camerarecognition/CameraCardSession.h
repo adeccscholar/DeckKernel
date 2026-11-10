@@ -122,10 +122,11 @@ namespace deckkernel::camera {
       [[nodiscard]] bool Ready() const noexcept {
          double const flElapsed=std::chrono::duration<double>(
             std::chrono::steady_clock::now()-m_started).count();
-         // Wait for both autofocus settling and usable image evidence.
-         // Poor frames get additional time, bounded to six seconds.
-         return (m_uSamples>=18 && flElapsed>=2.0 &&
-            m_bestMetrics.UsableForMatching()) || flElapsed>=6.0;
+         // PHASE 04: never freeze an inadequate capture merely because
+         // time elapsed. Keep tracking this physical card and offering
+         // registered frames until it really meets the quality gate.
+         return m_uSamples>=18 && flElapsed>=2.0 &&
+            m_bestMetrics.UsableForMatching();
       }
 
       /**
@@ -161,6 +162,11 @@ namespace deckkernel::camera {
       }
 
       [[nodiscard]] bool Frozen() const noexcept{return m_boFrozen;}
+      [[nodiscard]] bool NeedsBetterFocusHint() const noexcept {
+         return !m_boFrozen && !m_bestMetrics.UsableForMatching() &&
+            std::chrono::duration<double>(
+               std::chrono::steady_clock::now()-m_started).count()>=6.0;
+      }
       [[nodiscard]] cv::Mat const& Image() const noexcept{
          return m_boFrozen?m_aFrozen:m_aBest;
       }
