@@ -73,6 +73,7 @@ namespace deckkernel::camera {
       cv::Mat m_aBottom;
       double m_flBestScore{-1.0};
       double m_flSharpness{};
+      deckkernel_camera::quality::Metrics m_bestMetrics{};
       unsigned m_uSamples{};
       bool m_boFrozen{};
       std::chrono::steady_clock::time_point m_started{};
@@ -84,10 +85,10 @@ namespace deckkernel::camera {
       \returns Nothing.
       \throw cv::Exception If image processing fails.
       */
-      void Begin(cv::Mat const& aInitial) {
+      void Begin(cv::Mat const& aInitial,int iNativeWidth=0) {
          Clear();
          m_started=std::chrono::steady_clock::now();
-         static_cast<void>(Offer(aInitial));
+         static_cast<void>(Offer(aInitial,iNativeWidth));
       }
 
       /**
@@ -97,14 +98,17 @@ namespace deckkernel::camera {
       \returns True if this image became the current best sample.
       \throw cv::Exception If image processing fails.
       */
-      [[nodiscard]] bool Offer(cv::Mat const& aRectified) {
+      [[nodiscard]] bool Offer(cv::Mat const& aRectified,
+         int iNativeWidth=0) {
          if(m_boFrozen || aRectified.empty())return false;
-         auto const aMetrics=deckkernel_camera::quality::Measure(aRectified);
+         auto const aMetrics=deckkernel_camera::quality::Measure(
+            aRectified,iNativeWidth);
          ++m_uSamples;
          if(!m_aBest.empty() && aMetrics.score<=m_flBestScore)
             return false;
          m_flBestScore=aMetrics.score;
          m_flSharpness=aMetrics.sharpness;
+         m_bestMetrics=aMetrics;
          m_aBest=aRectified.clone();
          return true;
       }
@@ -116,9 +120,12 @@ namespace deckkernel::camera {
       \throw None.
       */
       [[nodiscard]] bool Ready() const noexcept {
-         return m_uSamples>=18 ||
-            std::chrono::duration<double>(
-               std::chrono::steady_clock::now()-m_started).count()>=2.0;
+         double const flElapsed=std::chrono::duration<double>(
+            std::chrono::steady_clock::now()-m_started).count();
+         // Wait for both autofocus settling and usable image evidence.
+         // Poor frames get additional time, bounded to six seconds.
+         return (m_uSamples>=18 && flElapsed>=1.0 &&
+            m_bestMetrics.UsableForMatching()) || flElapsed>=6.0;
       }
 
       /**
@@ -149,6 +156,7 @@ namespace deckkernel::camera {
       void Clear() noexcept {
          m_aBest.release();m_aFrozen.release();m_aBottom.release();
          m_flBestScore=-1.0;m_flSharpness=0.0;m_uSamples=0;
+         m_bestMetrics={};
          m_boFrozen=false;
       }
 
@@ -160,6 +168,11 @@ namespace deckkernel::camera {
       [[nodiscard]] double Sharpness() const noexcept{return m_flSharpness;}
       [[nodiscard]] double Score() const noexcept{return m_flBestScore;}
       [[nodiscard]] unsigned Samples() const noexcept{return m_uSamples;}
+      [[nodiscard]] deckkernel_camera::quality::Metrics const& Quality()
+         const noexcept {return m_bestMetrics;}
+      [[nodiscard]] bool UsableForMatching() const noexcept {
+         return m_bestMetrics.UsableForMatching();
+      }
    };
 
    /**
