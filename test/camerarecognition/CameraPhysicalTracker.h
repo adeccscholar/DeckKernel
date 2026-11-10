@@ -122,9 +122,11 @@ namespace deckkernel::camera {
          m_aFrameSize=aFrame.size();
          m_arrCorners=arrCorners;
          m_vecPoints=Features(m_aPreviousGray,m_arrCorners);
-         m_boActive=m_vecPoints.size()>=12;
-         if(!m_boActive)Reset();
-         return m_boActive;
+         // The physical-object lock persists even without sufficient feature
+         // points. In that case Track reports missing observations; it must
+         // never fall back to global artwork/contour search during this card.
+         m_boActive=true;
+         return m_vecPoints.size()>=12;
       }
 
       /**
