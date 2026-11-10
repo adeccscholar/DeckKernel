@@ -539,43 +539,77 @@ namespace deckkernel::camera {
       */
       std::vector<Ranked> FindPrintings(PGconn* pConnection,
          cv::Mat const& aCard, std::optional<Ranked> const& optArtwork) const {
-         std::string const strHash = DHashBits(aCard);
-         // PHASE 07: once artwork is known, expand candidate enumeration.
-         std::string const strLimit = std::to_string(
+         std::string const strHash=DHashBits(aCard);
+         std::string const strLimit=std::to_string(
             optArtwork?std::max(1000u,m_uCandidates):m_uCandidates);
-         char const* arrParams[]{
-            strHash.c_str(),
-            optArtwork ? optArtwork->strAssetId.c_str() : nullptr,
-            optArtwork ? optArtwork->strIllustrationId.c_str() : nullptr,
-            strLimit.c_str()
-         };
-         auto const aQueryStart=std::chrono::steady_clock::now();
-         result_ty aRows(PQexecParams(pConnection,
+         // PHASE 07: if the artwork is identified, begin with its printing
+         // faces, NEVER with a global dHash sort over 2.7M indexed assets.
+         // The existing FirstConnection model already indexes
+         // scryfall_image_assets(illustration_id) and the variant asset ID.
+         // A MATERIALIZED CTE forces the small relational candidate set to
+         // be established before perceptual similarity is evaluated.
+         std::string strSql;
+         if(optArtwork) {
+            strSql=
+               "WITH art_faces AS MATERIALIZED ("
+               " SELECT va.card_id,va.face_id "
+               " FROM deckkernel_test.scryfall_card_image_variants va "
+               " WHERE va.asset_id=$2::bigint AND va.variant='art_crop' "
+               " UNION "
+               " SELECT va.card_id,va.face_id "
+               " FROM deckkernel_test.scryfall_image_assets aa "
+               " JOIN deckkernel_test.scryfall_card_image_variants va "
+               " ON va.asset_id=aa.id AND va.variant='art_crop' "
+               " WHERE aa.illustration_id=$3::text "
+               ") ";
+         }
+         strSql+=
             "SELECT a.id::text, c.scryfall_id, cf.face_id::text, cf.name, "
             "s.code, c.collector_number, c.lang, v.variant, "
-            "bit_count(f.perceptual_hash # $1::bit(64))::text, f.orb_descriptors, "
-            "cf.type_line, cf.mana_cost, s.name, r.code, COALESCE(c.oracle_id,'') "
-            "FROM deckkernel_test.scryfall_image_features f "
-            "JOIN deckkernel_test.scryfall_image_assets a ON a.id=f.asset_id "
-            "JOIN deckkernel_test.scryfall_card_image_variants v "
-            "ON v.asset_id=a.id AND v.variant IN ('normal','border_crop','large') "
+            "bit_count(f.perceptual_hash # $1::bit(64))::text, "
+            "f.orb_descriptors, cf.type_line, cf.mana_cost, s.name, "
+            "r.code, COALESCE(c.oracle_id,'') "
+            "FROM ";
+         if(optArtwork) {
+            strSql+=
+               "art_faces af "
+               "JOIN deckkernel_test.scryfall_card_image_variants v "
+               "ON v.card_id=af.card_id AND v.face_id=af.face_id "
+               "AND v.variant IN ('normal','border_crop','large') ";
+         }
+         else {
+            strSql+=
+               "deckkernel_test.scryfall_card_image_variants v ";
+         }
+         strSql+=
+            "JOIN deckkernel_test.scryfall_image_assets a "
+            "ON a.id=v.asset_id AND a.image_data IS NOT NULL "
+            "JOIN deckkernel_test.scryfall_image_features f "
+            "ON f.asset_id=a.id AND f.algorithm='dhash64-orb' "
+            "AND f.algorithm_version=1 AND f.perceptual_hash IS NOT NULL "
             "JOIN deckkernel_test.scryfall_cards c ON c.id=v.card_id "
             "JOIN deckkernel_test.scryfall_sets s ON s.id=c.set_id "
             "JOIN deckkernel_test.dom_rarities r ON r.id=c.rarity_id "
             "JOIN deckkernel_test.scryfall_card_faces cf "
-            "ON cf.card_id=v.card_id AND cf.face_id=v.face_id "
-            "WHERE f.algorithm='dhash64-orb' AND f.algorithm_version=1 "
-            "AND f.perceptual_hash IS NOT NULL AND a.image_data IS NOT NULL "
-            "AND ($2::bigint IS NULL OR EXISTS ("
-            "  SELECT 1 FROM deckkernel_test.scryfall_card_image_variants va "
-            "  JOIN deckkernel_test.scryfall_image_assets aa ON aa.id=va.asset_id "
-            "  WHERE va.card_id=v.card_id AND va.face_id=v.face_id "
-            "    AND va.variant='art_crop' "
-            "    AND (va.asset_id=$2::bigint OR "
-            "       ($3::text<>'' AND aa.illustration_id=$3::text)))) "
-            "ORDER BY bit_count(f.perceptual_hash # $1::bit(64)), a.id "
-            "LIMIT $4::integer",
-            4, nullptr, arrParams, nullptr, nullptr, 0));
+            "ON cf.card_id=v.card_id AND cf.face_id=v.face_id ";
+         if(!optArtwork)
+            strSql+="WHERE v.variant IN ('normal','border_crop','large') ";
+         strSql+=
+            optArtwork?
+               "ORDER BY bit_count(f.perceptual_hash # $1::bit(64)), "
+               "a.id LIMIT $4::integer":
+               "ORDER BY bit_count(f.perceptual_hash # $1::bit(64)), "
+               "a.id LIMIT $2::integer";
+         char const* arrParams[]{
+            strHash.c_str(),
+            optArtwork?optArtwork->strAssetId.c_str():strLimit.c_str(),
+            optArtwork?optArtwork->strIllustrationId.c_str():nullptr,
+            optArtwork?strLimit.c_str():nullptr
+         };
+         auto const aQueryStart=std::chrono::steady_clock::now();
+         result_ty aRows(PQexecParams(pConnection,
+            strSql.c_str(),optArtwork?4:2,nullptr,
+            arrParams,nullptr,nullptr,0));
          if(!aRows || PQresultStatus(aRows.get()) != PGRES_TUPLES_OK) {
             throw std::runtime_error(std::format(
                "full-card feature lookup failed: {}", PQerrorMessage(pConnection)));
