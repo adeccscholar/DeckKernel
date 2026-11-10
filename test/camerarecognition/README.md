@@ -443,3 +443,44 @@ ORDER BY v.variant;
 
 Run `deckkernel_card_scantest.exe --all --batch-size=32` to fill
 missing feature rows without re-importing images.
+
+## 2026-11-10: captured-card focus and explicit live status
+
+The live camera now starts the indexed artwork/printing matcher by default
+(if built with `DECKKERNEL_CAMERA_ENABLE_ARTWORK=ON`). Use `--no-artwork`
+to disable matching deliberately. Standalone `--image` and `--sequence`
+modes retain explicit `--artwork` opt-in.
+
+After four consistent contour observations, the stable-card state
+machine locks one physical card. Changes in illumination, image-content
+hashes, OCR or artwork cannot restart a scan of a new card. Only a
+confirmed absence of 45 consecutive observations releases the card.
+A replacement placed without removing the previous card is intentionally
+not distinguished until the removal interval has occurred.
+
+Once captured, the **card is the large primary panel** while live
+camera presence-monitoring remains visible in a small panel. The same
+rectified capture persists for the whole card session. OCR metadata no
+longer rewrites the lower text fields on successive frames. Detection
+quality and contour counters are replaced with stable explanations.
+The UI reports the sequence through asynchronous status events:
+`CARD CAPTURED`, `SEARCHING ARTWORK - orientation 0/180 deg`,
+`ARTWORK FOUND - checking concrete printing`, or
+`ARTWORK NOT FOUND - full card 0/180 deg`. Final statuses are retained
+until the physical card is removed.
+
+The worker diagnoses missing PostgreSQL image data, missing persisted
+version-1 feature index, empty ORB descriptors and missing SHA-256 metadata.
+A missing SHA-256 is a storage-integrity observation, **not** proof of a
+visual-recognition error; dHash and ORB are the matching features.
+PostgreSQL connection and query errors are reported to the active
+camera presentation instead of leaving the display indefinitely pending.
+
+The self-test now verifies that altered card artwork inside a continuously
+present contour cannot produce another presentation. The direct
+swap-without-removal scenario is intentionally replaced by an explicit
+remove-then-present lifecycle.
+
+This change has been checked structurally against the current repository,
+but has **not** been compiled and run on the BCC64X/Windows camera machine
+or measured against labelled physical card samples.
