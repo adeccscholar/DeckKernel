@@ -844,6 +844,7 @@ class Processor {
    bool m_autoFlipped{};
    bool m_manualOrientation{};
    bool m_boCapturedRotate180{};
+   int m_iReferenceOrientation{};
    int m_bestNameConfidence{},m_bestTypeConfidence{},m_bestRulesConfidence{};
    std::string m_strName{"--"};
    std::string m_strRules{"--"};
@@ -1017,7 +1018,12 @@ public:
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
       if(m_strPrintingOcrData.empty() || m_identity.Count()<2 ||
          m_capture.Bottom().empty() || m_printingOcr.valid())return;
-      cv::Mat const aMargin=m_capture.Bottom().clone();
+      // PHASE 08: use the reference-confirmed orientation of the frozen
+      // display copy. CardCapture itself remains immutable throughout.
+      if(m_displayCard.empty())return;
+      int const iTop=m_displayCard.rows*85/100;
+      cv::Mat const aMargin=m_displayCard(cv::Rect(
+         0,iTop,m_displayCard.cols,m_displayCard.rows-iTop)).clone();
       std::string const strData=m_strPrintingOcrData;
       m_uPrintingOcrEvent=m_ocrCard.value_or(0);
       // PHASE 08: OCR is a last-resort, read-only consumer of frozen evidence.
@@ -1111,6 +1117,23 @@ public:
       // Discard late DB-image responses from an older arrow-key position.
       if(result->boCandidateSelection &&
          result->uSelectionSerial!=m_uSelectionSerial)return;
+      // PHASE 06: the image matcher may contradict the frame-layout
+      // orientation. Correct only the presentation copy, preserving
+      // CardCapture's immutable pixel evidence and its tracking geometry.
+      if(!result->boCandidateSelection && !result->strAssetId.empty() &&
+         m_capture.Frozen() &&
+         result->iOrientation!=m_iReferenceOrientation) {
+         m_iReferenceOrientation=result->iOrientation;
+         m_displayCard=m_capture.Image().clone();
+         if(m_iReferenceOrientation==180)
+            cv::rotate(m_displayCard,m_displayCard,cv::ROTATE_180);
+         m_strOrientation=std::format(
+            "Frame: {} deg | reference: {} deg",
+            m_boCapturedRotate180?180:0,m_iReferenceOrientation);
+         std::println("[CAM-ORIENTATION] card={} matcher={} deg "
+            "corrected frozen display copy",
+            result->uEvent,m_iReferenceOrientation);
+      }
       // PHASE 06/07: accept only events for the active physical card.
       // PHASE 09: loading a new reference never restarts recognition.
       if(m_identity.Confirmed()) {
@@ -1398,6 +1421,7 @@ public:
          m_uSelectionSerial=0;
          m_tracker.Reset();
          m_boCapturedRotate180=false;
+         m_iReferenceOrientation=0;
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
          m_uPrintingOcrEvent=0;
 #endif
@@ -1419,6 +1443,7 @@ public:
       }
       std::println("[CAM] NEW-STABLE-CARD #{} fingerprint={:016x}; edition=UNKNOWN",
          event->number,event->fingerprint);
+      m_iReferenceOrientation=0;
       if(found) {
          m_boCapturedRotate180=found->boRotate180;
          m_strOrientation=std::format(
