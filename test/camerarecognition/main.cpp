@@ -982,7 +982,9 @@ public:
    [[nodiscard]] bool IdentificationReady() const noexcept {return m_recognitionReady;}
    [[nodiscard]] std::string Guidance() const {
       if(!m_cardLocked)return "Waiting for a card in the camera";
-      if(m_focusPending)return "Autofocus settling; selecting the sharpest frame";
+      if(m_focusPending)return m_boFocusHintShown?
+         "Move card closer or adjust focus; physical card remains locked":
+         "Autofocus settling; selecting the sharpest frame";
       if(m_identity.Count()>1 && !m_identity.Confirmed())
          return std::format("Left/right: printing {}/{} | Enter: confirm",
             m_identity.Index()+1,m_identity.Count());
