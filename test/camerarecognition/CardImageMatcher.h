@@ -19,6 +19,8 @@ both orientations. Results are suggestions until physically validated.
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
+#include <filesystem>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
@@ -79,6 +81,7 @@ namespace deckkernel::camera {
          cv::Mat aCard;
          std::optional<PrintingCandidate> optSelection;
          unsigned uSelectionSerial{};
+         std::filesystem::path aEvidenceDirectory;
       };
 
       struct Ranked final {
@@ -203,22 +206,96 @@ namespace deckkernel::camera {
          return strBits;
       }
 
-      /** \brief Extract the provisional standard-card artwork region.
-          \details Alternate layouts will need layout-specific regions.
-          \param aCard Perspective-rectified full card.
-          \returns A non-owning artwork ROI.
-          \throw cv::Exception For an invalid image.
+      /**
+      \brief Artwork window and measured horizontal frame boundaries.
+      \details A view is retained within its owning frozen-card cv::Mat.
       */
-      static cv::Mat Artwork(cv::Mat const& aCard,
+      struct ArtworkRegion {
+         cv::Mat aImage;
+         cv::Rect aRect;
+         bool boDetected{};
+         double flTopCoverage{};
+         double flBottomCoverage{};
+      };
+
+      /**
+      \brief Isolate the illustration from the complete frozen card.
+      \details Detect the two long horizontal separator lines bounding the
+      art: title/artwork and artwork/type. Standard-frame variants change
+      their exact vertical location, so the earlier fixed crops starting
+      at 19/22 percent missed the TOP of real illustrations. A second
+      conservative fallback window is always evaluated and logged.
+      \param aCard Perspective-rectified full card, already portrait.
+      \param iVariant Zero for measured bounds, one for fallback window.
+      \returns Artwork ROI plus source pixel rectangle and line evidence.
+      \throw cv::Exception If image processing fails.
+      \note This is image geometry only. OCR remains disabled at this stage.
+      */
+      [[nodiscard]] static ArtworkRegion Artwork(cv::Mat const& aCard,
          int iVariant=0) {
-         // Camera-derived borders vary across standard frames and optical
-         // perspective estimates. Try alternative illustration windows
-         // without rewriting the version-1 reference image index.
-         int const iX = aCard.cols * (iVariant==0?8:11) / 100;
-         int const iY = aCard.rows * (iVariant==0?19:22) / 100;
-         int const iW = aCard.cols * (iVariant==0?84:78) / 100;
-         int const iH = aCard.rows * (iVariant==0?33:28) / 100;
-         return aCard(cv::Rect(iX,iY,iW,iH));
+         ArtworkRegion aRegion;
+         if(aCard.empty())return aRegion;
+         cv::Rect aWindow(
+            aCard.cols*(iVariant==0?7:9)/100,
+            aCard.rows*(iVariant==0?10:14)/100,
+            aCard.cols*(iVariant==0?86:82)/100,
+            aCard.rows*(iVariant==0?46:40)/100);
+         if(iVariant==0) {
+            cv::Mat aSmall,aGray,aVertical;
+            cv::resize(aCard,aSmall,cv::Size(240,336),
+               0.0,0.0,cv::INTER_AREA);
+            if(aSmall.channels()==4)
+               cv::cvtColor(aSmall,aGray,cv::COLOR_BGRA2GRAY);
+            else if(aSmall.channels()==3)
+               cv::cvtColor(aSmall,aGray,cv::COLOR_BGR2GRAY);
+            else
+               aGray=aSmall;
+            cv::Sobel(aGray,aVertical,CV_16S,0,1,3);
+            struct Separator {
+               double flCoverage{};
+               int iRow{};
+            };
+            auto const FindSeparator=[&](int iFirst,int iLast) {
+               Separator aBest;
+               int const iX1=aSmall.cols*15/100;
+               int const iX2=aSmall.cols*85/100;
+               for(int iY=aSmall.rows*iFirst/100;
+                  iY<aSmall.rows*iLast/100;++iY) {
+                  short const* pRow=aVertical.ptr<short>(iY);
+                  unsigned uCount{};
+                  for(int iX=iX1;iX<iX2;++iX)
+                     uCount+=std::abs(static_cast<int>(pRow[iX]))>=85;
+                  double const flCoverage=
+                     static_cast<double>(uCount)/(iX2-iX1);
+                  if(flCoverage>aBest.flCoverage)
+                     aBest={flCoverage,iY};
+               }
+               return aBest;
+            };
+            Separator const aTop=FindSeparator(7,25);
+            Separator const aBottom=FindSeparator(43,68);
+            aRegion.flTopCoverage=aTop.flCoverage;
+            aRegion.flBottomCoverage=aBottom.flCoverage;
+            int const iGap=aBottom.iRow-aTop.iRow;
+            if(aTop.flCoverage>=0.28 && aBottom.flCoverage>=0.28 &&
+               iGap>=aSmall.rows*27/100 &&
+               iGap<=aSmall.rows*55/100) {
+               // Exclude two rows of artwork-border pixels. Derive both
+               // positions from the same actual frozen camera image.
+               int const iTop=static_cast<int>(
+                  (aTop.iRow+2)*aCard.rows/static_cast<double>(aSmall.rows));
+               int const iBottom=static_cast<int>(
+                  (aBottom.iRow-2)*aCard.rows/static_cast<double>(aSmall.rows));
+               aWindow.y=iTop;
+               aWindow.height=iBottom-iTop;
+               aRegion.boDetected=true;
+            }
+         }
+         aWindow &=cv::Rect(0,0,aCard.cols,aCard.rows);
+         if(aWindow.width<30||aWindow.height<30)return aRegion;
+         aRegion.aRect=aWindow;
+         aRegion.aImage=aCard(aWindow);
+         return aRegion;
       }
 
       /** \brief Compute camera ORB descriptors once per candidate orientation.
