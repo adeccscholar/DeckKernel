@@ -113,6 +113,7 @@ struct CardDetectionDiagnostics {
    bool recoveredRectangle{};
    unsigned layoutChecked{};
    unsigned layoutRecognized{};
+   unsigned rejectedPartialFrame{};
    bool selectedLayoutRecognized{};
    unsigned rejectedShape{};
    unsigned rejectedAspect{};
@@ -449,9 +450,9 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
             (0.65+0.35*ratioFitness)*
             (0.7+0.3*std::min(1.0,boundaryContrast/35.0))*
             (1.0+0.30*static_cast<double>(uInnerPanels));
-         // The bonus is capped at x2; skip candidates that cannot beat the
-         // current winner even if they receive the maximum layout bonus.
-         if(flGeometryScore*(boRequireStandardLayout?2.0:1.0)<=bestScore)
+         // Do not pre-prune a geometrically smaller whole card before
+         // the full-frame structural evidence has been evaluated.
+         if(!boRequireStandardLayout && flGeometryScore<=bestScore)
             continue;
          double flLayoutEvidence=0.0;
          bool boRotate180{};
@@ -492,15 +493,28 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
                cv::getPerspectiveTransform(
                   arrCandidate.data(),arrTarget.data()),
                cv::Size(240,336));
+            // PHASE 01: geometric contour alone is NOT an MTG card.
+            // Require evidence for both the title/art and art/text frames.
+            // This prevents a landscape artwork being stretched to portrait
+            // and falsely accepted as a physical card.
+            auto const aWholeFrame=
+               deckkernel::camera::InspectWholeCardFrame(aCandidateImage);
+            if(!aWholeFrame.boWholeCard) {
+               ++stats.rejectedPartialFrame;
+               continue;
+            }
             ++stats.layoutChecked;
             auto const aLayout=
                deckkernel::camera::InspectStandardCard(aCandidateImage);
-            if(aLayout.boRecognized) {
-               ++stats.layoutRecognized;
-               boLayoutRecognized=true;
-               flLayoutEvidence=aLayout.flEvidence;
+            boLayoutRecognized=true;
+            ++stats.layoutRecognized;
+            flLayoutEvidence=25.0*aWholeFrame.flScore;
+            if(aWholeFrame.boOrientationReliable)
+               boRotate180=aWholeFrame.boRotate180;
+            else if(aLayout.boRecognized)
                boRotate180=aLayout.boRotate180;
-            }
+            // Do not turn uncertain 0/180 orientation into a 90-degree
+            // landscape-to-portrait reinterpretation of the card's artwork.
             // If layout is inconclusive, retain the geometrically valid
             // outer contour. The matcher still tests both rotations.
             // Never convert "unknown orientation" into "no physical card".
