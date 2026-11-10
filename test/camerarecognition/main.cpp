@@ -873,6 +873,7 @@ class Processor {
    bool m_recognitionReady{};
    bool m_cardLocked{};
    bool m_focusPending{};
+   bool m_boFocusHintShown{};
    unsigned m_uFocusFrames{};
    double m_flCaptureScore{-1.0};
    double m_flCaptureSharpness{};
@@ -1266,7 +1267,24 @@ public:
       auto const flSeconds=std::chrono::duration<double>(
          std::chrono::steady_clock::now()-m_focusStarted).count();
       // Complete after enough valid observations or a bounded wall-clock timeout.
-      if(!m_capture.Ready())return;
+      if(!m_capture.Ready()) {
+         // PHASE 04: retain the SAME tracked card while focus improves.
+         // The image is not frozen, and no Scryfall search starts on blur.
+         if(m_capture.NeedsBetterFocusHint() && !m_boFocusHintShown) {
+            m_boFocusHintShown=true;
+            auto const& aQuality=m_capture.Quality();
+            m_strStatus=std::format(
+               "FOCUS INSUFFICIENT - native width {}px; "
+               "detail {:.0f}; move card closer or adjust camera focus",
+               aQuality.sourceWidth,aQuality.detailSharpness);
+            std::println("[CAM-FOCUS] card={} waiting for sharp image "
+               "native={}x{} detail={:.1f} blur={:.1f} clipped={:.1f}%",
+               *m_ocrCard,aQuality.sourceWidth,aQuality.sourceHeight,
+               aQuality.detailSharpness,aQuality.sharpness,
+               aQuality.clippedPercent);
+         }
+         return;
+      }
       m_focusPending=false;
       // PHASE 05: freeze once. No recognition stage may mutate these pixels.
       if(!m_capture.Freeze()) {
@@ -1413,6 +1431,7 @@ public:
          m_recognitionReady=false;
          m_cardLocked=false;
          m_focusPending=false;
+         m_boFocusHintShown=false;
          m_uFocusFrames=0;
          m_flCaptureScore=-1.0;
          m_capture.Clear();
@@ -1471,6 +1490,7 @@ public:
       m_recognitionReady=false;
       m_cardLocked=true;
       m_focusPending=true;
+      m_boFocusHintShown=false;
       m_uFocusFrames=0;
       m_flCaptureScore=-1.0;
       m_flCaptureSharpness=0.0;
