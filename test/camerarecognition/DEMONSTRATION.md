@@ -67,7 +67,10 @@ late background-worker results from earlier cards.
 PhysicalCardTracker distributes Shi-Tomasi features over the complete
 card: borders, header, artwork, type bar and lower print margin.
 Lucas-Kanade optical flow moves those features across frames, and
-a RANSAC homography predicts new outer corners. Tracking failure
+a RANSAC homography predicts new outer corners. The homography estimator
+uses OpenCV core/imgproc (four-point perspective transforms and normalized
+SVD refinement) rather than the unavailable calib3d component in the
+pinned OpenCV 5.0.0 distribution. Tracking failure
 temporarily counts as absence; no competing global contour is selected.
 A persistent absence releases the card after debounce.
 
@@ -148,8 +151,9 @@ to narrate the phases and actual evidence.
 
 ## Build and verification
 
-The camera target needs pinned OpenCV video and calib3d modules,
-in addition to the existing core, image and feature modules.
+The camera target needs the pinned OpenCV video module for optical flow,
+in addition to core, imgproc, imgcodecs, geometry and features. No calib3d
+module is required by the camera target.
 Tesseract remains separately optional at build time.
 
 Execute the existing --self-test target first. Then validate real
