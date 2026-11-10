@@ -707,3 +707,48 @@ If the physical border is entirely invisible, inner-rectangle evidence
 alone does not determine its exact four corners: a future constrained
 outer-border reconstruction should require direct full-frame evidence,
 rather than inventing an outer quadrilateral and falsely locking a card.
+
+## 2026-11-11: fix the FOCUSING-to-ARTWORK deadlock
+
+Real user screenshots showed two readable cards (Suncorched Desert and
+Timbercrown Pathway) held in `04 FOCUSING` with no DB reference search,
+and an unrelated computer mouse captured as a physical card. The
+physical-card lock and the visual matcher were not themselves the
+explanation for the missing Scryfall lookup.
+
+Root-cause fixes in the existing OpenCV 5.0.0 implementation:
+
+- `EvaluateFocus()` previously offered a new candidate only if the
+  heuristic standard-frame recognizer returned `boRecognized` and
+  `!boRotate180`. This failed even on readable card frames whose
+  orientation was reported as uncertain, so the valid-sample counter
+  stayed near one and the quality selector could not improve.
+  Registered physical-card frames now compete by image quality without
+  an unrelated internal-layout veto.
+- `CardCapture::Ready()` previously required an uncalibrated printed
+  detail sharpness threshold. It could remain false forever on a
+  clearly visible card, and even an eventual freeze could skip artwork
+  matching because of the same threshold. Focus settling now lasts
+  at least 1.5 seconds and eight observations if possible, with a
+  **three-second maximum**. Matching always starts on the best captured
+  image, regardless of the warning-level quality estimate.
+- A real visual quality failure is logged, and can reduce confidence;
+  it no longer prevents the DB/index comparison or reports a false
+  "no match" merely because the processing stage was never entered.
+- The outer physical-card contour must be supported by image edges
+  on at least three of four polygon sides. This rejects an arbitrary
+  rotated bounding rectangle around an oval mouse where the rectangle
+  does not follow the object boundary. Segment clipping protects
+  contours near the camera border. This is an initial geometric guard
+  that needs camera-sample validation.
+
+Do not change the pinned OpenCV dependency, database index format, or
+the separation of physical tracking, immutable capture and Scryfall
+identity for these fixes. The initial card remains locked until physical
+removal, and image search runs only once for the frozen session.
+
+**Verification pending:** run the BCC64X self-test and camera demo. A
+successful acquisition should now log `05 FROZEN` followed by
+`06 ARTWORK` and a new `[CAM-ART]` search, even if
+`[CAM-QUALITY]` reports `usable=false`. Confirm separately that the
+mouse is rejected while ordinary cards still acquire.
