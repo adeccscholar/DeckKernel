@@ -1689,12 +1689,21 @@ int main(int argc,char** argv) {
          preview.SetFields(processor.Name(),processor.Type(),processor.Rules(),
             processor.Mana(),processor.Status(),processor.Edition(),
             flip?"Manual 180 deg / "+processor.Orientation():processor.Orientation(),
-            qualityStatus,processor.CardLocked(),processor.Guidance());
+            qualityStatus,processor.CardLocked(),processor.Guidance(),
+            processor.ReferenceLabel(),processor.ReferenceDiagnostic(),
+            processor.Set(),processor.SetName(),processor.Collector(),
+            processor.Language(),processor.Rarity(),processor.PrintingId(),
+            processor.OracleId(),processor.ManaCost());
 #endif
          // Only a confirmed card belongs in the right panel. Do not show
          // a transient candidate or a different contour after removal.
+#if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
+         preview.Show(annotated,processor.DisplayCard(),
+            processor.ReferenceCard(),*camera,fps,signal.brightness);
+#else
          preview.Show(annotated,processor.DisplayCard(),
             *camera,fps,signal.brightness);
+#endif
          auto now=std::chrono::steady_clock::now();
          double const seconds=std::chrono::duration<double>(now-interval).count();
          if(seconds>=2.0){
