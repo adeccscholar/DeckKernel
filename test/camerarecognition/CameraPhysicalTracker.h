@@ -18,6 +18,7 @@ a new physical card while tracking remains active.
 #include <cmath>
 #include <cstddef>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace deckkernel::camera {
@@ -33,6 +34,8 @@ namespace deckkernel::camera {
       cv::Size m_aFrameSize{};
       bool m_boActive{};
       unsigned m_uMissed{};
+      double m_flInitialInside{};
+      double m_flInitialContrast{};
       static constexpr unsigned cuMaxMissed=45;
 
       /**
@@ -113,6 +116,51 @@ namespace deckkernel::camera {
          return true;
       }
 
+      /**
+      \brief Calculate whole-card contrast relative to its immediate surround.
+      \details This is a local presence fallback for texture-poor cards, not
+      a new contour/artwork recognizer. It cannot determine a printing.
+      \param aGray Full camera frame converted to grayscale.
+      \returns Card interior mean and signed interior/background contrast.
+      \throw cv::Exception If the OpenCV masking operation fails.
+      */
+      [[nodiscard]] std::pair<double,double> Contrast(
+         cv::Mat const& aGray) const {
+         std::vector<cv::Point> vecPolygon;
+         for(auto const& aPoint:m_arrCorners)
+            vecPolygon.emplace_back(cvRound(aPoint.x),cvRound(aPoint.y));
+         cv::Rect const aBox=cv::boundingRect(vecPolygon);
+         int const iMargin=std::max(12,std::min(aBox.width,aBox.height)/8);
+         cv::Rect const aRegion=cv::Rect(
+            aBox.x-iMargin,aBox.y-iMargin,
+            aBox.width+2*iMargin,aBox.height+2*iMargin) &
+            cv::Rect(0,0,aGray.cols,aGray.rows);
+         if(aRegion.width<20||aRegion.height<20)return {0.0,0.0};
+         for(cv::Point& aPoint:vecPolygon)aPoint-=aRegion.tl();
+         cv::Mat aInside(aRegion.size(),CV_8UC1,cv::Scalar(0));
+         cv::fillConvexPoly(aInside,vecPolygon,cv::Scalar(255));
+         cv::Mat aOutside;
+         cv::bitwise_not(aInside,aOutside);
+         double const flInside=cv::mean(aGray(aRegion),aInside)[0];
+         double const flOutside=cv::mean(aGray(aRegion),aOutside)[0];
+         return {flInside,flInside-flOutside};
+      }
+
+      /**
+      \brief Validate stationary presence using whole-card border contrast.
+      \details Used only when the card has too few optical-flow features.
+      \param aGray Current grayscale camera frame.
+      \returns True when the known outer card is still visually present.
+      \throw cv::Exception If image masking fails.
+      */
+      [[nodiscard]] bool ContrastPresent(cv::Mat const& aGray) const {
+         if(std::abs(m_flInitialContrast)<18.0)return false;
+         auto const [flInside,flContrast]=Contrast(aGray);
+         return flContrast*m_flInitialContrast>0.0 &&
+            std::abs(flContrast)>=std::abs(m_flInitialContrast)*0.55 &&
+            std::abs(flInside-m_flInitialInside)<=35.0;
+      }
+
    public:
       /**
       \brief Begin tracking a physical card identified by its outer boundary.
@@ -132,6 +180,9 @@ namespace deckkernel::camera {
          m_aFrameSize=aFrame.size();
          m_arrCorners=arrCorners;
          m_vecPoints=Features(m_aPreviousGray,m_arrCorners);
+         auto const [flInside,flContrast]=Contrast(m_aPreviousGray);
+         m_flInitialInside=flInside;
+         m_flInitialContrast=flContrast;
          // The physical-object lock persists even without sufficient feature
          // points. In that case Track reports missing observations; it must
          // never fall back to global artwork/contour search during this card.
@@ -219,6 +270,13 @@ namespace deckkernel::camera {
                }
             }
          }
+         // Texture-poor card fallback: check the SAME full-card silhouette
+         // and its background contrast, never search for a new inner contour.
+         if(m_vecPoints.size()<12 && ContrastPresent(aCurrent)) {
+            m_aPreviousGray=aCurrent.clone();
+            m_uMissed=0;
+            return m_arrCorners;
+         }
          ++m_uMissed;
          // Leave the preceding reference frame untouched on a failed update.
          return std::nullopt;
@@ -234,6 +292,8 @@ namespace deckkernel::camera {
          m_boActive=false;m_uMissed=0;
          m_vecPoints.clear();m_aPreviousGray.release();
          m_aFrameSize={};
+         m_flInitialInside=0.0;
+         m_flInitialContrast=0.0;
       }
 
       [[nodiscard]] bool Active() const noexcept{return m_boActive;}
