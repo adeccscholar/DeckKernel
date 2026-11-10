@@ -573,7 +573,7 @@ Changes made using the **existing OpenCV 5.0.0 modules only**:
    It also tracks the **actual number of native camera pixels spanning
    the card**, independently of the size of the perspective-rectified
    output. Upsampling is never accepted as proof of source detail.
-3. The capture continues until 18 observations and at least one second
+3. The capture continues until 18 observations and at least two seconds
    if the best capture satisfies provisional quality conditions. Poor
    frames get extra autofocus settling time, bounded to six seconds.
 4. If the best source fails the provisional size, blur, exposure or
