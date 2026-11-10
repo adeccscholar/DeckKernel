@@ -1412,14 +1412,15 @@ void Usage() {
    std::println("   or: --camera=0 [--backend=any|dshow|msmf] [--width=640 --height=480 --fps=30 --fourcc=auto|mjpg|yuy2] [--save-events]");
    std::println("   or: --probe-camera=0          test 4 Windows camera delivery modes");
    std::println("   optional: --ocr --tessdata=PATH_TO_TESSDATA (eng.traineddata required)");
-   std::println("   optional: --artwork [--artwork-limit=100] (indexed art 0/180 then full-card printings)");
+   std::println("   camera: indexed artwork/printing recognition enabled by default");
+   std::println("   optional: --artwork [--artwork-limit=100] or --no-artwork");
    std::println("   optional: --verbose (periodic camera and OCR console diagnostics)");
 }
 }
 int main(int argc,char** argv) {
    try{
       bool selfTest=false,save=false,verbose=false;
-      bool ocr=false,artwork=false;
+      bool ocr=false,artwork=false,noArtwork=false;
       unsigned artworkLimit=100;
       std::string tessdata;
       std::string backend="any";
@@ -1437,6 +1438,7 @@ int main(int argc,char** argv) {
          else if(arg=="--save-events")save=true;
          else if(arg=="--ocr")ocr=true;
          else if(arg=="--artwork")artwork=true;
+         else if(arg=="--no-artwork")noArtwork=true;
          else if(arg.starts_with("--artwork-limit="))artworkLimit=static_cast<unsigned>(CameraIndex(arg.substr(16)));
          else if(arg.starts_with("--tessdata="))tessdata=arg.substr(11);
          else if(arg.starts_with("--backend="))backend=arg.substr(10);
@@ -1458,6 +1460,9 @@ int main(int argc,char** argv) {
          throw std::runtime_error("OpenCV videoio is unavailable");
 #endif
       }
+      // Live recognition is expected by default; --no-artwork is an explicit opt-out.
+      if(camera && !noArtwork)artwork=true;
+      if(noArtwork)artwork=false;
       if(artworkLimit<1||artworkLimit>1000)
          throw std::runtime_error("--artwork-limit must be 1..1000");
       if(width<160||height<120||width>3840||height>2160||
