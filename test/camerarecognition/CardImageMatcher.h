@@ -152,28 +152,44 @@ namespace deckkernel::camera {
           \throw std::runtime_error If PostgreSQL cannot be reached.
       */
       static connection_ty Connect() {
-         std::array<std::string, 7> arrFields{
+         std::array<std::string, 8> arrFields{
             Env("DECKKERNEL_PGHOST", "localhost"),
             Env("DECKKERNEL_PGPORT", "5432"),
             Env("DECKKERNEL_PGDATABASE", "DeckKernel"),
             Env("DECKKERNEL_PGUSER", "deckkernel_user"),
             Env("DECKKERNEL_PGPASSWORD", ""),
             Env("DECKKERNEL_PGSSLMODE", "prefer"),
-            Env("DECKKERNEL_PG_GSSENCMODE", "disable")
+            Env("DECKKERNEL_PG_GSSENCMODE", "disable"),
+            Env("DECKKERNEL_PG_CONNECT_TIMEOUT", "5")
          };
          char const* arrKeys[]{
             "host", "port", "dbname", "user", "password", "sslmode",
-            "gssencmode", nullptr
+            "gssencmode", "connect_timeout", nullptr
          };
          char const* arrValues[]{
             arrFields[0].c_str(), arrFields[1].c_str(), arrFields[2].c_str(),
             arrFields[3].c_str(), arrFields[4].c_str(), arrFields[5].c_str(),
-            arrFields[6].c_str(), nullptr
+            arrFields[6].c_str(), arrFields[7].c_str(), nullptr
          };
+         auto const aStart=std::chrono::steady_clock::now();
          connection_ty aConnection(PQconnectdbParams(arrKeys, arrValues, 0));
+         double const flElapsed=std::chrono::duration<double>(
+            std::chrono::steady_clock::now()-aStart).count();
+         std::println("[CAM-DB] connect elapsed={:.2f}s status={}",
+            flElapsed,aConnection && PQstatus(aConnection.get())==CONNECTION_OK?
+               "ready":"failed");
          if(!aConnection || PQstatus(aConnection.get()) != CONNECTION_OK) {
             throw std::runtime_error("camera image matcher: PostgreSQL connection failed");
          }
+         // A very large dHash shortlist can otherwise keep the UI at
+         // ARTWORK indefinitely. PostgreSQL cancels the individual query
+         // and the worker publishes the actual database error.
+         result_ty aTimeout(PQexec(aConnection.get(),
+            "SET statement_timeout = '12000ms'"));
+         if(!aTimeout || PQresultStatus(aTimeout.get())!=PGRES_COMMAND_OK)
+            throw std::runtime_error(std::format(
+               "cannot set camera query timeout: {}",
+               PQerrorMessage(aConnection.get())));
          return aConnection;
       }
 
@@ -400,6 +416,7 @@ namespace deckkernel::camera {
          std::string const strLimit = std::to_string(
             std::max(400u,m_uCandidates));
          char const* arrParams[]{strHash.c_str(), strLimit.c_str()};
+         auto const aQueryStart=std::chrono::steady_clock::now();
          result_ty aRows(PQexecParams(pConnection,
             "SELECT a.id::text, COALESCE(a.illustration_id, ''), "
             "bit_count(f.perceptual_hash # $1::bit(64))::text, f.orb_descriptors "
@@ -416,6 +433,8 @@ namespace deckkernel::camera {
             throw std::runtime_error(std::format(
                "artwork feature lookup failed: {}", PQerrorMessage(pConnection)));
          }
+         double const flDbSeconds=std::chrono::duration<double>(
+            std::chrono::steady_clock::now()-aQueryStart).count();
          cv::Mat const aQuery = Descriptors(aArt);
          std::optional<Ranked> optBest;
          for(int iRow = 0; iRow < PQntuples(aRows.get()); ++iRow) {
@@ -428,6 +447,13 @@ namespace deckkernel::camera {
                optBest = std::move(aMatch);
             }
          }
+         double const flTotalSeconds=std::chrono::duration<double>(
+            std::chrono::steady_clock::now()-aQueryStart).count();
+         std::println("[CAM-ART-QUERY] shortlisted={} sql={:.2f}s "
+            "orb={:.2f}s best-orb={} best-hash={}",
+            PQntuples(aRows.get()),flDbSeconds,
+            flTotalSeconds-flDbSeconds,
+            optBest?optBest->iOrb:0,optBest?optBest->iHash:65);
          return optBest;
       }
 
@@ -477,6 +503,7 @@ namespace deckkernel::camera {
             optArtwork ? optArtwork->strIllustrationId.c_str() : nullptr,
             strLimit.c_str()
          };
+         auto const aQueryStart=std::chrono::steady_clock::now();
          result_ty aRows(PQexecParams(pConnection,
             "SELECT a.id::text, c.scryfall_id, cf.face_id::text, cf.name, "
             "s.code, c.collector_number, c.lang, v.variant, "
@@ -507,6 +534,8 @@ namespace deckkernel::camera {
             throw std::runtime_error(std::format(
                "full-card feature lookup failed: {}", PQerrorMessage(pConnection)));
          }
+         double const flDbSeconds=std::chrono::duration<double>(
+            std::chrono::steady_clock::now()-aQueryStart).count();
          cv::Mat const aQuery = Descriptors(aCard);
          std::vector<Ranked> vecMatches;
          for(int iRow = 0; iRow < PQntuples(aRows.get()); ++iRow) {
@@ -539,6 +568,12 @@ namespace deckkernel::camera {
             }
          }
          std::sort(vecMatches.begin(), vecMatches.end(), Better);
+         double const flTotalSeconds=std::chrono::duration<double>(
+            std::chrono::steady_clock::now()-aQueryStart).count();
+         std::println("[CAM-PRINT-QUERY] shortlist={} distinct={} "
+            "sql={:.2f}s orb={:.2f}s restricted={}",
+            PQntuples(aRows.get()),vecMatches.size(),flDbSeconds,
+            flTotalSeconds-flDbSeconds,optArtwork.has_value());
          return vecMatches;
       }
 
