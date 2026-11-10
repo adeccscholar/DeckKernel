@@ -760,7 +760,7 @@ public:
       if(!result || !m_ocrCard || result->uEvent!=*m_ocrCard)return;
       m_strStatus=result->strStatus;
       m_strEdition=result->strEdition;
-      m_recognitionReady=true;
+      m_recognitionReady=result->boComplete;
       std::println("[CAM-MATCH] card #{} status={} edition={}",
          result->uEvent,m_strStatus,m_strEdition);
 #endif
@@ -812,7 +812,9 @@ public:
    bool Process(std::optional<FoundCard> const& found,
       cv::Mat const& sourceFrame={}) {
       auto event=m_detector.Accept(found);
-      if(found && m_ocrCard && !m_recognitionReady) {
+      // The sharpest accepted card is captured once. Do not continuously
+      // rewrite OCR text while the viewer is inspecting the captured card.
+      if(found && m_ocrCard && !m_cardLocked && !m_recognitionReady) {
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
          if(m_ocr && m_ocrAttempts<4) {
             ++m_liveFrames;
