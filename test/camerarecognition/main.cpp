@@ -430,11 +430,13 @@ public:
    \returns A new-card or removal event, otherwise no event.
    \throw cv::Exception If an OpenCV quality operation fails.
    */
-   std::optional<Event> Accept(std::optional<FoundCard> const& optFound) {
+   std::optional<Event> Accept(std::optional<FoundCard> const& optFound,
+      bool boTrustedTracking=false) {
       bool const boPresent=optFound.has_value();
       if(m_activeNumber) {
          if(boPresent && m_activeBox &&
-            Near(cv::boundingRect(optFound->corners),*m_activeBox,0.22,0.45)) {
+            (boTrustedTracking ||
+               Near(cv::boundingRect(optFound->corners),*m_activeBox,0.22,0.45))) {
             // Monitor the locked physical card, without ever reclassifying it.
             m_absent=0;
             m_activeBox=cv::boundingRect(optFound->corners);
@@ -885,6 +887,9 @@ public:
       }
    }
    [[nodiscard]] bool Focusing() const noexcept {return m_focusPending;}
+   [[nodiscard]] bool TrackingActive() const noexcept {
+      return m_tracker.Active();
+   }
    [[nodiscard]] bool IdentificationReady() const noexcept {return m_recognitionReady;}
    [[nodiscard]] std::string Guidance() const {
       if(!m_cardLocked)return "Waiting for a card in the camera";
@@ -1185,8 +1190,8 @@ public:
       return Process(FindCard(frame));
    }
    bool Process(std::optional<FoundCard> const& found,
-      cv::Mat const& sourceFrame={}) {
-      auto event=m_detector.Accept(found);
+      cv::Mat const& sourceFrame={},bool boTrustedTracking=false) {
+      auto event=m_detector.Accept(found,boTrustedTracking);
       if(m_focusPending && m_ocrCard)
          EvaluateFocus(found && m_detector.SameCardPosition(*found)?
             &*found:nullptr,sourceFrame);
@@ -2111,7 +2116,7 @@ int main(int argc,char** argv) {
          if(found&&flip)FlipRectifiedCard(*found);
          if(signal.nonblack) {
             blackFrames=0;
-            processor.Process(found,frame);
+            processor.Process(found,frame,processor.TrackingActive());
          } else {
             ++blackFrames;
          }
