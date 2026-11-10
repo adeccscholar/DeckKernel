@@ -87,6 +87,21 @@ struct FoundCard {
    std::array<cv::Point,4> corners{};
    bool boRotate180{};
 };
+/**
+\brief Estimate actual card width from four raw camera-frame corners.
+\details Correctly excludes the scaling performed by perspective rectification.
+\param arrCorners Four ordered physical-card corner positions.
+\returns Source width in real camera pixels.
+\throw None.
+*/
+[[nodiscard]] int NativeCardWidth(
+   std::array<cv::Point,4> const& arrCorners) noexcept {
+   double const flA=(cv::norm(arrCorners[0]-arrCorners[1])+
+      cv::norm(arrCorners[2]-arrCorners[3]))/2.0;
+   double const flB=(cv::norm(arrCorners[1]-arrCorners[2])+
+      cv::norm(arrCorners[3]-arrCorners[0]))/2.0;
+   return static_cast<int>(std::min(flA,flB));
+}
 struct CardDetectionDiagnostics {
    unsigned contours{};
    unsigned areaCandidates{};
@@ -1218,7 +1233,8 @@ public:
          // Reject a frame accidentally reduced to the inner artwork.
          auto const aLayout=deckkernel::camera::InspectStandardCard(aImage);
          if(aLayout.boRecognized && !aLayout.boRotate180 &&
-            m_capture.Offer(aImage))
+            m_capture.Offer(aImage,
+               NativeCardWidth(pCandidate->corners)))
             m_displayCard=m_capture.Image();
          m_flCaptureScore=m_capture.Score();
          m_flCaptureSharpness=m_capture.Sharpness();
@@ -1237,6 +1253,24 @@ public:
       }
       m_displayCard=m_capture.Image().clone();
       SetPhase(deckkernel::camera::RecognitionPhase::Frozen);
+      auto const& aQuality=m_capture.Quality();
+      std::println("[CAM-QUALITY] card={} source={}x{} rectified={}x{} "
+         "sharpness={:.1f} printed-detail={:.1f} brightness={:.1f} "
+         "clipped={:.1f}% usable={}",
+         *m_ocrCard,aQuality.sourceWidth,aQuality.sourceHeight,
+         m_displayCard.cols,m_displayCard.rows,
+         aQuality.sharpness,aQuality.detailSharpness,aQuality.brightness,
+         aQuality.clippedPercent,m_capture.UsableForMatching());
+      if(!m_capture.UsableForMatching()) {
+         SetPhase(deckkernel::camera::RecognitionPhase::Unresolved);
+         m_strStatus=std::format(
+            "CAPTURE TOO SOFT/SMALL - source {}px, detail {:.0f}; "
+            "move closer, improve focus, then remove/re-present card",
+            aQuality.sourceWidth,aQuality.detailSharpness);
+         m_strEdition="Image search skipped: inadequate camera evidence";
+         m_recognitionReady=true;
+         return;
+      }
       m_strStatus=std::format(
          "CARD CAPTURED - focus selected (sharpness {:.1f}, {} frames)",
          m_flCaptureSharpness,m_uFocusFrames);
@@ -1447,7 +1481,8 @@ public:
       if(m_ocr)m_strMana=ReportManaColorCandidates(event->card,event->number,m_verbose);
 #endif
       // PHASE 04: initially collect the normalized card, then sharper frames.
-      m_capture.Begin(event->card);
+      m_capture.Begin(event->card,
+         found?NativeCardWidth(found->corners):event->card.cols);
       m_displayCard=m_capture.Image();
       m_flCaptureScore=m_capture.Score();
       m_flCaptureSharpness=m_capture.Sharpness();
@@ -2106,7 +2141,7 @@ void Usage() {
    std::println("Usage: deckkernel_camera_recognition_test --self-test");
    std::println("   or: --sequence=folder [--save-events]");
    std::println("   or: --image=file.png [--ocr] [--save-events] (original phone photo)");
-   std::println("   or: --camera=0 [--backend=any|dshow|msmf] [--width=640 --height=480 --fps=30 --fourcc=auto|mjpg|yuy2] [--save-events]");
+   std::println("   or: --camera=0 [--backend=any|dshow|msmf] [--width=3840 --height=2160 --fps=30 --fourcc=mjpg|auto|yuy2] [--save-events]");
    std::println("   or: --probe-camera=0          test 4 Windows camera delivery modes");
    std::println("   optional: --ocr --tessdata=PATH_TO_TESSDATA (eng.traineddata required)");
    std::println("   camera: indexed artwork/printing recognition enabled by default");
@@ -2121,8 +2156,8 @@ int main(int argc,char** argv) {
       unsigned artworkLimit=100;
       std::string tessdata;
       std::string backend="any";
-      std::string fourcc="auto";
-      int width=640,height=480,fpsRequested=30;
+      std::string fourcc="mjpg";
+      int width=3840,height=2160,fpsRequested=30;
       std::optional<int> probeCamera;
       std::string folder;
       std::string imageFile;
