@@ -760,6 +760,7 @@ class Processor {
    // PHASE 06-10: CardIdentity owns Oracle identity and printing options.
    deckkernel::camera::CardIdentity m_identity;
    bool m_boUserNavigated{};
+   unsigned m_uSelectionSerial{};
    deckkernel::camera::RecognitionPhase m_ePhase{
       deckkernel::camera::RecognitionPhase::Searching};
    bool m_save{};
@@ -867,9 +868,11 @@ public:
       // PHASE 09: switch database candidates, never reopen the physical search.
       if(!m_ocrCard || !m_identity.Navigate(iDelta))return;
       m_boUserNavigated=true;
+      ++m_uSelectionSerial;
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
       if(m_artwork && m_identity.Selected())
-         m_artwork->Select(*m_identity.Selected(),*m_ocrCard);
+         m_artwork->Select(*m_identity.Selected(),*m_ocrCard,
+            m_uSelectionSerial);
 #endif
       SetPhase(deckkernel::camera::RecognitionPhase::Selecting);
       m_strStatus=std::format("PRINTING SELECT {}/{} - press Enter",
@@ -993,7 +996,8 @@ public:
          static_cast<void>(m_identity.SelectAt(*optMatch));
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
          if(m_artwork && m_identity.Selected())
-            m_artwork->Select(*m_identity.Selected(),*m_ocrCard);
+            m_artwork->Select(*m_identity.Selected(),*m_ocrCard,
+               ++m_uSelectionSerial);
 #endif
          m_strStatus=std::format(
             "PRINTING OCR SUPPORTS {}/{} - Enter to confirm",
@@ -1017,6 +1021,9 @@ public:
       if(!m_artwork)return;
       auto result=m_artwork->Poll();
       if(!result || !m_ocrCard || result->uEvent!=*m_ocrCard)return;
+      // Discard late DB-image responses from an older arrow-key position.
+      if(result->boCandidateSelection &&
+         result->uSelectionSerial!=m_uSelectionSerial)return;
       // PHASE 06/07: accept only events for the active physical card.
       // PHASE 09: loading a new reference never restarts recognition.
       if(m_identity.Confirmed())return;
@@ -1251,6 +1258,7 @@ public:
          m_capture.Clear();
          m_identity.Clear();
          m_boUserNavigated=false;
+         m_uSelectionSerial=0;
          m_tracker.Reset();
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
          m_uPrintingOcrEvent=0;
@@ -1297,6 +1305,7 @@ public:
       m_focusStarted=std::chrono::steady_clock::now();
       m_identity.Clear();
       m_boUserNavigated=false;
+      m_uSelectionSerial=0;
       SetPhase(deckkernel::camera::RecognitionPhase::Tracking);
       SetPhase(deckkernel::camera::RecognitionPhase::Focusing);
       m_strName="--";m_strType="--";m_strRules="--";
