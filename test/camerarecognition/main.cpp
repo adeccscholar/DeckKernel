@@ -1164,8 +1164,11 @@ public:
       return aCard;
    }
 
+   // Offline replay and synthetic contour tests retain independent
+   // detections. The live camera explicitly calls Observe(frame) before
+   // Process(found,frame), enabling physical optical-flow tracking.
    bool Process(cv::Mat const& frame) {
-      return Process(Observe(frame),frame);
+      return Process(FindCard(frame));
    }
    bool Process(std::optional<FoundCard> const& found,
       cv::Mat const& sourceFrame={}) {
