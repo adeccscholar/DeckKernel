@@ -1571,6 +1571,19 @@ void SelfTest() {
    if(aTracker.Active())
       throw std::runtime_error("physical tracker did not release its lock");
 
+   // DEMO TEST 03: a texture-poor physical card remains locked by its
+   // whole-card/background contrast, but disappears when it is removed.
+   cv::Mat aPlainFrame(720,960,CV_8UC3,cv::Scalar(20,25,30));
+   cv::rectangle(aPlainFrame,cv::Rect(260,150,290,400),
+      cv::Scalar(235,235,235),-1);
+   deckkernel::camera::PhysicalCardTracker aPlainTracker;
+   static_cast<void>(aPlainTracker.Begin(aPlainFrame,arrCard));
+   if(!aPlainTracker.Track(aPlainFrame))
+      throw std::runtime_error("texture-poor card did not retain its physical lock");
+   cv::Mat aEmptyFrame(720,960,CV_8UC3,cv::Scalar(20,25,30));
+   if(aPlainTracker.Track(aEmptyFrame))
+      throw std::runtime_error("removed texture-poor card remained falsely present");
+
    Processor processor(false);
    cv::Mat const brightCard(672,480,CV_8UC3,cv::Scalar(255,255,255));
    cv::Mat const dimCard(672,480,CV_8UC3,cv::Scalar(15,15,15));
