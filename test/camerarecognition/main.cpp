@@ -1738,6 +1738,59 @@ void SelfTest() {
          stats.selectedAreaPercent<=0.0)
          throw std::runtime_error("small 4K printed card detection failed");
    }
+   // DEMO TEST 01: a genuine standard card contains artwork, title, a
+   // type separator and printed text. Its artwork is not a physical card.
+   cv::Mat aFramedScene(960,1500,CV_8UC3,cv::Scalar(26,31,39));
+   cv::Rect const aOuter(550,125,320,448);
+   cv::rectangle(aFramedScene,aOuter,cv::Scalar(218,224,231),-1);
+   cv::rectangle(aFramedScene,aOuter,cv::Scalar(12,16,21),5);
+   cv::rectangle(aFramedScene,
+      cv::Rect(571,150,278,38),cv::Scalar(221,235,246),-1);
+   cv::line(aFramedScene,cv::Point(566,208),cv::Point(855,208),
+      cv::Scalar(16,17,19),5);
+   cv::Rect const aInnerArt(574,215,272,155);
+   cv::rectangle(aFramedScene,aInnerArt,cv::Scalar(48,90,143),-1);
+   for(int i=0;i<25;++i) {
+      cv::circle(aFramedScene,
+         cv::Point(588+(i*41)%245,225+(i*37)%132),
+         7+(i%6),cv::Scalar(
+            (i*43+17)%240,(i*63+33)%240,(i*31+61)%240),-1);
+   }
+   cv::rectangle(aFramedScene,aInnerArt,cv::Scalar(12,21,28),4);
+   cv::line(aFramedScene,cv::Point(565,382),cv::Point(855,382),
+      cv::Scalar(11,14,17),5);
+   cv::rectangle(aFramedScene,cv::Rect(575,401,268,125),
+      cv::Scalar(229,227,216),-1);
+   for(int i=0;i<6;++i)
+      cv::line(aFramedScene,cv::Point(592,416+i*16),
+         cv::Point(820-(i%3)*30,416+i*16),
+         cv::Scalar(68,72,79),2);
+   cv::line(aFramedScene,cv::Point(572,539),cv::Point(846,539),
+      cv::Scalar(24,25,28),3);
+   auto const aStandard=FindCard(aFramedScene,nullptr,true);
+   if(!aStandard)
+      throw std::runtime_error(
+         "standard-card structural validation rejected whole outer card");
+   cv::Rect const aDetectedBox=cv::boundingRect(aStandard->corners);
+   if(aDetectedBox.area()<aOuter.area()*0.70)
+      throw std::runtime_error(
+         "artwork was incorrectly accepted as the physical card");
+   if(aStandard->boRotate180)
+      throw std::runtime_error("upright standard card was rotated 180 degrees");
+
+   // DEMO TEST 01: the same physical card, actually upside-down, must
+   // retain the outer contour and correct the 180-degree orientation.
+   cv::Mat aReversedScene;
+   cv::rotate(aFramedScene,aReversedScene,cv::ROTATE_180);
+   auto const aReversed=FindCard(aReversedScene,nullptr,true);
+   if(!aReversed || !aReversed->boRotate180)
+      throw std::runtime_error(
+         "upside-down standard card orientation was not recovered");
+   if(cv::norm(aStandard->rectified,aReversed->rectified,
+      cv::NORM_L2)/aStandard->rectified.total()>8.0)
+      throw std::runtime_error(
+         "rotation correction does not preserve the standard card layout");
+
    // Projective skew: unequal top/bottom widths and oblique vertical edges.
    // Four real corners, not a rotated bounding rectangle, must be restored.
    cv::Mat skewed(1000,1500,CV_8UC3,cv::Scalar(28,28,28));
