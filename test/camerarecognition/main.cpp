@@ -23,6 +23,8 @@
 #endif
 #include "CameraOcrZones.h"
 #include "CameraImageQuality.h"
+#include "CameraCardSession.h"
+#include "CameraPhysicalTracker.h"
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/geometry.hpp>
@@ -728,7 +730,14 @@ std::string ReportManaColorCandidates(cv::Mat const& card,
 }
 
 class Processor {
+   // PHASE 01/02: PhysicalCard owns the capture/release lifecycle.
    StableCardTrigger m_detector;
+   // PHASE 04/05: CardCapture owns quality and immutable image evidence.
+   deckkernel::camera::CardCapture m_capture;
+   // PHASE 06-10: CardIdentity owns Oracle identity and printing options.
+   deckkernel::camera::CardIdentity m_identity;
+   deckkernel::camera::RecognitionPhase m_ePhase{
+      deckkernel::camera::RecognitionPhase::Searching};
    bool m_save{};
    bool m_verbose{};
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
@@ -803,11 +812,55 @@ public:
    [[nodiscard]] std::string const& OracleId() const noexcept {return m_strOracleId;}
    [[nodiscard]] std::string const& ManaCost() const noexcept {return m_strManaCost;}
    [[nodiscard]] bool CardLocked() const noexcept {return m_cardLocked;}
+   [[nodiscard]] deckkernel::camera::RecognitionPhase Phase() const noexcept {
+      return m_ePhase;
+   }
+   void SetPhase(deckkernel::camera::RecognitionPhase ePhase) {
+      if(m_ePhase==ePhase)return;
+      std::println("[CAM-PHASE] {} -> {}",
+         deckkernel::camera::PhaseName(m_ePhase),
+         deckkernel::camera::PhaseName(ePhase));
+      m_ePhase=ePhase;
+   }
+   [[nodiscard]] std::size_t CandidateCount() const noexcept {
+      return m_identity.Count();
+   }
+   [[nodiscard]] std::size_t CandidateIndex() const noexcept {
+      return m_identity.Index();
+   }
+   [[nodiscard]] bool SelectionConfirmed() const noexcept {
+      return m_identity.Confirmed();
+   }
+   void NavigateCandidate(int iDelta) {
+      // PHASE 09: switch database candidates, never reopen the physical search.
+      if(!m_ocrCard || !m_identity.Navigate(iDelta))return;
+#if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
+      if(m_artwork && m_identity.Selected())
+         m_artwork->Select(*m_identity.Selected(),*m_ocrCard);
+#endif
+      SetPhase(deckkernel::camera::RecognitionPhase::Selecting);
+      m_strStatus=std::format("PRINTING SELECT {}/{} - press Enter",
+         m_identity.Index()+1,m_identity.Count());
+   }
+   void ConfirmCandidate() {
+      // PHASE 10: explicit user choice, not additional optical evidence.
+      if(!m_identity.Confirm())return;
+      SetPhase(deckkernel::camera::RecognitionPhase::Confirmed);
+      m_strStatus="PRINTING MANUALLY CONFIRMED - remove card for next scan";
+      if(auto const* pCandidate=m_identity.Selected()) {
+         m_strPrintingId=pCandidate->strPrintingId;
+         m_strSet=pCandidate->strSet;
+         m_strCollector=pCandidate->strCollector;
+      }
+   }
    [[nodiscard]] bool Focusing() const noexcept {return m_focusPending;}
    [[nodiscard]] bool IdentificationReady() const noexcept {return m_recognitionReady;}
    [[nodiscard]] std::string Guidance() const {
       if(!m_cardLocked)return "Waiting for a card in the camera";
       if(m_focusPending)return "Autofocus settling; selecting the sharpest frame";
+      if(m_identity.Count()>1 && !m_identity.Confirmed())
+         return std::format("Left/right: printing {}/{} | Enter: confirm",
+            m_identity.Index()+1,m_identity.Count());
       if(!m_recognitionReady)return "Card captured; identifying artwork / printing...";
       return "Card held; remove it for the next scan";
    }
@@ -816,9 +869,26 @@ public:
       if(!m_artwork)return;
       auto result=m_artwork->Poll();
       if(!result || !m_ocrCard || result->uEvent!=*m_ocrCard)return;
+      // PHASE 06/07: accept only events for the active physical card.
+      // PHASE 09: loading a new reference never restarts recognition.
+      if(m_identity.Confirmed())return;
       m_strStatus=result->strStatus;
       m_strEdition=result->strEdition;
-      m_recognitionReady=result->boComplete;
+      if(!result->boCandidateSelection)
+         m_recognitionReady=result->boComplete;
+      if(!result->vecCandidates.empty()) {
+         m_identity.SetCandidates(std::move(result->vecCandidates),
+            result->boCandidatesTruncated);
+         SetPhase(m_identity.Count()>1 || m_identity.Truncated()?
+            deckkernel::camera::RecognitionPhase::Selecting:
+            deckkernel::camera::RecognitionPhase::Printing);
+      }
+      else if(!result->boComplete)
+         SetPhase(result->strStatus.find("ARTWORK")!=std::string::npos?
+            deckkernel::camera::RecognitionPhase::Artwork:
+            deckkernel::camera::RecognitionPhase::Printing);
+      else if(m_identity.Count()==0 && !result->boCandidateSelection)
+         SetPhase(deckkernel::camera::RecognitionPhase::Unresolved);
       if(!result->strName.empty())m_strName=result->strName;
       if(!result->strTypeLine.empty())m_strType=result->strTypeLine;
       if(!result->strManaCost.empty())m_strManaCost=result->strManaCost;
@@ -897,26 +967,34 @@ public:
       if(pCandidate) {
          cv::Mat aImage=aSource.empty()?pCandidate->rectified.clone():
             RectifyForOcr(aSource,pCandidate->corners,m_manualOrientation);
-         auto const aQuality=deckkernel_camera::quality::Measure(aImage);
-         if(aQuality.score>m_flCaptureScore) {
-            m_flCaptureScore=aQuality.score;
-            m_flCaptureSharpness=aQuality.sharpness;
-            m_displayCard=std::move(aImage);
-         }
-         ++m_uFocusFrames;
+         // PHASE 04: offer only images belonging to the tracked physical card.
+         if(m_capture.Offer(aImage))
+            m_displayCard=m_capture.Image();
+         m_flCaptureScore=m_capture.Score();
+         m_flCaptureSharpness=m_capture.Sharpness();
+         m_uFocusFrames=m_capture.Samples();
       }
       auto const flSeconds=std::chrono::duration<double>(
          std::chrono::steady_clock::now()-m_focusStarted).count();
       // Complete after enough valid observations or a bounded wall-clock timeout.
-      if(m_uFocusFrames<18 && flSeconds<2.0)return;
+      if(!m_capture.Ready())return;
       m_focusPending=false;
+      // PHASE 05: freeze once. No recognition stage may mutate these pixels.
+      if(!m_capture.Freeze()) {
+         SetPhase(deckkernel::camera::RecognitionPhase::Unresolved);
+         m_strStatus="CAPTURE FAILED - no usable card image";
+         return;
+      }
+      m_displayCard=m_capture.Image();
+      SetPhase(deckkernel::camera::RecognitionPhase::Frozen);
       m_strStatus=std::format(
          "CARD CAPTURED - focus selected (sharpness {:.1f}, {} frames)",
          m_flCaptureSharpness,m_uFocusFrames);
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
       if(m_artwork) {
          m_strStatus="SHARP FRAME SELECTED - searching indexed artwork";
-         m_artwork->Search(m_displayCard,*m_ocrCard);
+         SetPhase(deckkernel::camera::RecognitionPhase::Artwork);
+         m_artwork->Search(m_capture.Image(),*m_ocrCard);
       }
       else {
          m_strStatus="SHARP FRAME SELECTED - image matcher disabled";
@@ -986,6 +1064,9 @@ public:
          m_focusPending=false;
          m_uFocusFrames=0;
          m_flCaptureScore=-1.0;
+         m_capture.Clear();
+         m_identity.Clear();
+         SetPhase(deckkernel::camera::RecognitionPhase::Searching);
          m_strName="--";m_strType="--";m_strRules="--";
          m_strMana="No mana evidence";
          m_strOrientation="Waiting for card orientation";
@@ -1015,6 +1096,8 @@ public:
       m_flCaptureScore=-1.0;
       m_flCaptureSharpness=0.0;
       m_focusStarted=std::chrono::steady_clock::now();
+      m_identity.Clear();
+      SetPhase(deckkernel::camera::RecognitionPhase::Focusing);
       m_strName="--";m_strType="--";m_strRules="--";
       m_referenceCard.release();
       m_strReferenceLabel="Searching Scryfall references...";
@@ -1040,10 +1123,12 @@ public:
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
       if(m_ocr)m_strMana=ReportManaColorCandidates(event->card,event->number,m_verbose);
 #endif
-      m_displayCard=event->card.clone();
-      auto const aInitialQuality=deckkernel_camera::quality::Measure(m_displayCard);
-      m_flCaptureScore=aInitialQuality.score;
-      m_flCaptureSharpness=aInitialQuality.sharpness;
+      // PHASE 04: initially collect the normalized card, then sharper frames.
+      m_capture.Begin(event->card);
+      m_displayCard=m_capture.Image();
+      m_flCaptureScore=m_capture.Score();
+      m_flCaptureSharpness=m_capture.Sharpness();
+      m_uFocusFrames=m_capture.Samples();
       if(m_save) {
          auto const zones=deckkernel_camera::ocr::Detect(event->card);
          if(!deckkernel_camera::ocr::Valid(zones,event->card.size()))
