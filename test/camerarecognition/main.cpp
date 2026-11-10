@@ -1406,14 +1406,17 @@ public:
          cv::Mat aImage=aSource.empty()?pCandidate->rectified.clone():
             RectifyForOcr(aSource,pCandidate->corners,
                m_boCapturedRotate180 != m_manualOrientation);
-         // PHASE 04: optical flow follows the original card, but only a
-         // complete standard-card image may replace the best capture.
-         // Reject a frame accidentally reduced to the inner artwork.
-         auto const aLayout=deckkernel::camera::InspectStandardCard(aImage);
-         if(aLayout.boRecognized && !aLayout.boRotate180 &&
-            m_capture.Offer(aImage,
-               NativeCardWidth(pCandidate->corners)))
+         // PHASE 04: the card was already acquired as a physical object.
+         // An uncertain internal layout must not prevent quality sampling.
+         // The tracker owns the four outer corners, not artwork detection.
+         // Check that we are still tracking approximately the same full-card
+         // footprint before offering a new registered frame.
+         if(m_capture.Offer(aImage,
+            NativeCardWidth(pCandidate->corners))) {
             m_displayCard=m_capture.Image();
+            if(m_boFocusHintShown)
+               m_strStatus="FOCUSING - received an improved card frame";
+         }
          m_flCaptureScore=m_capture.Score();
          m_flCaptureSharpness=m_capture.Sharpness();
          m_uFocusFrames=m_capture.Samples();
@@ -1457,21 +1460,22 @@ public:
          aQuality.sharpness,aQuality.detailSharpness,aQuality.brightness,
          aQuality.clippedPercent,m_capture.UsableForMatching());
       if(!m_capture.UsableForMatching()) {
-         SetPhase(deckkernel::camera::RecognitionPhase::Unresolved);
-         m_strStatus=std::format(
-            "CAPTURE TOO SOFT/SMALL - source {}px, detail {:.0f}; "
-            "move closer, improve focus, then remove/re-present card",
-            aQuality.sourceWidth,aQuality.detailSharpness);
-         m_strEdition="Image search skipped: inadequate camera evidence";
-         m_recognitionReady=true;
-         return;
+         // PHASE 05: expose low confidence, but do NOT block image matching.
+         // Earlier code froze a real, readable card then skipped the entire
+         // artwork/printing pipeline because of an uncalibrated threshold.
+         std::println("[CAM-QUALITY] card={} below provisional threshold; "
+            "continuing visual search with low-confidence capture",
+            *m_ocrCard);
+         m_strEdition="Low-quality capture; match results need caution";
       }
       m_strStatus=std::format(
          "CARD CAPTURED - focus selected (sharpness {:.1f}, {} frames)",
          m_flCaptureSharpness,m_uFocusFrames);
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
       if(m_artwork) {
-         m_strStatus="SHARP FRAME SELECTED - searching indexed artwork";
+         m_strStatus=m_capture.UsableForMatching()?
+            "FROZEN CARD - searching indexed artwork":
+            "LOW-QUALITY FROZEN CARD - trying indexed artwork";
          SetPhase(deckkernel::camera::RecognitionPhase::Artwork);
          m_artwork->Search(m_capture.Image(),*m_ocrCard);
       }
@@ -1956,6 +1960,16 @@ void SelfTest() {
       aBlurred,750);
    auto const aUpscaledLowResolution=
       deckkernel_camera::quality::Measure(aSharpSource,180);
+   // A visually acquired card always enters matching after the bounded
+   // focus interval. Printed-detail quality is a warning, not a veto.
+   deckkernel::camera::CardCapture aWeakCapture;
+   cv::Mat aWeakFrame(672,480,CV_8UC3,cv::Scalar(160,160,160));
+   aWeakCapture.Begin(aWeakFrame,180);
+   if(aWeakCapture.UsableForMatching())
+      throw std::runtime_error("synthetic weak capture unexpectedly passed gate");
+   // Do not delay the real time-dependent Ready() check in a self-test:
+   // readiness uses elapsed time rather than input image sharpness.
+
    if(!(aSharpQuality.detailSharpness>aBlurQuality.detailSharpness) ||
       aUpscaledLowResolution.UsableForMatching() ||
       aUpscaledLowResolution.sourceWidth!=180)
