@@ -1499,9 +1499,11 @@ public:
    \returns A card observation or none when tracking is temporarily lost.
    \throw cv::Exception If the OpenCV tracker fails.
    */
-   [[nodiscard]] std::optional<FoundCard> Observe(cv::Mat const& aFrame) {
+   [[nodiscard]] std::optional<FoundCard> Observe(cv::Mat const& aFrame,
+      CardDetectionDiagnostics* pDiagnostics=nullptr) {
+      if(pDiagnostics)*pDiagnostics={};
       if(!m_tracker.Active()) {
-         auto optCard=FindCard(aFrame,nullptr,true);
+         auto optCard=FindCard(aFrame,pDiagnostics,true);
          // Layout is only advisory; acquire a geometrically credible card
          // even when the internal frame is blurred or nonstandard.
          if(!optCard && !m_cardLocked)
@@ -2057,6 +2059,25 @@ void SelfTest() {
       cv::Scalar(228,233,238),-1);
    cv::rectangle(aUnusualScene,cv::Rect(400,120,300,420),
       cv::Scalar(16,18,21),5);
+   // REGRESSION: an oval mouse and isolated rectangular art/text panels
+   // are not physical cards. A card-sized outer rectangle is a separate
+   // geometric object with different side proportions and straight edges.
+   cv::Mat aFalseObjects(900,1300,CV_8UC3,cv::Scalar(28,30,32));
+   cv::ellipse(aFalseObjects,cv::Point(390,390),cv::Size(103,145),
+      0.0,0.0,360.0,cv::Scalar(220,225,230),-1);
+   cv::rectangle(aFalseObjects,cv::Rect(800,250,300,165),
+      cv::Scalar(210,220,235),-1);
+   cv::rectangle(aFalseObjects,cv::Rect(800,480,300,100),
+      cv::Scalar(215,225,235),-1);
+   CardDetectionDiagnostics aFalseStats;
+   if(FindCard(aFalseObjects,&aFalseStats,true))
+      throw std::runtime_error(
+         "mouse, artwork, or rules panel was mistaken for a physical card");
+   if(aFalseStats.rejectedShape==0 ||
+      aFalseStats.rejectedAspect==0)
+      throw std::runtime_error(
+         "false-object geometry rejection was not exercised");
+
    auto const aUnusual=FindCard(aUnusualScene,nullptr,true);
    if(!aUnusual)
       throw std::runtime_error(
@@ -2570,7 +2591,8 @@ int main(int argc,char** argv) {
          // One contour detection/rectification per frame. Use precisely the
          // same pixels for the side panel, the OCR and the artwork worker.
          CardDetectionDiagnostics detection;
-         auto found=signal.nonblack?processor.Observe(frame):
+         auto found=signal.nonblack?
+            processor.Observe(frame,&detection):
             std::optional<FoundCard>{};
          bool const flip=preview.Flip180();
          if(flip!=appliedFlip) {
@@ -2638,10 +2660,24 @@ int main(int argc,char** argv) {
          double const seconds=std::chrono::duration<double>(now-interval).count();
          if(seconds>=2.0){
             fps=count/seconds;
-            if(verbose)std::println("[CAM] backend={} frames={} size={}x{} fps={:.1f} "
-               "mean={:.2f} min={:.0f} max={:.0f} black-frames={}",
-               capture.getBackendName(),count,frame.cols,frame.rows,fps,
-               signal.brightness,signal.minimum,signal.maximum,blackFrames);
+            if(verbose) {
+               std::println("[CAM] backend={} frames={} size={}x{} fps={:.1f} "
+                  "mean={:.2f} min={:.0f} max={:.0f} black-frames={}",
+                  capture.getBackendName(),count,frame.cols,frame.rows,fps,
+                  signal.brightness,signal.minimum,signal.maximum,blackFrames);
+               if(!processor.CardLocked())
+                  std::println("[CAM-DETECT] contours={} candidates={} "
+                     "quadrilaterals={} rotated={} plausible={} "
+                     "shape-rejected={} aspect-rejected={} layout={}/{} "
+                     "chosen-ratio={:.3f} nested-panels={} area={:.2f}%",
+                     detection.contours,detection.areaCandidates,
+                     detection.quadrilaterals,detection.rotatedCandidates,
+                     detection.aspectCandidates,detection.rejectedShape,
+                     detection.rejectedAspect,detection.layoutRecognized,
+                     detection.layoutChecked,detection.selectedRatio,
+                     detection.selectedInnerPanels,
+                     detection.selectedAreaPercent);
+            }
             count=0;interval=now;
          }
          // Do not keep silently treating all-zero placeholder frames as
