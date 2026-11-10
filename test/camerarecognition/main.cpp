@@ -864,11 +864,30 @@ public:
    [[nodiscard]] bool SelectionConfirmed() const noexcept {
       return m_identity.Confirmed();
    }
+   void ApplySelectedPrinting() {
+      auto const* pCandidate=m_identity.Selected();
+      if(!pCandidate)return;
+      m_strPrintingId=pCandidate->strPrintingId;
+      m_strSet=pCandidate->strSet;
+      m_strSetName=pCandidate->strSetName;
+      m_strCollector=pCandidate->strCollector;
+      m_strLanguage=pCandidate->strLanguage;
+      m_strRarity=pCandidate->strRarity;
+      m_strOracleId=pCandidate->strOracleId;
+      m_strManaCost=pCandidate->strManaCost;
+      if(!pCandidate->strName.empty())m_strName=pCandidate->strName;
+      if(!pCandidate->strTypeLine.empty())m_strType=pCandidate->strTypeLine;
+   }
    void NavigateCandidate(int iDelta) {
       // PHASE 09: switch database candidates, never reopen the physical search.
       if(!m_ocrCard || !m_identity.Navigate(iDelta))return;
       m_boUserNavigated=true;
       ++m_uSelectionSerial;
+      ApplySelectedPrinting();
+      // Never show a previous printing image under the new candidate label.
+      m_referenceCard.release();
+      m_strReferenceLabel="Loading selected DB printing...";
+      m_strReferenceDiagnostic.clear();
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
       if(m_artwork && m_identity.Selected())
          m_artwork->Select(*m_identity.Selected(),*m_ocrCard,
@@ -883,11 +902,7 @@ public:
       if(!m_identity.Confirm())return;
       SetPhase(deckkernel::camera::RecognitionPhase::Confirmed);
       m_strStatus="PRINTING MANUALLY CONFIRMED - remove card for next scan";
-      if(auto const* pCandidate=m_identity.Selected()) {
-         m_strPrintingId=pCandidate->strPrintingId;
-         m_strSet=pCandidate->strSet;
-         m_strCollector=pCandidate->strCollector;
-      }
+      ApplySelectedPrinting();
    }
    [[nodiscard]] bool Focusing() const noexcept {return m_focusPending;}
    [[nodiscard]] bool TrackingActive() const noexcept {
@@ -994,6 +1009,9 @@ public:
       if(optMatch && !boMultiple) {
          // OCR corroboration is evidence for one candidate, not verification.
          static_cast<void>(m_identity.SelectAt(*optMatch));
+         ApplySelectedPrinting();
+         m_referenceCard.release();
+         m_strReferenceLabel="Loading OCR-supported DB printing...";
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
          if(m_artwork && m_identity.Selected())
             m_artwork->Select(*m_identity.Selected(),*m_ocrCard,
@@ -1026,7 +1044,20 @@ public:
          result->uSelectionSerial!=m_uSelectionSerial)return;
       // PHASE 06/07: accept only events for the active physical card.
       // PHASE 09: loading a new reference never restarts recognition.
-      if(m_identity.Confirmed())return;
+      if(m_identity.Confirmed()) {
+         // Enter may occur before an asynchronous reference download ends.
+         // Accept the image for the confirmed selection, but never replace
+         // its confirmed status or return to automatic recognition.
+         if(result->boCandidateSelection) {
+            if(!result->aReferenceImage.empty())
+               m_referenceCard=std::move(result->aReferenceImage);
+            if(!result->strReferenceLabel.empty())
+               m_strReferenceLabel=result->strReferenceLabel;
+            if(!result->strReferenceDiagnostic.empty())
+               m_strReferenceDiagnostic=result->strReferenceDiagnostic;
+         }
+         return;
+      }
       m_strStatus=result->strStatus;
       m_strEdition=result->strEdition;
       if(!result->boCandidateSelection)
