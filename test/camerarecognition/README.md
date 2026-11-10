@@ -617,3 +617,46 @@ suite, camera-mode negotiation, and a reproducible labelled set of
 upright/inverted cards across multiple printings. Record: capture
 source-card width, accepted/rejected frame quality, artwork top-k
 recall, printing top-k recall, false matches and per-stage latency.
+
+## 2026-11-10: restore camera acquisition after excessive layout filtering
+
+A real camera log showed repeated SEARCHING/ACQUIRING transitions at
+3840x2160 MJPG 30 fps without a Presented event. The camera mode and
+autofocus requests had succeeded; failure occurred **before** focus
+selection, dHash/ORB lookup, or printing comparison.
+
+Root cause in the preceding source was twofold:
+
+1. `FindCard(..., boRequireStandardLayout=true)` had a hard
+   `if (!layout.boRecognized) continue` rejection. Blurred, reflected,
+   rotated, or uncommon internal layouts therefore discarded otherwise
+   geometrically plausible physical-card boundaries.
+2. `StableCardTrigger` required four immediately consecutive,
+   closely aligned detections. One missed contour reset the entire
+   acquiring sequence. The dashboard reported SEARCHING immediately,
+   causing visible state flicker.
+
+The geometry check is now authoritative for **acquisition**. The
+standard-card layout provides a bounded preference and tentative 0/180
+orientation only; an unknown internal layout must not prevent a card
+from becoming a tracked physical object. The matcher tests both
+orientations later. Candidate frame layouts are evaluated only when
+their geometry could plausibly beat the current best candidate.
+
+The live acquisition now tolerates up to three consecutive missing
+contour observations and permits moderate geometric changes while
+stabilizing. The active physical-card tracking and removal policy are
+unchanged. The UI stays in ACQUIRING during tolerated gaps.
+
+The maximum allowable contour area was raised from 20% to 85% of the
+image, since moving a card close enough for printing-detail sharpness
+must not automatically exclude it from detection.
+
+The self-test includes a geometrically valid physical card without
+the expected internal standard layout. This tests that layout
+recognition is no longer a hidden precondition for first acquisition.
+
+**Verification required:** recompile with BCC64X and run the self-test,
+then the same camera invocation. Confirm that the log proceeds from
+ACQUIRING to TRACKING/FOCUSING. The earlier low artwork match rate must
+only be reassessed after reliable physical-card capture is restored.
