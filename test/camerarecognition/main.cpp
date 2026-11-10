@@ -1271,7 +1271,15 @@ public:
    \throw cv::Exception If the OpenCV tracker fails.
    */
    [[nodiscard]] std::optional<FoundCard> Observe(cv::Mat const& aFrame) {
-      if(!m_tracker.Active())return FindCard(aFrame,nullptr,true);
+      if(!m_tracker.Active()) {
+         auto optCard=FindCard(aFrame,nullptr,true);
+         // Do not report a rectangular artwork as a captured physical card.
+         // Standard-frame rejection is visible instead of silently freezing
+         // the wrong crop and reporting an unrelated Scryfall search failure.
+         if(!optCard && !m_cardLocked)
+            m_strStatus="SEARCHING - full standard-card frame required";
+         return optCard;
+      }
       auto optCorners=m_tracker.Track(aFrame);
       if(!optCorners)return std::nullopt;
       FoundCard aCard;
