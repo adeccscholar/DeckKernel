@@ -210,6 +210,33 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
       cv::findContours(closed,contours,cv::RETR_LIST,
          cv::CHAIN_APPROX_SIMPLE);
       stats.contours+=static_cast<unsigned>(contours.size());
+      struct InnerOutline {
+         cv::Rect aBox;
+         cv::Point2f aCenter;
+         double flArea{};
+      };
+      // Precompute nested rectangular shapes once per Canny pass. Iterating
+      // approxPolyDP over every contour for every card candidate would make
+      // 4K camera acquisition unnecessarily quadratic and unstable.
+      std::vector<InnerOutline> vecPossiblePanels;
+      vecPossiblePanels.reserve(contours.size()/4);
+      for(auto const& aCandidate:contours) {
+         double const flArea=std::abs(cv::contourArea(aCandidate));
+         if(flArea<minArea*0.3)continue;
+         cv::Rect const aBox=cv::boundingRect(aCandidate);
+         double const flAspect=static_cast<double>(
+            std::max(aBox.width,aBox.height))/
+            std::max(1,std::min(aBox.width,aBox.height));
+         if(flAspect<1.3 || flAspect>4.0)continue;
+         std::vector<cv::Point> vecCorners;
+         cv::approxPolyDP(aCandidate,vecCorners,
+            cv::arcLength(aCandidate,true)*0.025,true);
+         if(vecCorners.size()!=4 || !cv::isContourConvex(vecCorners))
+            continue;
+         vecPossiblePanels.push_back(InnerOutline{
+            aBox,cv::Point2f(aBox.x+aBox.width*0.5f,
+               aBox.y+aBox.height*0.5f),flArea});
+      }
       for(auto const& contour:contours) {
          double const area=std::abs(cv::contourArea(contour));
          // Exclude huge table/desk outlines, but retain small printed cards.
@@ -350,25 +377,11 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
          // require them, because blur or unconventional printings hide them.
          unsigned uInnerPanels{};
          std::array<cv::Rect,3> arrPanels{};
-         for(auto const& aInner:contours) {
-            if(&aInner==&contour)continue;
-            double const flInnerArea=std::abs(cv::contourArea(aInner));
-            if(flInnerArea<area*0.075 || flInnerArea>area*0.70)
-               continue;
-            cv::Rect const aInnerBox=cv::boundingRect(aInner);
-            double const flInnerAspect=static_cast<double>(
-               std::max(aInnerBox.width,aInnerBox.height))/
-               std::max(1,std::min(aInnerBox.width,aInnerBox.height));
-            if(flInnerAspect<1.3 || flInnerAspect>4.0)continue;
-            std::vector<cv::Point> vecInnerCorners;
-            cv::approxPolyDP(aInner,vecInnerCorners,
-               cv::arcLength(aInner,true)*0.025,true);
-            if(vecInnerCorners.size()!=4 ||
-               !cv::isContourConvex(vecInnerCorners))continue;
-            cv::Point2f const aCenter(
-               aInnerBox.x+aInnerBox.width*0.5f,
-               aInnerBox.y+aInnerBox.height*0.5f);
-            if(cv::pointPolygonTest(corners,aCenter,true)<
+         for(auto const& aInner:vecPossiblePanels) {
+            if(aInner.flArea<area*0.075 ||
+               aInner.flArea>area*0.70)continue;
+            cv::Rect const& aInnerBox=aInner.aBox;
+            if(cv::pointPolygonTest(corners,aInner.aCenter,true)<
                shortSide*0.06)continue;
             bool boDuplicate{};
             for(unsigned uPanel=0;uPanel<uInnerPanels;++uPanel) {
