@@ -2153,10 +2153,13 @@ void SelfTest() {
       throw std::runtime_error(
          "false-object geometry rejection was not exercised");
 
+   // PHASE 01 regression: an unstructured rectangle is not sufficient
+   // evidence for a complete standard card. It must not be locked in the
+   // live detection path merely because it has a card-like aspect ratio.
    auto const aUnusual=FindCard(aUnusualScene,nullptr,true);
-   if(!aUnusual)
+   if(aUnusual)
       throw std::runtime_error(
-         "geometry-first acquisition incorrectly requires an internal layout");
+         "unstructured card-shaped rectangle incorrectly acquired as a whole card");
 
    auto const aStandard=FindCard(aFramedScene,nullptr,true);
    if(!aStandard)
