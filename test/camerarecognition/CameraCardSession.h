@@ -114,19 +114,21 @@ namespace deckkernel::camera {
       }
 
       /**
-      \brief Check whether focus settling has completed.
-      \details The time bound ensures progress on cameras with unstable focus.
-      \returns True after 18 samples or 2 seconds.
+      \brief Finish the bounded image sampling phase.
+      \details Quality is diagnostic evidence, never a condition that can
+      prevent searching a physically captured card. We use at least eight
+      observations when available, but stop after three seconds even if
+      the tracker occasionally loses the card contour.
+      \returns True after enough samples and settling, or at the deadline.
       \throw None.
       */
       [[nodiscard]] bool Ready() const noexcept {
          double const flElapsed=std::chrono::duration<double>(
             std::chrono::steady_clock::now()-m_started).count();
-         // PHASE 04: never freeze an inadequate capture merely because
-         // time elapsed. Keep tracking this physical card and offering
-         // registered frames until it really meets the quality gate.
-         return m_uSamples>=18 && flElapsed>=2.0 &&
-            m_bestMetrics.UsableForMatching();
+         // PHASE 04: the prior UsableForMatching() hard gate could hold a
+         // clearly readable physical card in FOCUSING forever.
+         // The index must receive the best available captured image.
+         return (m_uSamples>=8 && flElapsed>=1.5) || flElapsed>=3.0;
       }
 
       /**
@@ -165,7 +167,7 @@ namespace deckkernel::camera {
       [[nodiscard]] bool NeedsBetterFocusHint() const noexcept {
          return !m_boFrozen && !m_bestMetrics.UsableForMatching() &&
             std::chrono::duration<double>(
-               std::chrono::steady_clock::now()-m_started).count()>=6.0;
+               std::chrono::steady_clock::now()-m_started).count()>=2.0;
       }
       [[nodiscard]] cv::Mat const& Image() const noexcept{
          return m_boFrozen?m_aFrozen:m_aBest;
