@@ -1095,6 +1095,9 @@ public:
    }
 
    void ReevaluateOcrAfterRotation(bool manualFlip) noexcept {
+      // PHASE 05 invariant: R must never change a frozen card or the active
+      // physical object's captured evidence. The matcher tests both rotations.
+      if(m_cardLocked)return;
       m_manualOrientation=manualFlip;
       // Changing the orientation must be allowed to rerun OCR even when a
       // previous, wrong-side-up title passed the provisional confidence test.
@@ -1142,7 +1145,7 @@ public:
          m_strStatus="CAPTURE FAILED - no usable card image";
          return;
       }
-      m_displayCard=m_capture.Image();
+      m_displayCard=m_capture.Image().clone();
       SetPhase(deckkernel::camera::RecognitionPhase::Frozen);
       m_strStatus=std::format(
          "CARD CAPTURED - focus selected (sharpness {:.1f}, {} frames)",
