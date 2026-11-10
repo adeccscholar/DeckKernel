@@ -54,6 +54,9 @@ class CameraDashboard {
    int m_iNavigation{};
    bool m_boConfirm{};
    std::string m_strPhase{"01 SEARCHING"};
+   std::size_t m_uCandidateIndex{};
+   std::size_t m_uCandidateCount{};
+   bool m_boPrintingConfirmed{};
    static sk_sp<SkTypeface>& Typeface() {
       static sk_sp<SkTypeface> face=[] {
          auto manager=SkFontMgr_New_DirectWrite();
@@ -216,7 +219,9 @@ public:
       std::string strSet={},std::string strSetName={},
       std::string strCollector={},std::string strLanguage={},
       std::string strRarity={},std::string strPrintingId={},
-      std::string strOracleId={},std::string strManaCost={}) {
+      std::string strOracleId={},std::string strManaCost={},
+      std::size_t uCandidateIndex=0,std::size_t uCandidateCount=0,
+      bool boPrintingConfirmed=false) {
       m_strName=std::move(strName);
       m_strType=std::move(strType);
       m_strRules=std::move(strRules);
@@ -237,6 +242,9 @@ public:
       m_strPrintingId=std::move(strPrintingId);
       m_strOracleId=std::move(strOracleId);
       m_strManaCost=std::move(strManaCost);
+      m_uCandidateIndex=uCandidateIndex;
+      m_uCandidateCount=uCandidateCount;
+      m_boPrintingConfirmed=boPrintingConfirmed;
    }
 
    /**
@@ -310,29 +318,50 @@ public:
          Text(pCanvas,flRight+26.f,flPaneTop+flPaneHeight/2.f,
             "No matching DB image available",15.f,0xffffcc79);
       }
-      float flY=flBottom+27.f;
-      Text(pCanvas,30.f,flY,
-         Clip("Status: "+m_strStatus,iWidth-80),17.f,0xffffcc79);
-      flY+=24.f;
-      Text(pCanvas,30.f,flY,
-         Clip("Card: "+m_strName+"  |  "+m_strType,iWidth-80),
-         16.f,0xfff5f7fa);
-      flY+=22.f;
-      Text(pCanvas,30.f,flY,Clip(std::format(
-         "Set: {} ({})  |  No. {}  |  {}  |  {}",
-         m_strSetName,m_strSet,m_strCollector,m_strLanguage,m_strRarity),
-         iWidth-80),15.f,0xffc9d9e2);
-      flY+=20.f;
-      Text(pCanvas,30.f,flY,Clip("Mana: "+m_strManaCost+
-         "  |  Printing ID: "+m_strPrintingId,iWidth-80),
-         14.f,0xffc9d9e2);
-      flY+=20.f;
-      Text(pCanvas,30.f,flY,Clip("Oracle ID: "+m_strOracleId+
-         "  |  "+m_strReferenceDiagnostic,iWidth-80),
+      // DEMO PHASE 06: Oracle identity is shown on the left; the frozen
+      // camera image above remains unchanged when printing candidates change.
+      float const flLeftX=30.f;
+      float const flRightX=flRight+14.f;
+      int const iColumnWidth=static_cast<int>(flPaneWidth-30.f);
+      Text(pCanvas,flLeftX,flBottom+28.f,
+         "ORACLE CARD",16.f,0xff8ed5ee);
+      Text(pCanvas,flLeftX,flBottom+58.f,
+         Clip(m_strName,iColumnWidth),19.f,0xfff5f7fa);
+      Text(pCanvas,flLeftX,flBottom+84.f,
+         Clip("Type: "+m_strType,iColumnWidth),13.f,0xffc9d9e2);
+      Text(pCanvas,flLeftX,flBottom+109.f,
+         Clip("Oracle ID: "+m_strOracleId,iColumnWidth),12.f,0xff9dddb9);
+
+      // DEMO PHASE 07/09/10: the right column always refers to the selected
+      // printing, not to Oracle text or guessed properties of the camera image.
+      std::string const strPrintingHeader=m_boPrintingConfirmed?
+         "PRINTING / MANUALLY CONFIRMED":
+         (m_uCandidateCount>1?
+            std::format("PRINTING CANDIDATE {}/{}",
+               m_uCandidateIndex+1,m_uCandidateCount):
+            "PRINTING / IMAGE MATCH");
+      Text(pCanvas,flRightX,flBottom+28.f,
+         Clip(strPrintingHeader,iColumnWidth),16.f,0xff8ed5ee);
+      Text(pCanvas,flRightX,flBottom+58.f,
+         Clip(std::format("{} ({})  #{}",
+            m_strSetName,m_strSet,m_strCollector),iColumnWidth),
+         19.f,0xfff5f7fa);
+      Text(pCanvas,flRightX,flBottom+84.f,
+         Clip(std::format("{} | {} | Mana {}",
+            m_strLanguage,m_strRarity,m_strManaCost),iColumnWidth),
+         13.f,0xffc9d9e2);
+      Text(pCanvas,flRightX,flBottom+109.f,
+         Clip("Printing ID: "+m_strPrintingId,iColumnWidth),
+         12.f,0xff9dddb9);
+
+      Text(pCanvas,flLeftX,flBottom+146.f,
+         Clip("Recognition: "+m_strStatus,iWidth-70),
+         15.f,0xffffcc79);
+      Text(pCanvas,flLeftX,flBottom+171.f,
+         Clip("Reference: "+m_strReferenceDiagnostic,iWidth-70),
          13.f,0xff9dddb9);
-      flY+=19.f;
-      Text(pCanvas,30.f,flY,
-         Clip("Next: "+m_strGuidance,iWidth-80),
+      Text(pCanvas,flLeftX,flBottom+195.f,
+         Clip("Next: "+m_strGuidance,iWidth-70),
          13.f,0xff8ed5ee);
       // Reuse the SDL background raster; actual card textures are rendered above it.
       SkPixmap aPixels;
