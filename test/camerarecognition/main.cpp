@@ -476,6 +476,7 @@ visible removal interval before it can become a new presentation.
 */
 class StableCardTrigger {
    static constexpr unsigned stableFrames=4;
+   static constexpr unsigned acquiringMissingTolerance=3;
    static constexpr unsigned removalFrames=45;
    std::optional<cv::Rect> m_previousBox;
    std::optional<cv::Rect> m_activeBox;
@@ -484,6 +485,7 @@ class StableCardTrigger {
    std::optional<unsigned> m_activeNumber;
    hash_ty m_activeFingerprint{};
    unsigned m_stable{},m_absent{},m_events{};
+   unsigned m_acquireMissed{};
 
    [[nodiscard]] static bool Near(cv::Rect const& aLeft,
       cv::Rect const& aRight,double flMotionRatio,double flAreaRatio) {
@@ -548,6 +550,7 @@ public:
             m_activeBox.reset();
             m_previousBox.reset();
             m_stable=0;
+            m_acquireMissed=0;
             m_bestFrame.release();
             m_bestScore=-1.0;
             m_absent=0;
@@ -556,14 +559,20 @@ public:
          return std::nullopt;
       }
       if(!boPresent) {
+         // PHASE 02: tolerate brief dropped contours while autofocus and
+         // MJPEG exposure settle. A single missed frame is not a new card.
+         if(m_previousBox &&
+            ++m_acquireMissed<=acquiringMissingTolerance)
+            return std::nullopt;
          m_previousBox.reset();
          m_stable=0;
+         m_acquireMissed=0;
          m_bestFrame.release();
          m_bestScore=-1.0;
          return std::nullopt;
       }
       cv::Rect const aBox=cv::boundingRect(optFound->corners);
-      if(m_previousBox && Near(aBox,*m_previousBox,0.09,0.22)) {
+      if(m_previousBox && Near(aBox,*m_previousBox,0.16,0.35)) {
          ++m_stable;
       }
       else {
@@ -571,6 +580,7 @@ public:
          m_bestFrame.release();
          m_bestScore=-1.0;
       }
+      m_acquireMissed=0;
       auto const aQuality=deckkernel_camera::quality::Measure(optFound->rectified);
       if(aQuality.score>m_bestScore) {
          m_bestScore=aQuality.score;
@@ -584,6 +594,7 @@ public:
       m_absent=0;
       m_previousBox.reset();
       m_stable=0;
+      m_acquireMissed=0;
       Event aEvent{EventKind::Presented,*m_activeNumber,
          m_activeFingerprint,m_bestFrame.empty()?
             optFound->rectified.clone():m_bestFrame.clone()};
