@@ -11,14 +11,14 @@ a new physical card while tracking remains active.
 */
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/geometry.hpp>
+#include <opencv2/features.hpp>
 #include <opencv2/video/tracking.hpp>
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <limits>
 #include <cstddef>
 #include <optional>
-#include <random>
 #include <utility>
 #include <vector>
 
@@ -35,172 +35,9 @@ namespace deckkernel::camera {
       cv::Size m_aFrameSize{};
       bool m_boActive{};
       unsigned m_uMissed{};
-      unsigned m_uFrameSerial{};
       double m_flInitialInside{};
       double m_flInitialContrast{};
       static constexpr unsigned cuMaxMissed=45;
-
-      /**
-      \brief Fit a projective transform to all RANSAC inliers using core.
-      \details Normalized linear least squares estimates the eight independent
-      homography coefficients, with h22 fixed to one. Hartley normalization
-      avoids ill conditioning when the full camera frame is 4K.
-      \param vecFrom Original tracked feature positions.
-      \param vecTo Current feature positions.
-      \param vecInliers Indices of previously accepted feature correspondences.
-      \returns A 3x3 CV_64F homography or an empty matrix on failure.
-      \throw cv::Exception If OpenCV matrix operations fail.
-      */
-      [[nodiscard]] static cv::Mat RefitHomography(
-         std::vector<cv::Point2f> const& vecFrom,
-         std::vector<cv::Point2f> const& vecTo,
-         std::vector<std::size_t> const& vecInliers) {
-         if(vecInliers.size()<4)return {};
-         double flFromX{},flFromY{},flToX{},flToY{};
-         for(std::size_t const uIndex:vecInliers) {
-            flFromX+=vecFrom[uIndex].x;flFromY+=vecFrom[uIndex].y;
-            flToX+=vecTo[uIndex].x;flToY+=vecTo[uIndex].y;
-         }
-         double const flN=static_cast<double>(vecInliers.size());
-         flFromX/=flN;flFromY/=flN;flToX/=flN;flToY/=flN;
-         double flFromDistance{},flToDistance{};
-         for(std::size_t const uIndex:vecInliers) {
-            flFromDistance+=std::hypot(
-               vecFrom[uIndex].x-flFromX,vecFrom[uIndex].y-flFromY);
-            flToDistance+=std::hypot(
-               vecTo[uIndex].x-flToX,vecTo[uIndex].y-flToY);
-         }
-         if(flFromDistance<=1.0e-6 || flToDistance<=1.0e-6)return {};
-         double const flSourceScale=std::sqrt(2.0)*flN/flFromDistance;
-         double const flTargetScale=std::sqrt(2.0)*flN/flToDistance;
-         int const iRows=static_cast<int>(vecInliers.size()*2);
-         cv::Mat aSystem=cv::Mat::zeros(iRows,8,CV_64F);
-         cv::Mat aRight(iRows,1,CV_64F);
-         for(std::size_t uRow=0;uRow<vecInliers.size();++uRow) {
-            std::size_t const uPoint=vecInliers[uRow];
-            double const flX=(vecFrom[uPoint].x-flFromX)*flSourceScale;
-            double const flY=(vecFrom[uPoint].y-flFromY)*flSourceScale;
-            double const flU=(vecTo[uPoint].x-flToX)*flTargetScale;
-            double const flV=(vecTo[uPoint].y-flToY)*flTargetScale;
-            double* pFirst=aSystem.ptr<double>(static_cast<int>(2*uRow));
-            double* pSecond=aSystem.ptr<double>(static_cast<int>(2*uRow+1));
-            pFirst[0]=flX;pFirst[1]=flY;pFirst[2]=1.0;
-            pFirst[6]=-flU*flX;pFirst[7]=-flU*flY;
-            pSecond[3]=flX;pSecond[4]=flY;pSecond[5]=1.0;
-            pSecond[6]=-flV*flX;pSecond[7]=-flV*flY;
-            aRight.at<double>(static_cast<int>(2*uRow))=flU;
-            aRight.at<double>(static_cast<int>(2*uRow+1))=flV;
-         }
-         cv::Mat aSolution;
-         if(!cv::solve(aSystem,aRight,aSolution,cv::DECOMP_SVD))return {};
-         cv::Matx33d const aNormalized(
-            aSolution.at<double>(0),aSolution.at<double>(1),
-            aSolution.at<double>(2),aSolution.at<double>(3),
-            aSolution.at<double>(4),aSolution.at<double>(5),
-            aSolution.at<double>(6),aSolution.at<double>(7),1.0);
-         cv::Matx33d const aSourceTransform(
-            flSourceScale,0.0,-flSourceScale*flFromX,
-            0.0,flSourceScale,-flSourceScale*flFromY,0.0,0.0,1.0);
-         cv::Matx33d const aTargetTransform(
-            flTargetScale,0.0,-flTargetScale*flToX,
-            0.0,flTargetScale,-flTargetScale*flToY,0.0,0.0,1.0);
-         cv::Mat const aResult(
-            aTargetTransform.inv()*aNormalized*aSourceTransform);
-         return aResult;
-      }
-
-      /**
-      \brief Robustly estimate a homography without the calib3d module.
-      \details Deterministic RANSAC selects four nondegenerate optical-flow
-      pairs per trial. imgproc provides the four-point perspective transform,
-      core provides projection and final normalized least-squares refinement.
-      This preserves the previous robust projective tracker in the locked
-      OpenCV stack without linking optional calib3d.
-      \param vecFrom Original image features.
-      \param vecTo Corresponding optical-flow locations.
-      \param uSeed Per-frame deterministic random seed.
-      \returns Projective matrix and accepted inlier count, or empty/zero.
-      \throw cv::Exception If an OpenCV transform fails.
-      */
-      [[nodiscard]] static std::pair<cv::Mat,int> EstimateHomographyRansac(
-         std::vector<cv::Point2f> const& vecFrom,
-         std::vector<cv::Point2f> const& vecTo,unsigned uSeed) {
-         if(vecFrom.size()!=vecTo.size() || vecFrom.size()<10)return {{},0};
-         std::minstd_rand aGenerator(0x5a31u+uSeed);
-         std::uniform_int_distribution<std::size_t> aSampleIndex(
-            0,vecFrom.size()-1);
-         std::vector<std::size_t> vecBestInliers;
-         cv::Mat aBest;
-         double flBestError=std::numeric_limits<double>::infinity();
-         constexpr double cflMaxSquareError=9.0;
-         for(unsigned uTrial=0;uTrial<96;++uTrial) {
-            std::array<std::size_t,4> arrIndices{};
-            std::array<cv::Point2f,4> arrBefore{},arrAfter{};
-            for(std::size_t uPart=0;uPart<4;++uPart) {
-               std::size_t uCandidate{};
-               do {
-                  uCandidate=aSampleIndex(aGenerator);
-               } while(std::find(arrIndices.begin(),
-                  arrIndices.begin()+static_cast<std::ptrdiff_t>(uPart),
-                  uCandidate)!=
-                  arrIndices.begin()+static_cast<std::ptrdiff_t>(uPart));
-               arrIndices[uPart]=uCandidate;
-               arrBefore[uPart]=vecFrom[uCandidate];
-               arrAfter[uPart]=vecTo[uCandidate];
-            }
-            // Four points must not collapse to a line in either camera frame.
-            auto const Nondegenerate=[](
-               std::array<cv::Point2f,4> const& arrPoints) {
-               for(int iA=0;iA<4;++iA)
-                  for(int iB=iA+1;iB<4;++iB)
-                     for(int iC=iB+1;iC<4;++iC) {
-                        cv::Point2f const aU=arrPoints[iB]-arrPoints[iA];
-                        cv::Point2f const aV=arrPoints[iC]-arrPoints[iA];
-                        if(std::abs(aU.x*aV.y-aU.y*aV.x)<30.f)
-                           return false;
-                     }
-               return true;
-            };
-            if(!Nondegenerate(arrBefore) || !Nondegenerate(arrAfter))
-               continue;
-            cv::Mat const aModel=cv::getPerspectiveTransform(
-               arrBefore.data(),arrAfter.data(),cv::DECOMP_LU);
-            if(aModel.empty())continue;
-            std::vector<cv::Point2f> vecProjected;
-            cv::perspectiveTransform(vecFrom,vecProjected,aModel);
-            std::vector<std::size_t> vecInliers;
-            double flError{};
-            for(std::size_t uIndex=0;uIndex<vecProjected.size();++uIndex) {
-               double const flDx=static_cast<double>(
-                  vecProjected[uIndex].x)-vecTo[uIndex].x;
-               double const flDy=static_cast<double>(
-                  vecProjected[uIndex].y)-vecTo[uIndex].y;
-               double const flSquare=flDx*flDx+flDy*flDy;
-               if(!std::isfinite(flSquare) ||
-                  flSquare>cflMaxSquareError)continue;
-               vecInliers.push_back(uIndex);
-               flError+=flSquare;
-            }
-            if(vecInliers.size()>vecBestInliers.size() ||
-               (vecInliers.size()==vecBestInliers.size() &&
-                  flError<flBestError)) {
-               vecBestInliers=std::move(vecInliers);
-               flBestError=flError;
-               aBest=aModel;
-            }
-            if(uTrial>=12 && vecBestInliers.size()==vecFrom.size())
-               break;
-         }
-         if(vecBestInliers.size()<10 ||
-            static_cast<double>(vecBestInliers.size())/vecFrom.size()<0.60)
-            return {{},0};
-         cv::Mat const aRefined=RefitHomography(
-            vecFrom,vecTo,vecBestInliers);
-         return {
-            aRefined.empty()?aBest:aRefined,
-            static_cast<int>(vecBestInliers.size())
-         };
-      }
 
       /**
       \brief Calculate strong, spatially distributed points within the whole card.
@@ -428,10 +265,14 @@ namespace deckkernel::camera {
                }
             }
             if(vecAfter.size()>=12) {
-               // Projective RANSAC from core/imgproc: OpenCV 5.0.0 in the
-               // pinned BuildEngine stack does not provide calib3d.
-               auto const [aH,iInliers]=EstimateHomographyRansac(
-                  vecBefore,vecAfter,++m_uFrameSerial);
+               // OpenCV 5 PHASE 03: geometry owns findHomography and
+               // projective shape functions; features owns Shi-Tomasi.
+               // Use OpenCV's tested robust RANSAC rather than a private solver.
+               cv::Mat aInliers;
+               cv::Mat const aH=cv::findHomography(vecBefore,vecAfter,
+                  cv::RANSAC,3.0,aInliers);
+               int const iInliers=aInliers.empty()?0:
+                  cv::countNonZero(aInliers);
                if(!aH.empty()&&iInliers>=10 &&
                   static_cast<double>(iInliers)/vecAfter.size()>=0.60) {
                   std::vector<cv::Point2f> vecOld(
@@ -469,7 +310,7 @@ namespace deckkernel::camera {
       \throw None.
       */
       void Reset() noexcept {
-         m_boActive=false;m_uMissed=0;m_uFrameSerial=0;
+         m_boActive=false;m_uMissed=0;
          m_vecPoints.clear();m_aPreviousGray.release();
          m_aFrameSize={};
          m_flInitialInside=0.0;
