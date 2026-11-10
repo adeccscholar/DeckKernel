@@ -232,3 +232,27 @@ the outer frame is selected instead of the inner image and that a 180-degree
 rotation is corrected without changing the normalized content. These
 tests are source additions; they have not yet run in the user's
 BCC64X/Windows build.
+
+## 2026-11-11: full-card structural evidence before the lock
+
+The detector now distinguishes geometric *candidate* contours from a
+confirmed **complete framed standard card**. The latter requires title/art
+and art/type-text horizontal separators at two distinct vertical positions,
+in either 0 or 180-degree orientation. Merely stretching a landscape
+artwork rectangle into a portrait crop cannot produce these missing frame
+regions. The physical-card session is never started for such a partial
+artwork crop.
+
+This check belongs in SEARCHING/ACQUIRING, before any tracking or
+CardCapture initialization. Once a whole physical card is confirmed,
+tracking continues to use the complete four-corner geometry; the frozen
+capture and the Oracle/printing matcher remain separate.
+
+The conservative framed-standard-card criterion will not recognize every
+unusual MTG layout. Extend with independently tested layout classes
+instead of reducing the standard-frame evidence threshold without data.
+
+Regression samples now include a portrait artwork-only rectangle. A
+non-authoritative screenshot-crop check also distinguished two complete
+cards from the user-provided mouse and artwork-only examples; results
+on original 4K camera frames are still unverified.
