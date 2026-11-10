@@ -191,3 +191,44 @@ for the confirmed printing, without changing the confirmed status.
 
 The manual R rotation control cannot modify a frozen capture. The
 recognizer already checks both 0 and 180 degree orientations.
+
+## 2026-11-10: preventing artwork-only captures and wrong orientation
+
+Two real camera screenshots exposed that a rectangular artwork sometimes
+won the outer-contour selection, and a physically inverted card could be
+frozen with the art panel below the title/text areas. The geometry-only
+selector was insufficient for modern standard MTG card frames.
+
+A new CameraCardLayout component checks low-resolution **whole-card**
+structure before a live contour may become a physical-card presentation.
+It uses grayscale horizontal frame separators and image variation in the
+title, illustration and lower rules region. Contours containing only
+artwork lack the expected combination of upper and lower separators
+and cannot be selected as the captured standard card. Candidate filtering
+runs before best-contour ranking, so a rejected inner artwork does not
+prevent a different, valid outer contour from winning.
+
+Both 0 and 180-degree standard layouts are evaluated. The chosen rotation
+is retained from the initial detection through perspective-normalized
+capture, autofocus sampling, frozen display, artwork matching and printing
+matching. The model logs [CAM-ORIENTATION] once for the presentation.
+The optical-flow tracker continues following the original physical-card
+corners; its geometric transform is not confused with the visual 180-degree
+rotation. Focus-stage replacement images must still pass standard-card
+layout verification to avoid replacing a valid initial frame with an
+artwork-only crop.
+
+This layout gate is deliberately limited to **conventional modern
+standard-card frames**. Full-art, textless, split, adventure, unusual
+treatment and heavily obscured designs may need separate layout
+classifiers. A weak/ambiguous orientation is rejected rather than
+arbitrarily frozen. No card identity is invented by this structural
+gate: Scryfall matching and printing identification remain subsequent
+phases.
+
+The self-test includes a synthetic illustrated standard frame with title,
+artwork and text bands, and its upside-down counterpart. It asserts that
+the outer frame is selected instead of the inner image and that a 180-degree
+rotation is corrected without changing the normalized content. These
+tests are source additions; they have not yet run in the user's
+BCC64X/Windows build.
