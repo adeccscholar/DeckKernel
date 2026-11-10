@@ -335,7 +335,7 @@ public:
       };
       if(m_bCardLocked) {
          Text(pCanvas,30.f,flPaneTop+flPaneHeight-18.f,
-            "Captured: stable until card removal",14.f,0xff9dddb9);
+            "Captured: locked | "+m_strOrientation,14.f,0xff9dddb9);
       }
       Text(pCanvas,flRight+14.f,flPaneTop+flPaneHeight-18.f,
          Clip(m_strReferenceLabel,static_cast<int>(flPaneWidth-26.f)),
