@@ -573,13 +573,16 @@ Changes made using the **existing OpenCV 5.0.0 modules only**:
    It also tracks the **actual number of native camera pixels spanning
    the card**, independently of the size of the perspective-rectified
    output. Upsampling is never accepted as proof of source detail.
-3. The capture continues until 18 observations and at least two seconds
-   if the best capture satisfies provisional quality conditions. Poor
-   frames get extra autofocus settling time, bounded to six seconds.
-4. If the best source fails the provisional size, blur, exposure or
-   glare gate, the session shows **CAPTURE TOO SOFT/SMALL**, retains
-   the last physical capture for diagnosis, and does not search the
-   Scryfall index using inadequate image evidence.
+3. The capture waits for at least 18 observations and two seconds,
+   and only freezes if the best registered frame passes provisional
+   photographic quality checks. A time limit does NOT force an unsharp
+   capture into the image matcher.
+4. After six seconds without acceptable source evidence, the existing
+   physical-card session remains in FOCUSING and shows
+   **FOCUS INSUFFICIENT**, actual native card width and text-detail
+   sharpness. It keeps collecting registered images from the same card
+   while asking the operator to move closer or improve camera focus.
+   Removal cancels that session. No Scryfall search is started on blur.
 5. Artwork search compares both 0 and 180 degree orientations, with two
    plausible modern-frame artwork crops per orientation, before
    accepting an artwork winner. The dHash shortlist was enlarged from
