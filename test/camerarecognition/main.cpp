@@ -390,6 +390,10 @@ public:
    [[nodiscard]] bool Active() const noexcept{
       return m_activeNumber.has_value();
    }
+   [[nodiscard]] bool SameCardPosition(FoundCard const& aFound) const {
+      return m_activeBox && Near(cv::boundingRect(aFound.corners),
+         *m_activeBox,0.22,0.45);
+   }
 
    /**
    \brief Accept the next card-presence observation.
@@ -857,26 +861,28 @@ public:
    \brief Accumulate the sharpest full-resolution perspective-rectified frame.
    \details The autofocus device may respond slowly; image quality is measured
    on the actual card, and matching starts only after settling or timeout.
-   \param aCandidate Detected card geometry.
+   \param pCandidate Detected card geometry or nullptr on a missing observation.
    \param aSource Original camera frame, if available.
    \returns Nothing.
    \throw cv::Exception If perspective transformation fails.
    */
-   void EvaluateFocus(FoundCard const& aCandidate,
+   void EvaluateFocus(FoundCard const* pCandidate,
       cv::Mat const& aSource) {
       if(!m_focusPending)return;
-      cv::Mat aImage=aSource.empty()?aCandidate.rectified.clone():
-         RectifyForOcr(aSource,aCandidate.corners,m_manualOrientation);
-      auto const aQuality=deckkernel_camera::quality::Measure(aImage);
-      if(aQuality.score>m_flCaptureScore) {
-         m_flCaptureScore=aQuality.score;
-         m_flCaptureSharpness=aQuality.sharpness;
-         m_displayCard=std::move(aImage);
+      if(pCandidate) {
+         cv::Mat aImage=aSource.empty()?pCandidate->rectified.clone():
+            RectifyForOcr(aSource,pCandidate->corners,m_manualOrientation);
+         auto const aQuality=deckkernel_camera::quality::Measure(aImage);
+         if(aQuality.score>m_flCaptureScore) {
+            m_flCaptureScore=aQuality.score;
+            m_flCaptureSharpness=aQuality.sharpness;
+            m_displayCard=std::move(aImage);
+         }
+         ++m_uFocusFrames;
       }
-      ++m_uFocusFrames;
       auto const flSeconds=std::chrono::duration<double>(
          std::chrono::steady_clock::now()-m_focusStarted).count();
-      // The time bound avoids stalling indefinitely with very low camera FPS.
+      // Complete after enough valid observations or a bounded wall-clock timeout.
       if(m_uFocusFrames<18 && flSeconds<2.0)return;
       m_focusPending=false;
       m_strStatus=std::format(
@@ -905,8 +911,9 @@ public:
    bool Process(std::optional<FoundCard> const& found,
       cv::Mat const& sourceFrame={}) {
       auto event=m_detector.Accept(found);
-      if(m_focusPending && found && m_ocrCard)
-         EvaluateFocus(*found,sourceFrame);
+      if(m_focusPending && m_ocrCard)
+         EvaluateFocus(found && m_detector.SameCardPosition(*found)?
+            &*found:nullptr,sourceFrame);
       // The sharpest accepted card is captured once. Do not continuously
       // rewrite OCR text while the viewer is inspecting the captured card.
       if(found && m_ocrCard && !m_cardLocked && !m_recognitionReady) {
@@ -1009,6 +1016,9 @@ public:
       if(m_ocr)m_strMana=ReportManaColorCandidates(event->card,event->number,m_verbose);
 #endif
       m_displayCard=event->card.clone();
+      auto const aInitialQuality=deckkernel_camera::quality::Measure(m_displayCard);
+      m_flCaptureScore=aInitialQuality.score;
+      m_flCaptureSharpness=aInitialQuality.sharpness;
       if(m_save) {
          auto const zones=deckkernel_camera::ocr::Detect(event->card);
          if(!deckkernel_camera::ocr::Valid(zones,event->card.size()))
