@@ -1282,7 +1282,26 @@ void SelfTest() {
          stats.selectedAreaPercent<=0.0)
          throw std::runtime_error("small 4K printed card detection failed");
    }
-   // A rotated print with a broken border must still yield a card target.
+   // Projective skew: unequal top/bottom widths and oblique vertical edges.
+   // Four real corners, not a rotated bounding rectangle, must be restored.
+   cv::Mat skewed(1000,1500,CV_8UC3,cv::Scalar(28,28,28));
+   std::vector<cv::Point> const vecSkewCorners{
+      {660,240},{825,265},{875,785},{545,725}};
+   cv::fillConvexPoly(skewed,vecSkewCorners,cv::Scalar(240,240,240));
+   cv::polylines(skewed,vecSkewCorners,true,cv::Scalar(35,35,35),3);
+   CardDetectionDiagnostics skewStats;
+   auto optSkew=FindCard(skewed,&skewStats);
+   if(!optSkew || skewStats.quadrilaterals==0 ||
+      optSkew->rectified.size()!=cv::Size(480,672)) {
+      throw std::runtime_error(
+         "projective card skew did not yield a rectified quadrilateral");
+   }
+   // The central rectified card must remain distinct from the background.
+   if(cv::mean(optSkew->rectified(
+      cv::Rect(100,130,280,370)))[0]<175.0) {
+      throw std::runtime_error("perspective warp failed to preserve card pixels");
+   }
+      // A rotated print with a broken border must still yield a card target.
    cv::Mat rotatedScene(900,1600,CV_8UC3,cv::Scalar(38,38,38));
    cv::RotatedRect testRect(cv::Point2f(800.f,450.f),
       cv::Size2f(178.f,250.f),24.f);
