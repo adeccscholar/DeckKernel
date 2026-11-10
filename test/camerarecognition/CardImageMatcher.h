@@ -27,6 +27,7 @@ both orientations. Results are suggestions until physically validated.
 #include <optional>
 #include <print>
 #include <stdexcept>
+#include <system_error>
 #include <string>
 #include <thread>
 #include <utility>
