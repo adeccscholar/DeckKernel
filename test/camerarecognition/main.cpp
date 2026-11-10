@@ -24,6 +24,7 @@
 #include "CameraOcrZones.h"
 #include "CameraImageQuality.h"
 #include "CameraCardSession.h"
+#include "CameraCardLayout.h"
 #include "CameraPhysicalTracker.h"
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
@@ -84,6 +85,7 @@ struct FoundCard {
    cv::Mat rectified;
    hash_ty fingerprint{};
    std::array<cv::Point,4> corners{};
+   bool boRotate180{};
 };
 struct CardDetectionDiagnostics {
    unsigned contours{};
@@ -141,7 +143,8 @@ struct CardDetectionDiagnostics {
 }
 
 std::optional<FoundCard> FindCard(cv::Mat const& frame,
-   CardDetectionDiagnostics* diagnostics=nullptr) {
+   CardDetectionDiagnostics* diagnostics=nullptr,
+   bool boRequireStandardLayout=false) {
    if(diagnostics)*diagnostics={};
    if(frame.empty()||frame.cols<64||frame.rows<64)return std::nullopt;
 
@@ -164,6 +167,7 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
    double bestScore=-1.0,bestArea=0;
    bool recoveredBest=false;
    std::vector<cv::Point> best;
+   bool boBestRotate180{};
    CardDetectionDiagnostics stats;
 
    auto searchContours=[&](cv::Mat const& edgeMap) {
@@ -261,12 +265,59 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
             cv::Scalar outside=cv::mean(gray(expanded),outsideMask);
             boundaryContrast=std::abs(inside[0]-outside[0]);
          }
+         double flLayoutEvidence=0.0;
+         bool boRotate180{};
+         if(boRequireStandardLayout) {
+            // PHASE 01: a physical card must contain the expected outer
+            // standard-card structure. Reject artwork-only rectangles before
+            // allowing them to create a frozen physical-card session.
+            std::array<cv::Point2f,4> arrCandidate{};
+            cv::Point2f aCenter{};
+            for(std::size_t uIndex=0;uIndex<4;++uIndex) {
+               arrCandidate[uIndex]=cv::Point2f(
+                  static_cast<float>(corners[uIndex].x),
+                  static_cast<float>(corners[uIndex].y));
+               aCenter+=arrCandidate[uIndex];
+            }
+            aCenter*=0.25f;
+            std::sort(arrCandidate.begin(),arrCandidate.end(),
+               [&](cv::Point2f const& aLeft,cv::Point2f const& aRight) {
+                  return std::atan2(aLeft.y-aCenter.y,aLeft.x-aCenter.x) <
+                     std::atan2(aRight.y-aCenter.y,aRight.x-aCenter.x);
+               });
+            auto const itCorner=std::min_element(
+               arrCandidate.begin(),arrCandidate.end(),
+               [](cv::Point2f const& aLeft,cv::Point2f const& aRight) {
+                  return aLeft.x+aLeft.y<aRight.x+aRight.y;
+               });
+            std::rotate(arrCandidate.begin(),itCorner,arrCandidate.end());
+            if(cv::norm(arrCandidate[0]-arrCandidate[1])>
+               cv::norm(arrCandidate[1]-arrCandidate[2]))
+               std::rotate(arrCandidate.begin(),
+                  arrCandidate.begin()+1,arrCandidate.end());
+            std::array<cv::Point2f,4> const arrTarget{{
+               {0.f,0.f},{239.f,0.f},{239.f,335.f},{0.f,335.f}
+            }};
+            cv::Mat aCandidateImage;
+            cv::warpPerspective(image,aCandidateImage,
+               cv::getPerspectiveTransform(
+                  arrCandidate.data(),arrTarget.data()),
+               cv::Size(240,336));
+            auto const aLayout=
+               deckkernel::camera::InspectStandardCard(aCandidateImage);
+            if(!aLayout.boRecognized)continue;
+            flLayoutEvidence=aLayout.flEvidence;
+            boRotate180=aLayout.boRotate180;
+         }
          double const score=area*fill*(0.7+0.3*ratioFitness)*
-            (0.7+0.3*std::min(1.0,boundaryContrast/35.0));
+            (0.7+0.3*std::min(1.0,boundaryContrast/35.0))*
+            (boRequireStandardLayout?
+               1.0+0.01*std::clamp(flLayoutEvidence,0.0,100.0):1.0);
          if(score<=bestScore)continue;
          bestScore=score;
          bestArea=area;
          recoveredBest=recovered;
+         boBestRotate180=boRotate180;
          best=std::move(corners);
       }
    };
@@ -324,7 +375,9 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
    std::array<cv::Point,4> quad{};
    for(unsigned i=0;i<4;++i)
       quad[i]=cv::Point(cvRound(pts[i].x),cvRound(pts[i].y));
-   return FoundCard{rectified,DHash(rectified),quad};
+   if(boBestRotate180)
+      cv::rotate(rectified,rectified,cv::ROTATE_180);
+   return FoundCard{rectified,DHash(rectified),quad,boBestRotate180};
 }
 /** High-resolution OCR warp only for an accepted card presentation.
     Corners are the ordered source-frame positions found by FindCard.
@@ -775,6 +828,7 @@ class Processor {
    bool m_ocrAccepted{};
    bool m_autoFlipped{};
    bool m_manualOrientation{};
+   bool m_boCapturedRotate180{};
    int m_bestNameConfidence{},m_bestTypeConfidence{},m_bestRulesConfidence{};
    std::string m_strName{"--"};
    std::string m_strRules{"--"};
@@ -1157,7 +1211,8 @@ public:
       if(!m_focusPending)return;
       if(pCandidate) {
          cv::Mat aImage=aSource.empty()?pCandidate->rectified.clone():
-            RectifyForOcr(aSource,pCandidate->corners,m_manualOrientation);
+            RectifyForOcr(aSource,pCandidate->corners,
+               m_boCapturedRotate180 != m_manualOrientation);
          // PHASE 04: offer only images belonging to the tracked physical card.
          if(m_capture.Offer(aImage))
             m_displayCard=m_capture.Image();
@@ -1212,7 +1267,7 @@ public:
    \throw cv::Exception If the OpenCV tracker fails.
    */
    [[nodiscard]] std::optional<FoundCard> Observe(cv::Mat const& aFrame) {
-      if(!m_tracker.Active())return FindCard(aFrame);
+      if(!m_tracker.Active())return FindCard(aFrame,nullptr,true);
       auto optCorners=m_tracker.Track(aFrame);
       if(!optCorners)return std::nullopt;
       FoundCard aCard;
@@ -1221,6 +1276,7 @@ public:
             cvRound((*optCorners)[uIndex].x),cvRound((*optCorners)[uIndex].y));
       aCard.rectified=RectifyForOcr(aFrame,aCard.corners,false);
       aCard.fingerprint=DHash(aCard.rectified);
+      aCard.boRotate180=m_boCapturedRotate180;
       return aCard;
    }
 
@@ -1294,6 +1350,7 @@ public:
          m_boUserNavigated=false;
          m_uSelectionSerial=0;
          m_tracker.Reset();
+         m_boCapturedRotate180=false;
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
          m_uPrintingOcrEvent=0;
 #endif
@@ -1315,8 +1372,10 @@ public:
       }
       std::println("[CAM] NEW-STABLE-CARD #{} fingerprint={:016x}; edition=UNKNOWN",
          event->number,event->fingerprint);
+      if(found)m_boCapturedRotate180=found->boRotate180;
       if(!sourceFrame.empty() && found)
-         event->card=RectifyForOcr(sourceFrame,found->corners,m_manualOrientation);
+         event->card=RectifyForOcr(sourceFrame,found->corners,
+            m_boCapturedRotate180 != m_manualOrientation);
       m_ocrCard=event->number;
       // PHASE 03: lock the outer physical card before examining its artwork.
       if(!sourceFrame.empty() && found) {
