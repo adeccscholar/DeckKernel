@@ -17,7 +17,10 @@ endif()
 set(ADECC_THIRDPARTY_CONFIGURATION "${CMAKE_BUILD_TYPE}")
 set(CMAKE_INSTALL_PREFIX "${DECKKERNEL_ROOT}/apps/${CMAKE_BUILD_TYPE}" CACHE PATH "Apps" FORCE)
 include("${DECKKERNEL_ROOT}/Cache/cmake/ThirdParty.cmake")
-find_package(OpenCV 5.0 CONFIG REQUIRED COMPONENTS core imgproc imgcodecs geometry features video calib3d)
+# OpenCV 5.0.0 in the pinned stack does not export calib3d.
+# CameraPhysicalTracker estimates robust projective homographies using only
+# core/imgproc; optical flow stays in the separately provided video module.
+find_package(OpenCV 5.0 CONFIG REQUIRED COMPONENTS core imgproc imgcodecs geometry features video)
 if(NOT DEFINED ADECC_TP_SDL2_ROOT OR NOT DEFINED ADECC_TP_SKIA_ROOT)
    message(FATAL_ERROR "SDL2 and Skia must be provisioned through the locked BuildEngine ThirdParty stack")
 endif()
