@@ -10,6 +10,7 @@ both orientations. Results are suggestions until physically validated.
 */
 #pragma once
 
+#include "CameraCardSession.h"
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/features2d.hpp>
@@ -60,6 +61,9 @@ namespace deckkernel::camera {
       std::string strReferenceDiagnostic;
       cv::Mat aReferenceImage;
       int iOrientation{};
+      std::vector<PrintingCandidate> vecCandidates;
+      bool boCandidateSelection{};
+      bool boCandidatesTruncated{};
    };
 
    /** \brief Image-index consumer running outside the capture thread.
@@ -72,6 +76,7 @@ namespace deckkernel::camera {
       struct Task final {
          unsigned uEvent{};
          cv::Mat aCard;
+         std::optional<PrintingCandidate> optSelection;
       };
 
       struct Ranked final {
@@ -446,6 +451,64 @@ namespace deckkernel::camera {
          return vecMatches;
       }
 
+      /**
+      \brief Convert one ranked image variant into a distinct printing candidate.
+      \details The database ID, card face and printing ID preserve printing
+      identity independently from the selected JPEG variant.
+      \param aMatch Ranked matching image.
+      \returns Candidate with original Scryfall metadata.
+      \throw std::bad_alloc If strings cannot be copied.
+      */
+      static PrintingCandidate Candidate(Ranked const& aMatch) {
+         PrintingCandidate aCandidate;
+         aCandidate.strAssetId=aMatch.strAssetId;
+         aCandidate.strPrintingId=aMatch.strPrintingId;
+         aCandidate.strOracleId=aMatch.strOracleId;
+         aCandidate.strName=aMatch.strName;
+         aCandidate.strTypeLine=aMatch.strTypeLine;
+         aCandidate.strManaCost=aMatch.strManaCost;
+         aCandidate.strSet=aMatch.strSet;
+         aCandidate.strSetName=aMatch.strSetName;
+         aCandidate.strCollector=aMatch.strCollector;
+         aCandidate.strLanguage=aMatch.strLanguage;
+         aCandidate.strRarity=aMatch.strRarity;
+         aCandidate.strVariant=aMatch.strVariant;
+         aCandidate.iFace=aMatch.iFace;
+         aCandidate.iHash=aMatch.iHash;
+         aCandidate.iOrb=aMatch.iOrb;
+         return aCandidate;
+      }
+
+      /**
+      \brief Populate the selected DB candidate into a presentation event.
+      \details Does not trigger a fresh image-recognition run.
+      \param aResult Result object to update.
+      \param aCandidate Selected printing.
+      \returns Nothing.
+      \throw std::bad_alloc If copying metadata fails.
+      */
+      static void SetPrinting(CardImageMatchResult& aResult,
+         PrintingCandidate const& aCandidate) {
+         aResult.strAssetId=aCandidate.strAssetId;
+         aResult.strName=aCandidate.strName;
+         aResult.strTypeLine=aCandidate.strTypeLine;
+         aResult.strManaCost=aCandidate.strManaCost;
+         aResult.strSet=aCandidate.strSet;
+         aResult.strSetName=aCandidate.strSetName;
+         aResult.strCollector=aCandidate.strCollector;
+         aResult.strLanguage=aCandidate.strLanguage;
+         aResult.strRarity=aCandidate.strRarity;
+         aResult.strPrintingId=aCandidate.strPrintingId;
+         aResult.strOracleId=aCandidate.strOracleId;
+         aResult.strReferenceLabel=std::format(
+            "DB {} | {} #{} (UNVERIFIED)",
+            aCandidate.strVariant,aCandidate.strSet,
+            aCandidate.strCollector);
+         aResult.strEdition=std::format("{} #{} [{}] | ORB={} dHash={}/64",
+            aCandidate.strSet,aCandidate.strCollector,
+            aCandidate.strLanguage,aCandidate.iOrb,aCandidate.iHash);
+      }
+
       /** \brief Compare full-card candidates without claiming a foil finish.
           \details Similar top-ranked physical printings are explicitly ambiguous.
           \param vecMatches Ranked candidates, including possible reprints.
@@ -466,31 +529,29 @@ namespace deckkernel::camera {
             return aResult;
          }
          Ranked const& aBest = vecMatches.front();
-         bool const boAmbiguous = vecMatches.size() > 1 &&
-            vecMatches[1].iOrb >= aBest.iOrb -
-               std::max(5, aBest.iOrb / 8) &&
-            vecMatches[1].iHash <= aBest.iHash + 4;
+         // Phase PRINTING: retain distinct alternatives. A large score gap
+         // narrows choices, but optical similarity is not physical proof.
+         for(Ranked const& aMatch:vecMatches) {
+            if(!AcceptFull(aMatch))continue;
+            bool const boRelevant=aMatch.iOrb>=aBest.iOrb-
+               std::max(8,aBest.iOrb/4) &&
+               aMatch.iHash<=aBest.iHash+10;
+            if(!boRelevant)continue;
+            aResult.vecCandidates.push_back(Candidate(aMatch));
+            if(aResult.vecCandidates.size()>=32) {
+               aResult.boCandidatesTruncated=true;
+               break;
+            }
+         }
+         if(aResult.vecCandidates.empty())
+            aResult.vecCandidates.push_back(Candidate(aBest));
+         bool const boAmbiguous=aResult.vecCandidates.size()>1 ||
+            aResult.boCandidatesTruncated;
          aResult.strStatus = boAmbiguous ?
             "AMBIGUOUS; several printings resemble the card" :
             (boArtwork ? "ARTWORK_MATCH; printing candidate" :
                "FULL_CARD_FALLBACK; printing candidate");
-         aResult.strEdition = std::format(
-            "{} #{} [{}] | ORB={} dHash={}/64 | UNVERIFIED",
-            aBest.strSet, aBest.strCollector, aBest.strLanguage,
-            aBest.iOrb, aBest.iHash);
-         aResult.strAssetId = aBest.strAssetId;
-         aResult.strName = aBest.strName;
-         aResult.strTypeLine = aBest.strTypeLine;
-         aResult.strManaCost = aBest.strManaCost;
-         aResult.strSet = aBest.strSet;
-         aResult.strSetName = aBest.strSetName;
-         aResult.strCollector = aBest.strCollector;
-         aResult.strLanguage = aBest.strLanguage;
-         aResult.strRarity = aBest.strRarity;
-         aResult.strPrintingId = aBest.strPrintingId;
-         aResult.strOracleId = aBest.strOracleId;
-         aResult.strReferenceLabel = std::format(
-            "DB {} (printing candidate; UNVERIFIED)",aBest.strVariant);
+         SetPrinting(aResult,aResult.vecCandidates.front());
          aResult.iOrientation = iOrientation;
          std::println("[CAM-PRINT] card #{} orientation={} variant={} "
             "scryfall_id={} set={} number={} lang={} face={} "
@@ -611,6 +672,26 @@ namespace deckkernel::camera {
             strSha256.size()==64?"present":"missing-or-invalid");
       }
 
+      /**
+      \brief Resolve a selection into one display image, without recognizing.
+      \details The physical card and its frozen capture are not accessed.
+      \param pConnection Dedicated database connection.
+      \param aTask Selection request for a particular presentation.
+      \returns Candidate metadata and reference image.
+      \throw std::runtime_error If a database read fails.
+      */
+      CardImageMatchResult DisplaySelection(PGconn* pConnection,
+         Task const& aTask) {
+         CardImageMatchResult aResult{aTask.uEvent};
+         aResult.boCandidateSelection=true;
+         aResult.strStatus="PRINTING SELECTION - choose with arrows, Enter confirms";
+         if(aTask.optSelection) {
+            SetPrinting(aResult,*aTask.optSelection);
+            LoadReference(pConnection,aResult);
+         }
+         return aResult;
+      }
+
       CardImageMatchResult Match(PGconn* pConnection, Task const& aTask) {
          cv::Mat aCard = aTask.aCard;
          for(int iOrientation : {0, 180}) {
@@ -721,7 +802,10 @@ namespace deckkernel::camera {
             try {
                if(!aConnection || PQstatus(aConnection.get())!=CONNECTION_OK)
                   aConnection=Connect();
-               Publish(Match(aConnection.get(),aTask));
+               if(aTask.optSelection)
+                  Publish(DisplaySelection(aConnection.get(),aTask));
+               else
+                  Publish(Match(aConnection.get(),aTask));
             }
             catch(std::exception const& aException) {
                std::println(std::cerr,"[CAM-MATCH] card #{} failed: {}",
@@ -777,6 +861,22 @@ namespace deckkernel::camera {
          m_signal.notify_one();
          std::println("[CAM-MATCH] card #{} queued: art 0/180, then full card",
             uEvent);
+      }
+
+      /**
+      \brief Request a new candidate image for the active physical card.
+      \details No global search, artwork search, or frozen-frame read happens.
+      \param aCandidate DB candidate chosen with left/right arrow keys.
+      \param uEvent Stable physical-card event ID.
+      \returns Nothing.
+      \throw std::bad_alloc If the pending task cannot be allocated.
+      */
+      void Select(PrintingCandidate const& aCandidate,unsigned uEvent) {
+         {
+            std::lock_guard const aLock(m_mutex);
+            m_pending=Task{uEvent,{},aCandidate};
+         }
+         m_signal.notify_one();
       }
 
       /** \brief Receive the latest completed asynchronous result.
