@@ -85,6 +85,22 @@ namespace deckkernel::camera {
             if(uCount++>=24)continue;
             vecSelected.push_back(vecAll[uIndex]);
          }
+         // Do not accept an optical lock supported only by the artwork zone.
+         // Require feature coverage across multiple rows and columns of the
+         // physical card. If absent, use the whole-card contrast fallback.
+         std::array<bool,3> arrRows{},arrColumns{};
+         unsigned uOccupied{};
+         for(int iCell=0;iCell<9;++iCell) {
+            if(arrCount[iCell]==0)continue;
+            ++uOccupied;
+            arrRows[iCell/3]=true;
+            arrColumns[iCell%3]=true;
+         }
+         unsigned const uRows=static_cast<unsigned>(
+            std::count(arrRows.begin(),arrRows.end(),true));
+         unsigned const uColumns=static_cast<unsigned>(
+            std::count(arrColumns.begin(),arrColumns.end(),true));
+         if(uOccupied<4 || uRows<2 || uColumns<2)return {};
          return vecSelected;
       }
 
