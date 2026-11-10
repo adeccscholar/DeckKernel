@@ -42,6 +42,7 @@ namespace deckkernel::camera {
       unsigned uEvent{};
       std::string strStatus;
       std::string strEdition{"Edition not verified"};
+      bool boComplete{true};
    };
 
    /** \brief Image-index consumer running outside the capture thread.
@@ -510,9 +511,12 @@ namespace deckkernel::camera {
          return "NO VISUAL MATCH: index available, candidate evidence too weak";
       }
 
-      CardImageMatchResult Match(PGconn* pConnection, Task const& aTask) const {
+      CardImageMatchResult Match(PGconn* pConnection, Task const& aTask) {
          cv::Mat aCard = aTask.aCard;
          for(int iOrientation : {0, 180}) {
+            Publish(CardImageMatchResult{
+               aTask.uEvent,std::format("SEARCHING ARTWORK - orientation {} deg",iOrientation),
+               "Comparing indexed illustrations",false});
             cv::Mat const aArt = Artwork(aCard);
             std::optional<Ranked> optArt = FindArtwork(pConnection, aArt);
             bool const boRecognized = optArt && AcceptArtwork(*optArt);
@@ -524,6 +528,9 @@ namespace deckkernel::camera {
                optArt ? optArt->iOrb : 0,
                boRecognized ? "ARTWORK_CANDIDATE" : "NO_RELIABLE_ARTWORK");
             if(boRecognized) {
+               Publish(CardImageMatchResult{
+                  aTask.uEvent,"ARTWORK FOUND - checking concrete printing",
+                  "Comparing related complete card images",false});
                CardImageMatchResult aResult = SummarizePrintings(
                   FindPrintings(pConnection, aCard, optArt), true,
                   aTask.uEvent, iOrientation);
@@ -545,6 +552,9 @@ namespace deckkernel::camera {
          int iBestOrb = -1, iBestHash = 65;
          aCard = aTask.aCard;
          for(int iOrientation : {0, 180}) {
+            Publish(CardImageMatchResult{
+               aTask.uEvent,std::format("ARTWORK NOT FOUND - full card {} deg",iOrientation),
+               "Searching complete-card index",false});
             std::vector<Ranked> const vecMatches =
                FindPrintings(pConnection, aCard, std::nullopt);
             CardImageMatchResult aResult = SummarizePrintings(
