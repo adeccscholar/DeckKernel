@@ -33,6 +33,7 @@ class CameraDashboard {
    SDL_Renderer* m_pRenderer{};
    SDL_Texture* m_pRaw{};
    SDL_Texture* m_pCard{};
+   SDL_Texture* m_pReference{};
    bool m_bRunning{true};
    bool m_bFlip{};
    float m_cardZoom{1.0f};
@@ -45,6 +46,10 @@ class CameraDashboard {
    std::string m_strIdentity{"No verified identity"};
    std::string m_strOrientation{"Automatic orientation pending"};
    std::string m_strGuidance{"Place a card in the camera"};
+   std::string m_strReferenceLabel{"No database match yet"};
+   std::string m_strReferenceDiagnostic;
+   std::string m_strSet, m_strSetName, m_strCollector, m_strLanguage;
+   std::string m_strRarity, m_strPrintingId, m_strOracleId, m_strManaCost;
    bool m_bCardLocked{};
    static sk_sp<SkTypeface>& Typeface() {
       static sk_sp<SkTypeface> face=[] {
@@ -130,6 +135,7 @@ public:
    ~CameraDashboard() {
       if(m_pRaw)SDL_DestroyTexture(m_pRaw);
       if(m_pCard)SDL_DestroyTexture(m_pCard);
+      if(m_pReference)SDL_DestroyTexture(m_pReference);
       if(m_pRenderer)SDL_DestroyRenderer(m_pRenderer);
       if(m_pWindow)SDL_DestroyWindow(m_pWindow);
       SDL_QuitSubSystem(SDL_INIT_VIDEO);
@@ -155,12 +161,44 @@ public:
       return m_bRunning;
    }
    [[nodiscard]] bool Flip180() const noexcept{return m_bFlip;}
+   /**
+   \brief Update the read-only DB recognition fields.
+   \details No OCR field is required for image-based identification.
+   \param strName Card face name from the DB candidate.
+   \param strType Type line from the DB candidate.
+   \param strRules Optional diagnostic text.
+   \param strMana Optional OCR/mana diagnostic.
+   \param strStatus Current recognition stage or result.
+   \param strIdentity Candidate printing summary.
+   \param strOrientation Capture rotation diagnostic.
+   \param strQuality Capture lock / input quality summary.
+   \param boCardLocked Whether an input card is frozen.
+   \param strGuidance Next interaction.
+   \param strReferenceLabel Source variant for right-hand image.
+   \param strReferenceDiagnostic Image load/integrity result.
+   \param strSet Printed set code.
+   \param strSetName Printed set name.
+   \param strCollector Collector number.
+   \param strLanguage Printed language.
+   \param strRarity Rarity.
+   \param strPrintingId Scryfall printing UUID.
+   \param strOracleId Oracle identity UUID.
+   \param strManaCost Raw Scryfall mana cost text.
+   \returns Nothing.
+   \throw std::bad_alloc On allocation failure.
+   */
    void SetFields(std::string strName,std::string strType,std::string strRules,
       std::string strMana,std::string strStatus,
       std::string strIdentity="No verified identity",
       std::string strOrientation="Automatic orientation pending",
       std::string strQuality="Waiting for card",bool boCardLocked=false,
-      std::string strGuidance="Place a card in the camera") {
+      std::string strGuidance="Place a card in the camera",
+      std::string strReferenceLabel="No database match yet",
+      std::string strReferenceDiagnostic={},
+      std::string strSet={},std::string strSetName={},
+      std::string strCollector={},std::string strLanguage={},
+      std::string strRarity={},std::string strPrintingId={},
+      std::string strOracleId={},std::string strManaCost={}) {
       m_strName=std::move(strName);
       m_strType=std::move(strType);
       m_strRules=std::move(strRules);
@@ -171,79 +209,117 @@ public:
       m_qualityStatus=std::move(strQuality);
       m_bCardLocked=boCardLocked;
       m_strGuidance=std::move(strGuidance);
+      m_strReferenceLabel=std::move(strReferenceLabel);
+      m_strReferenceDiagnostic=std::move(strReferenceDiagnostic);
+      m_strSet=std::move(strSet);
+      m_strSetName=std::move(strSetName);
+      m_strCollector=std::move(strCollector);
+      m_strLanguage=std::move(strLanguage);
+      m_strRarity=std::move(strRarity);
+      m_strPrintingId=std::move(strPrintingId);
+      m_strOracleId=std::move(strOracleId);
+      m_strManaCost=std::move(strManaCost);
    }
+
+   /**
+   \brief Show input capture beside the DB reference card.
+   \details Before capture the left pane shows the live video. After capture
+   the two large panels are stable and the reference is only replaced
+   when a new match result is published.
+   \param aRaw Live camera frame.
+   \param aCard Frozen rectified input card.
+   \param aReference Decoded original image asset from PostgreSQL.
+   \param iCamera Camera index.
+   \param flFps Measured framerate.
+   \param flBrightness Camera brightness diagnostic.
+   \returns Nothing.
+   \throw None.
+   */
    void Show(cv::Mat const& aRaw,cv::Mat const& aCard,
-      int iCamera,double flFps,double flBrightness) {
-      Upload(m_pRaw,aRaw);
-      Upload(m_pCard,aCard);
+      cv::Mat const& aReference,int iCamera,double flFps,
+      double flBrightness) {
+      // Never upload the live image to the captured-card panel.
+      if(m_bCardLocked)Upload(m_pCard,aCard);
+      else Upload(m_pCard,aRaw);
+      Upload(m_pReference,aReference);
       int iWidth{},iHeight{};
       SDL_GetRendererOutputSize(m_pRenderer,&iWidth,&iHeight);
-      if(iWidth<300||iHeight<300)return;
-      auto const aSurface=SkSurfaces::Raster(SkImageInfo::MakeN32Premul(iWidth,iHeight));
+      if(iWidth<400 || iHeight<400)return;
+      auto const aSurface=SkSurfaces::Raster(
+         SkImageInfo::MakeN32Premul(iWidth,iHeight));
       if(!aSurface)return;
       SkCanvas* pCanvas=aSurface->getCanvas();
       pCanvas->clear(0xff0a141d);
-      // After capture the retained card is the primary display, not the search feed.
-      float const flRawShare=m_bCardLocked?0.22f:0.56f;
-      Fill(pCanvas,SkRect::MakeXYWH(16,55,(iWidth-48)*flRawShare,iHeight*0.57f),0xff142633);
-      Fill(pCanvas,SkRect::MakeXYWH(32+(iWidth-48)*flRawShare,55,
-         (iWidth-48)*(1.0f-flRawShare),iHeight*0.57f),0xff142633);
-      float const flBottom=75.f+iHeight*0.57f;
-      Fill(pCanvas,SkRect::MakeXYWH(16,flBottom,iWidth-32,
-         iHeight-flBottom-16),0xff172936);
-      Text(pCanvas,25,36,"DECKKERNEL  /  CAMERA RECOGNITION",24,0xfff5f7fa);
-      Text(pCanvas,32,84,m_bCardLocked?"CAMERA / PRESENCE":"LIVE CAMERA",17,0xff8ed5ee);
-      Text(pCanvas,48+(iWidth-48)*flRawShare,84,
-         m_bCardLocked?"CAPTURED CARD":"RECTIFIED / ROTATED CARD",17,0xff8ed5ee);
-      Text(pCanvas,32,flBottom+28,m_bCardLocked?
-         "CARD CAPTURED / RECOGNITION":"SEARCHING FOR A CARD",19,
-         m_bCardLocked?0xff9dddb9:0xfff5f7fa);
-      Text(pCanvas,32,flBottom+55,"Name: "+m_strName,17,0xfff5f7fa);
-      Text(pCanvas,32,flBottom+77,"Type: "+m_strType,16,0xffc9d9e2);
-      Text(pCanvas,32,flBottom+99,"Mana: "+m_strMana,15,0xffc9d9e2);
-      // Wrap card text within the lower pane instead of truncating its first
-      // line or allowing it to flow beyond the window.
-      std::string strRemaining=m_strRules;
-      float flLine=flBottom+124;
-      int const maxChars=std::max(30,(iWidth-90)/9);
-      for(int line=0;line<2 && !strRemaining.empty();++line) {
-         auto const count=std::min(strRemaining.size(),
-            static_cast<std::size_t>(maxChars));
-         auto split=count;
-         if(count<strRemaining.size()) {
-            auto space=strRemaining.rfind(' ',count);
-            if(space!=std::string::npos && space>count/2)
-               split=space;
-         }
-         auto chunk=strRemaining.substr(0,split);
-         if(line==0)chunk="Text: "+chunk;
-         Text(pCanvas,32,flLine,chunk,15,0xffc9d9e2);
-         flLine+=22;
-         strRemaining.erase(0,split);
-         while(!strRemaining.empty() && strRemaining.front()==' ')
-            strRemaining.erase(0,1);
-      }
-      auto const strClip=[&](std::string const& strValue) {
+      float const flGap=18.f;
+      float const flPaneWidth=(iWidth-48.f-flGap)/2.f;
+      float const flPaneTop=58.f;
+      float const flPaneHeight=std::max(190.f,iHeight*0.62f);
+      float const flRight=16.f+flPaneWidth+flGap;
+      float const flBottom=flPaneTop+flPaneHeight+16.f;
+      float const flFooterHeight=std::max(80.f,iHeight-flBottom-14.f);
+      Fill(pCanvas,SkRect::MakeXYWH(16.f,flPaneTop,
+         flPaneWidth,flPaneHeight),0xff142633);
+      Fill(pCanvas,SkRect::MakeXYWH(flRight,flPaneTop,
+         flPaneWidth,flPaneHeight),0xff142633);
+      Fill(pCanvas,SkRect::MakeXYWH(16.f,flBottom,
+         iWidth-32.f,flFooterHeight),0xff172936);
+      Text(pCanvas,25.f,35.f,"DECKKERNEL  /  IMAGE RECOGNITION",23.f,0xfff5f7fa);
+      Text(pCanvas,30.f,84.f,
+         m_bCardLocked?"INPUT / CAPTURED CARD":"INPUT / CAMERA",
+         16.f,0xff8ed5ee);
+      Text(pCanvas,flRight+14.f,84.f,"REFERENCE / DATABASE",16.f,0xff8ed5ee);
+      auto const Clip=[&](std::string const& strValue,
+         int iMaxPixels)->std::string {
          std::size_t const uMax=static_cast<std::size_t>(
-            std::max(25,(iWidth-90)/9));
-         return strValue.size()>uMax?
-            strValue.substr(0,uMax-3)+"...":strValue;
+            std::max(12,iMaxPixels/8));
+         if(strValue.size()<=uMax)return strValue;
+         return strValue.substr(0,uMax-3)+"...";
       };
-      Text(pCanvas,32,flBottom+179,strClip("Recognition: "+m_strStatus),
-         16,0xffffcc79);
-      Text(pCanvas,32,flBottom+204,strClip("Identity: "+m_strIdentity),
-         15,0xff9dddb9);
-      Text(pCanvas,32,flBottom+229,strClip("Next: "+m_strGuidance),
-         15,0xff8ed5ee);
-      Text(pCanvas,32,flBottom+253,strClip("Image: "+m_qualityStatus),
-         14,0xff9dddb9);
-      Text(pCanvas,32,flBottom+276,
-         std::format("Camera {} | {:.1f} fps | Zoom {:.1f}x (+/-) | R rotate | Esc",
-            iCamera,flFps,m_cardZoom),14,0xff8fa5b2);
+      if(m_bCardLocked) {
+         Text(pCanvas,30.f,flPaneTop+flPaneHeight-18.f,
+            "Captured: stable until card removal",14.f,0xff9dddb9);
+      }
+      Text(pCanvas,flRight+14.f,flPaneTop+flPaneHeight-18.f,
+         Clip(m_strReferenceLabel,static_cast<int>(flPaneWidth-26.f)),
+         14.f,0xff9dddb9);
+      int const iFrameX=static_cast<int>(flRight+12.f);
+      int const iCardY=104;
+      int const iCardWidth=std::max(1,static_cast<int>(flPaneWidth-24.f));
+      int const iCardHeight=std::max(1,static_cast<int>(flPaneHeight-154.f));
+      if(!m_pReference) {
+         Text(pCanvas,flRight+26.f,flPaneTop+flPaneHeight/2.f,
+            "No matching DB image available",15.f,0xffffcc79);
+      }
+      float flY=flBottom+27.f;
+      Text(pCanvas,30.f,flY,
+         Clip("Status: "+m_strStatus,iWidth-80),17.f,0xffffcc79);
+      flY+=24.f;
+      Text(pCanvas,30.f,flY,
+         Clip("Card: "+m_strName+"  |  "+m_strType,iWidth-80),
+         16.f,0xfff5f7fa);
+      flY+=22.f;
+      Text(pCanvas,30.f,flY,Clip(std::format(
+         "Set: {} ({})  |  No. {}  |  {}  |  {}",
+         m_strSetName,m_strSet,m_strCollector,m_strLanguage,m_strRarity),
+         iWidth-80),15.f,0xffc9d9e2);
+      flY+=20.f;
+      Text(pCanvas,30.f,flY,Clip("Mana: "+m_strManaCost+
+         "  |  Printing ID: "+m_strPrintingId,iWidth-80),
+         14.f,0xffc9d9e2);
+      flY+=20.f;
+      Text(pCanvas,30.f,flY,Clip("Oracle ID: "+m_strOracleId+
+         "  |  "+m_strReferenceDiagnostic,iWidth-80),
+         13.f,0xff9dddb9);
+      flY+=19.f;
+      Text(pCanvas,30.f,flY,
+         Clip("Next: "+m_strGuidance,iWidth-80),
+         13.f,0xff8ed5ee);
+      // Reuse the SDL background raster; actual card textures are rendered above it.
       SkPixmap aPixels;
       if(aSurface->peekPixels(&aPixels)) {
          SDL_Texture* pBackground=SDL_CreateTexture(m_pRenderer,
-            SDL_PIXELFORMAT_BGRA32,SDL_TEXTUREACCESS_STREAMING,iWidth,iHeight);
+            SDL_PIXELFORMAT_BGRA32,SDL_TEXTUREACCESS_STREAMING,
+            iWidth,iHeight);
          if(pBackground) {
             SDL_UpdateTexture(pBackground,nullptr,aPixels.addr(),
                static_cast<int>(aPixels.rowBytes()));
@@ -251,13 +327,12 @@ public:
             SDL_DestroyTexture(pBackground);
          }
       }
-      Image(m_pRaw,SDL_Rect{30,98,
-         static_cast<int>((iWidth-48)*flRawShare)-28,
-         static_cast<int>(iHeight*0.57f)-54},false);
-      Image(m_pCard,SDL_Rect{
-         static_cast<int>(46+(iWidth-48)*flRawShare),98,
-         static_cast<int>((iWidth-48)*(1.0f-flRawShare))-30,
-         static_cast<int>(iHeight*0.57f)-54},false,m_cardZoom);
+      // The image panels deliberately occupy equal areas for visual comparison.
+      Image(m_pCard,SDL_Rect{28,iCardY,iCardWidth,iCardHeight},
+         false,m_cardZoom);
+      Image(m_pReference,SDL_Rect{iFrameX,iCardY,iCardWidth,iCardHeight},
+         false,m_cardZoom);
       SDL_RenderPresent(m_pRenderer);
    }
+
 };
