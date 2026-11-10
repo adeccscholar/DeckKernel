@@ -554,3 +554,63 @@ The source now contains PHASE comments at stage boundaries to support
 step-by-step teaching. The stage-specific implementation is not yet
 validated by a Windows/BCC64X build and physical camera tests. Similarity
 thresholds and layout-specific OCR positions remain provisional.
+
+## 2026-11-10: improve the baseline before using OpenCV 5.1
+
+The current on-camera visual hit rate was reported as below 10 percent.
+This is an observed baseline reported during development, **not** a
+verified benchmark. No improvement in accuracy is claimed until the
+same labelled physical cards are replayed and measured.
+
+Changes made using the **existing OpenCV 5.0.0 modules only**:
+
+1. Live camera defaults now request 3840x2160 at 30 fps using MJPG.
+   The actual driver-negotiated resolution/FourCC remains authoritative;
+   command-line parameters may override the default. The previous
+   640x480/auto default discarded most of the potential source detail.
+2. PHASE 04 scores the sharpness of title and type-line regions before
+   downscaling; the illustration-only sharpness is no longer sufficient.
+   It also tracks the **actual number of native camera pixels spanning
+   the card**, independently of the size of the perspective-rectified
+   output. Upsampling is never accepted as proof of source detail.
+3. The capture continues until 18 observations and at least one second
+   if the best capture satisfies provisional quality conditions. Poor
+   frames get extra autofocus settling time, bounded to six seconds.
+4. If the best source fails the provisional size, blur, exposure or
+   glare gate, the session shows **CAPTURE TOO SOFT/SMALL**, retains
+   the last physical capture for diagnosis, and does not search the
+   Scryfall index using inadequate image evidence.
+5. Artwork search compares both 0 and 180 degree orientations, with two
+   plausible modern-frame artwork crops per orientation, before
+   accepting an artwork winner. The dHash shortlist was enlarged from
+   100 to at least 400 so the correct asset is less likely to be
+   discarded before ORB matching. ORB descriptors still come from the
+   unchanged version-1 PostgreSQL feature index.
+6. A reference-supported 180 degree decision also updates the frozen
+   **display copy** and printing-margin OCR input. The original frozen
+   CardCapture pixels remain unchanged.
+
+The scoring and thresholds are **provisional**. A test card below the
+native-pixel gate is a capture problem, not proof of database or index
+failure. The application now prints `[CAM-QUALITY]` diagnostics for
+native card dimensions, rectified dimensions, illustration sharpness,
+printed detail sharpness, exposure, clipping, and matching eligibility.
+The `--self-test` suite additionally compares sharp and blurred
+synthetic printing text and checks that upscaling cannot pass the
+native-pixel test.
+
+**BuildEngine/OpenCV 5.1 future scope (not enabled here):**
+the newer OpenCV 5.1 version is already maintained by BuildEngine.
+Keep `photo` (potential multiframe denoising) and `calib`
+(camera intrinsic calibration and lens distortion) on the module
+evaluation list; verify the exact OpenCV 5.1 module outputs and their
+bcc64x consumer smoke tests before updating DeckKernel's CMake
+dependencies. Neither module can restore information missing from
+a physically out-of-focus image. The present DeckKernel configuration
+remains pinned to OpenCV 5.0.0 with its existing required modules.
+
+**Validation still required:** BCC64X build, the existing CTest smoke
+suite, camera-mode negotiation, and a reproducible labelled set of
+upright/inverted cards across multiple printings. Record: capture
+source-card width, accepted/rejected frame quality, artwork top-k
+recall, printing top-k recall, false matches and per-stage latency.
