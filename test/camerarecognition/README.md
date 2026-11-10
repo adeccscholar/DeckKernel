@@ -791,3 +791,49 @@ screenshot is insufficient to calculate camera-space corner accuracy.
 A BCC64X build and the existing `--self-test` and actual camera replay
 must validate both false positives and missed real cards before claiming
 improved recognition reliability.
+
+## 2026-11-11: isolate the illustration and expose matcher progress
+
+A screenshot of a correctly frozen *Desert's Hold* card showed the UI still
+at ARTWORK and no reference image. Unlike earlier failures, **physical
+capture succeeded**. A screenshot alone cannot prove whether the worker
+was still establishing its PostgreSQL connection, executing a slow dHash
+query, evaluating ORB descriptors or finding no acceptable match.
+
+The matching worker is now instrumented instead of adding another
+physical-contour heuristic:
+
+- It publishes CONNECTING TO POSTGRESQL before the first connection,
+  logs connection duration and sets a five-second PostgreSQL connection
+  timeout (overridable with DECKKERNEL_PG_CONNECT_TIMEOUT).
+- Each SQL statement has a 12-second PostgreSQL statement timeout.
+  Query failures become visible RECOGNITION ERROR results instead of
+  leaving the UI indefinitely at an ambiguous ARTWORK stage.
+- Both the art_crop lookup and full-card lookup now log the database
+  shortlist size, SQL elapsed time, ORB elapsed time and best match
+  evidence. The complete worker run also reports its elapsed time.
+- The artwork window is no longer limited to the old fixed 19..52 or
+  22..50 percent vertical region: on conventional frames the algorithm
+  measures the top and bottom illustration separator lines and crops
+  between them. When the boundaries cannot be found, a broader fallback
+  window is used. Both windows and both 180-degree orientations are
+  evaluated before proceeding to complete-card printing matching.
+- With --save-events the application now writes the **exact frozen image
+  submitted to the matcher** as event-NNNNNN-frozen-search-input.png
+  and each evaluated artwork crop as
+  event-NNNNNN-artwork-{0,180}-window-{1,2}.png. This makes the
+  quality and coverage of the actual search input reproducible.
+
+The ordered identification stages remain: isolate artwork, search the
+existing Scryfall art_crop index, retrieve possible Oracle/printing
+identities, compare complete normal/large printing images, optionally
+corroborate an ambiguous printing through frozen lower-margin OCR, then
+allow arrow-key selection and Enter. No new source or index version is
+introduced; OpenCV remains 5.0.
+
+**Verification pending:** BCC64X compilation, CTest, and the actual
+Windows camera/DB run. The PostgreSQL timeout can expose a previously
+hidden slow-query problem; it is **not** an SQL optimization or a
+measured improvement in recognition accuracy. Inspect CAM-DB,
+CAM-ART-CROP, CAM-ART-QUERY, CAM-PRINT-QUERY, CAM-MATCH, and the saved
+crops to distinguish the remaining failure modes.
