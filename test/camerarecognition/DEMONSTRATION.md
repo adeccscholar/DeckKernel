@@ -162,3 +162,28 @@ The current tracker can lose texture-poor or rapidly moving cards.
 Planar homography does not correct curved or hidden card surfaces.
 Fixed print-margin positions are optimized for conventional layouts.
 A matching OCR token is corroboration, not a calibrated probability.
+
+## Physical-card tracking fallback and UI consistency
+
+Sparse optical-flow tracking requires features spread across multiple
+rows and columns of the complete card. If a texture-poor card cannot
+provide that distribution, the tracker retains the same physical lock
+using local card/background contrast near the original quadrilateral.
+This does not search globally, identify a new rectangle, or claim to
+track large movements without sufficient image evidence. Removal is
+still debounced.
+
+Optical-flow and feature extraction operate on a region surrounding
+the locked card, not a repeated full-frame 4K contour search.
+When the active capture is frozen, the SDL card texture is reused until
+its underlying image changes.
+
+Printing selection requests carry monotonically increasing request
+numbers. Late PostgreSQL responses from older arrow-key selections
+are discarded. The previous DB image is cleared when another printing
+is selected, so it cannot appear under the new printing's set/number.
+A pending reference download is still allowed to finish after Enter
+for the confirmed printing, without changing the confirmed status.
+
+The manual R rotation control cannot modify a frozen capture. The
+recognizer already checks both 0 and 180 degree orientations.
