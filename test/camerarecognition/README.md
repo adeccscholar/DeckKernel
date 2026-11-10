@@ -837,3 +837,62 @@ hidden slow-query problem; it is **not** an SQL optimization or a
 measured improvement in recognition accuracy. Inspect CAM-DB,
 CAM-ART-CROP, CAM-ART-QUERY, CAM-PRINT-QUERY, CAM-MATCH, and the saved
 crops to distinguish the remaining failure modes.
+
+## 2026-11-11: three-event evidence and low-contrast ORB correction
+
+A user-supplied ZIP contained 449 saved event files, including exact
+frozen search inputs and four artwork crops each for recent events
+000001, 000002 and 000003. Those three recent captures show the same
+illustration at varying 0/180 orientation and with significant blur/
+contrast and lighting changes. The recorded camera log for event 000003
+contained a complete 500x700 frozen image with 478 pixels of actual
+source-card width; PostgreSQL had 2,774,873 downloaded/indexed images,
+but artwork ORB had only 1-2 accepted pairs and no candidate passed the
+minimum twelve-match acceptance threshold.
+
+A local OpenCV reproduction using the archived camera crops found just
+5-8 ORB keypoints on the correctly oriented, unprocessed image inputs.
+Under those circumstances twelve true one-to-one matches are
+mathematically impossible. CLAHE local contrast normalization with
+clipLimit 2.0 and an 8x8 tile grid produced hundreds of query keypoints
+(on event 000003, measured artwork crop 6 -> 425). A *camera-to-camera*
+comparison of events 000002 and 000003 yielded 2 raw ORB matches and
+35 when **both** were contrast normalized. This is a diagnostic
+experiment, **not** proof that the user's PostgreSQL reference images
+will match, and it is not a recognition-accuracy benchmark.
+
+The camera matcher now applies CLAHE to the QUERY when fewer than 40
+raw ORB descriptors were found, while keeping the pre-existing
+version-1 PostgreSQL reference index untouched. ORB ratio-test matches
+are counted using a one-to-one reference-descriptor constraint: many
+camera features mapping to the same stored descriptor are no longer
+counted as independent evidence. Thresholds are unchanged and
+remain provisional pending reference-image experiments. dHash
+shortlisting, artwork cropping and printing lookup remain separate.
+
+To test the *exact same database-recognition input* without a camera
+or a second contour detector, run:
+
+~~~bat
+apps\Release\deckkernel_camera_recognition_test.exe --frozen-image=.cache\camera-recognition\event-000003-frozen-search-input.png --save-events
+~~~
+
+The direct replay uses the existing PostgreSQL index and prints each
+worker stage to the console, reports terminal status, asset ID, card
+name, set and collector number, and returns exit status 0 on an asset,
+2 when unresolved, or 3 when no terminal result is received within
+100 seconds. With --save-events it exports evaluated artwork crops
+under .cache/camera-recognition/replay and the DB reference image
+if one is returned. It does not alter the source images or feature
+index.
+
+A next controlled experiment must compare normalized camera and actual
+Scryfall art_crop references, then measure whether the correct image
+is present among the dHash top-400 shortlist. If it is absent, modify
+the candidate retrieval strategy instead of reducing ORB acceptance
+thresholds. Do not claim identification success on the basis of extra
+CLAHE keypoints alone.
+
+Source review and local image experiments were completed. The BCC64X
+compilation, actual database replay and camera recognition rate remain
+**unverified**.
