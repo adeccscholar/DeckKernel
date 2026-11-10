@@ -1761,6 +1761,33 @@ void SelfTest() {
    auto const dimQuality=deckkernel_camera::quality::Measure(dimCard);
    if(!brightQuality.GlareRisk() || !dimQuality.LowLight())
       throw std::runtime_error("camera lighting diagnostics failed");
+   // DEMO TEST 04: source-pixel quality must not be falsified by the
+   // minimum 480-pixel perspective output width. Blurry, low-resolution
+   // input must remain unsuitable even after image enlargement.
+   cv::Mat aSharpSource(1050,750,CV_8UC3,cv::Scalar(220,225,230));
+   for(int iLine=0;iLine<12;++iLine) {
+      cv::putText(aSharpSource,std::format("TEST CARD PRINTING {}",iLine),
+         cv::Point(50,80+iLine*75),cv::FONT_HERSHEY_SIMPLEX,1.1,
+         cv::Scalar(25,25,25),2,cv::LINE_AA);
+   }
+   cv::Mat aBlurred;
+   cv::GaussianBlur(aSharpSource,aBlurred,cv::Size(25,25),6.0);
+   auto const aSharpQuality=deckkernel_camera::quality::Measure(
+      aSharpSource,750);
+   auto const aBlurQuality=deckkernel_camera::quality::Measure(
+      aBlurred,750);
+   auto const aUpscaledLowResolution=
+      deckkernel_camera::quality::Measure(aSharpSource,180);
+   if(!(aSharpQuality.detailSharpness>aBlurQuality.detailSharpness) ||
+      aUpscaledLowResolution.UsableForMatching() ||
+      aUpscaledLowResolution.sourceWidth!=180)
+      throw std::runtime_error(
+         "source-resolution/detail-sharpness quality regression");
+   std::println("[CAM-QUALITY-TEST] detail sharp={:.1f} blurred={:.1f} "
+      "native-small={} rejected={}",
+      aSharpQuality.detailSharpness,aBlurQuality.detailSharpness,
+      aUpscaledLowResolution.sourceWidth,
+      !aUpscaledLowResolution.UsableForMatching());
    auto const enhanced=deckkernel_camera::quality::ForOcr(dimCard);
    if(enhanced.empty() || enhanced.channels()!=1 ||
       enhanced.size()!=dimCard.size())
