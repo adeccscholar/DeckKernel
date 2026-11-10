@@ -13,6 +13,7 @@ both orientations. Results are suggestions until physically validated.
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/features2d.hpp>
+#include <opencv2/imgcodecs.hpp>
 #include <libpq-fe.h>
 #include <algorithm>
 #include <array>
@@ -43,6 +44,22 @@ namespace deckkernel::camera {
       std::string strStatus;
       std::string strEdition{"Edition not verified"};
       bool boComplete{true};
+      // A visual candidate cannot authenticate a particular physical printing.
+      std::string strAssetId;
+      std::string strName;
+      std::string strTypeLine;
+      std::string strManaCost;
+      std::string strSet;
+      std::string strSetName;
+      std::string strCollector;
+      std::string strLanguage;
+      std::string strRarity;
+      std::string strPrintingId;
+      std::string strOracleId;
+      std::string strReferenceLabel;
+      std::string strReferenceDiagnostic;
+      cv::Mat aReferenceImage;
+      int iOrientation{};
    };
 
    /** \brief Image-index consumer running outside the capture thread.
@@ -65,6 +82,11 @@ namespace deckkernel::camera {
          std::string strSet;
          std::string strCollector;
          std::string strLanguage;
+         std::string strTypeLine;
+         std::string strManaCost;
+         std::string strSetName;
+         std::string strRarity;
+         std::string strOracleId;
          std::string strVariant;
          int iFace{};
          int iHash{65};
@@ -362,13 +384,15 @@ namespace deckkernel::camera {
          result_ty aRows(PQexecParams(pConnection,
             "SELECT a.id::text, c.scryfall_id, cf.face_id::text, cf.name, "
             "s.code, c.collector_number, c.lang, v.variant, "
-            "bit_count(f.perceptual_hash # $1::bit(64))::text, f.orb_descriptors "
+            "bit_count(f.perceptual_hash # $1::bit(64))::text, f.orb_descriptors, "
+            "cf.type_line, cf.mana_cost, s.name, r.code, COALESCE(c.oracle_id,'') "
             "FROM deckkernel_test.scryfall_image_features f "
             "JOIN deckkernel_test.scryfall_image_assets a ON a.id=f.asset_id "
             "JOIN deckkernel_test.scryfall_card_image_variants v "
             "ON v.asset_id=a.id AND v.variant IN ('normal','border_crop','large') "
             "JOIN deckkernel_test.scryfall_cards c ON c.id=v.card_id "
             "JOIN deckkernel_test.scryfall_sets s ON s.id=c.set_id "
+            "JOIN deckkernel_test.dom_rarities r ON r.id=c.rarity_id "
             "JOIN deckkernel_test.scryfall_card_faces cf "
             "ON cf.card_id=v.card_id AND cf.face_id=v.face_id "
             "WHERE f.algorithm='dhash64-orb' AND f.algorithm_version=1 "
@@ -401,6 +425,11 @@ namespace deckkernel::camera {
             aMatch.strVariant = PQgetvalue(aRows.get(), iRow, 7);
             aMatch.iHash = std::stoi(PQgetvalue(aRows.get(), iRow, 8));
             aMatch.iOrb = OrbMatches(aQuery, aRows.get(), iRow, 9);
+            aMatch.strTypeLine = PQgetvalue(aRows.get(), iRow, 10);
+            aMatch.strManaCost = PQgetvalue(aRows.get(), iRow, 11);
+            aMatch.strSetName = PQgetvalue(aRows.get(), iRow, 12);
+            aMatch.strRarity = PQgetvalue(aRows.get(), iRow, 13);
+            aMatch.strOracleId = PQgetvalue(aRows.get(), iRow, 14);
             auto const it = std::find_if(vecMatches.begin(), vecMatches.end(),
                [&](Ranked const& aExisting) {
                   return aExisting.strPrintingId == aMatch.strPrintingId &&
@@ -446,10 +475,23 @@ namespace deckkernel::camera {
             (boArtwork ? "ARTWORK_MATCH; printing candidate" :
                "FULL_CARD_FALLBACK; printing candidate");
          aResult.strEdition = std::format(
-            "{} | {} #{} | {} | face={} | {} | ORB={} dHash={}/64 | UNVERIFIED",
-            aBest.strName, aBest.strSet, aBest.strCollector,
-            aBest.strLanguage, aBest.iFace, aBest.strPrintingId,
+            "{} #{} [{}] | ORB={} dHash={}/64 | UNVERIFIED",
+            aBest.strSet, aBest.strCollector, aBest.strLanguage,
             aBest.iOrb, aBest.iHash);
+         aResult.strAssetId = aBest.strAssetId;
+         aResult.strName = aBest.strName;
+         aResult.strTypeLine = aBest.strTypeLine;
+         aResult.strManaCost = aBest.strManaCost;
+         aResult.strSet = aBest.strSet;
+         aResult.strSetName = aBest.strSetName;
+         aResult.strCollector = aBest.strCollector;
+         aResult.strLanguage = aBest.strLanguage;
+         aResult.strRarity = aBest.strRarity;
+         aResult.strPrintingId = aBest.strPrintingId;
+         aResult.strOracleId = aBest.strOracleId;
+         aResult.strReferenceLabel = std::format(
+            "DB {} (printing candidate; UNVERIFIED)",aBest.strVariant);
+         aResult.iOrientation = iOrientation;
          std::println("[CAM-PRINT] card #{} orientation={} variant={} "
             "scryfall_id={} set={} number={} lang={} face={} "
             "dhash={}/64 orb-good={} candidates={} status={}",
@@ -511,6 +553,64 @@ namespace deckkernel::camera {
          return "NO VISUAL MATCH: index available, candidate evidence too weak";
       }
 
+      /**
+      \brief Read one original Scryfall reference image from the existing DB.
+      \details Decodes only the winner. SHA-256 is integrity metadata and
+      is not used as a matching threshold.
+      \param pConnection Worker database connection.
+      \param aResult Candidate receiving a decoded reference image.
+      \returns Nothing.
+      \throw std::runtime_error When the PostgreSQL image query fails.
+      */
+      static void LoadReference(PGconn* pConnection,
+         CardImageMatchResult& aResult) {
+         if(aResult.strAssetId.empty())return;
+         char const* arrParams[]{aResult.strAssetId.c_str()};
+         result_ty aRows(PQexecParams(pConnection,
+            "SELECT image_data, COALESCE(sha256,'') "
+            "FROM deckkernel_test.scryfall_image_assets "
+            "WHERE id=$1::bigint",
+            1,nullptr,arrParams,nullptr,nullptr,0));
+         if(!aRows || PQresultStatus(aRows.get())!=PGRES_TUPLES_OK) {
+            throw std::runtime_error(std::format(
+               "reference image query failed: {}",PQerrorMessage(pConnection)));
+         }
+         if(PQntuples(aRows.get())!=1 || PQgetisnull(aRows.get(),0,0)) {
+            aResult.strReferenceDiagnostic="Database image bytes missing";
+            return;
+         }
+         std::size_t uSize{};
+         std::unique_ptr<unsigned char,decltype(&PQfreemem)> upBytes(
+            PQunescapeBytea(reinterpret_cast<unsigned char const*>(
+               PQgetvalue(aRows.get(),0,0)),&uSize),&PQfreemem);
+         if(!upBytes || uSize==0) {
+            aResult.strReferenceDiagnostic="Database image could not be read";
+            return;
+         }
+         constexpr std::size_t cuMaxImageBytes=16*1024*1024;
+         if(uSize>cuMaxImageBytes ||
+            uSize>static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+            aResult.strReferenceDiagnostic=std::format(
+               "Reference image too large ({} bytes)",uSize);
+            return;
+         }
+         cv::Mat const aEncoded(1,static_cast<int>(uSize),
+            CV_8UC1,upBytes.get());
+         aResult.aReferenceImage=cv::imdecode(aEncoded,cv::IMREAD_COLOR);
+         if(aResult.aReferenceImage.empty()) {
+            aResult.strReferenceDiagnostic="OpenCV could not decode DB reference image";
+            return;
+         }
+         std::string const strSha256=PQgetvalue(aRows.get(),0,1);
+         aResult.strReferenceDiagnostic=strSha256.size()==64?
+            "Original DB image loaded; SHA-256 metadata present":
+            "Original DB image loaded; SHA-256 metadata missing/invalid";
+         std::println("[CAM-REFERENCE] card #{} asset={} size={}x{} bytes={} sha256={}",
+            aResult.uEvent,aResult.strAssetId,aResult.aReferenceImage.cols,
+            aResult.aReferenceImage.rows,uSize,
+            strSha256.size()==64?"present":"missing-or-invalid");
+      }
+
       CardImageMatchResult Match(PGconn* pConnection, Task const& aTask) {
          cv::Mat aCard = aTask.aCard;
          for(int iOrientation : {0, 180}) {
@@ -528,19 +628,29 @@ namespace deckkernel::camera {
                optArt ? optArt->iOrb : 0,
                boRecognized ? "ARTWORK_CANDIDATE" : "NO_RELIABLE_ARTWORK");
             if(boRecognized) {
-               Publish(CardImageMatchResult{
+               CardImageMatchResult aArtworkResult{
                   aTask.uEvent,"ARTWORK FOUND - checking concrete printing",
-                  "Comparing related complete card images",false});
-               CardImageMatchResult aResult = SummarizePrintings(
-                  FindPrintings(pConnection, aCard, optArt), true,
-                  aTask.uEvent, iOrientation);
-               if(aResult.strEdition == "Edition not verified") {
-                  std::string const strName = ArtworkName(
-                     pConnection, optArt->strAssetId);
-                  aResult.strEdition = std::format(
-                     "{} | illustration={} | UNVERIFIED",
-                     strName, optArt->strIllustrationId);
+                  "Illustration matched; printing not yet identified",false};
+               aArtworkResult.strAssetId=optArt->strAssetId;
+               aArtworkResult.strName=ArtworkName(
+                  pConnection,optArt->strAssetId);
+               aArtworkResult.strReferenceLabel="DB artwork (art_crop)";
+               aArtworkResult.iOrientation=iOrientation;
+               LoadReference(pConnection,aArtworkResult);
+               Publish(aArtworkResult);
+               CardImageMatchResult aResult=SummarizePrintings(
+                  FindPrintings(pConnection,aCard,optArt),true,
+                  aTask.uEvent,iOrientation);
+               if(aResult.strAssetId.empty()) {
+                  aArtworkResult.boComplete=true;
+                  aArtworkResult.strStatus=
+                     "ARTWORK FOUND - printing unresolved";
+                  aArtworkResult.strEdition=std::format(
+                     "Illustration {} | possible reprints",
+                     optArt->strIllustrationId);
+                  return aArtworkResult;
                }
+               LoadReference(pConnection,aResult);
                return aResult;
             }
             if(iOrientation == 0) {
@@ -571,7 +681,10 @@ namespace deckkernel::camera {
                cv::rotate(aCard, aCard, cv::ROTATE_180);
             }
          }
-         if(optBest)return std::move(*optBest);
+         if(optBest) {
+            LoadReference(pConnection,*optBest);
+            return std::move(*optBest);
+         }
          return CardImageMatchResult{aTask.uEvent,DiagnoseIndex(pConnection),
             "Edition not verified"};
       }
