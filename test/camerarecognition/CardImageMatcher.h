@@ -64,6 +64,7 @@ namespace deckkernel::camera {
       std::vector<PrintingCandidate> vecCandidates;
       bool boCandidateSelection{};
       bool boCandidatesTruncated{};
+      unsigned uSelectionSerial{};
    };
 
    /** \brief Image-index consumer running outside the capture thread.
@@ -77,6 +78,7 @@ namespace deckkernel::camera {
          unsigned uEvent{};
          cv::Mat aCard;
          std::optional<PrintingCandidate> optSelection;
+         unsigned uSelectionSerial{};
       };
 
       struct Ranked final {
@@ -756,6 +758,7 @@ namespace deckkernel::camera {
          Task const& aTask) {
          CardImageMatchResult aResult{aTask.uEvent};
          aResult.boCandidateSelection=true;
+         aResult.uSelectionSerial=aTask.uSelectionSerial;
          aResult.strStatus="PRINTING SELECTION - choose with arrows, Enter confirms";
          if(aTask.optSelection) {
             SetPrinting(aResult,*aTask.optSelection);
@@ -947,10 +950,11 @@ namespace deckkernel::camera {
       \returns Nothing.
       \throw std::bad_alloc If the pending task cannot be allocated.
       */
-      void Select(PrintingCandidate const& aCandidate,unsigned uEvent) {
+      void Select(PrintingCandidate const& aCandidate,unsigned uEvent,
+         unsigned uSelectionSerial) {
          {
             std::lock_guard const aLock(m_mutex);
-            m_pending=Task{uEvent,{},aCandidate};
+            m_pending=Task{uEvent,{},aCandidate,uSelectionSerial};
          }
          m_signal.notify_one();
       }
