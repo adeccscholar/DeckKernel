@@ -1902,6 +1902,13 @@ int main(int argc,char** argv) {
          } else {
             ++blackFrames;
          }
+         // PHASE 09/10: UI selection only changes the DB reference and
+         // never requests another physical capture or artwork recognition.
+#if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
+         int const iBrowse=preview.ConsumeNavigation();
+         if(iBrowse!=0)processor.NavigateCandidate(iBrowse);
+         if(preview.ConsumeConfirmation())processor.ConfirmCandidate();
+#endif
          processor.PollRecognition();
          // Visual diagnostic: mark the four corners that pass card geometry checks.
          cv::Mat annotated=frame.clone();
@@ -1923,6 +1930,7 @@ int main(int argc,char** argv) {
             "Captured frame retained; no further card search until removal":
             (found?"Card boundary found; stabilizing capture":
                "Looking for a card boundary");
+         preview.SetPhase(deckkernel::camera::PhaseName(processor.Phase()));
          preview.SetFields(processor.Name(),processor.Type(),processor.Rules(),
             processor.Mana(),processor.Status(),processor.Edition(),
             flip?"Manual 180 deg / "+processor.Orientation():processor.Orientation(),
