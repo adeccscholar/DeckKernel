@@ -776,6 +776,7 @@ class Processor {
    cv::Mat m_displayCard;
    std::string m_strStatus{"Waiting for card"};
    std::string m_strEdition{"Edition not verified"};
+   bool m_recognitionReady{};
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
    std::unique_ptr<CardOcr> m_ocr;
 #endif
@@ -806,6 +807,7 @@ public:
       if(!result || !m_ocrCard || result->uEvent!=*m_ocrCard)return;
       m_strStatus=result->strStatus;
       m_strEdition=result->strEdition;
+      m_recognitionReady=true;
       std::println("[CAM-MATCH] card #{} status={} edition={}",
          result->uEvent,m_strStatus,m_strEdition);
 #endif
@@ -834,9 +836,10 @@ public:
             m_ocr->LastType(),m_ocr->TypeConfidence());
       merge(m_strRules,m_bestRulesConfidence,
          m_ocr->LastRules(),m_ocr->RulesConfidence());
-      m_strStatus=std::format("Best OCR name {}% type {}% rules {}% ({} scans)",
-         m_bestNameConfidence,m_bestTypeConfidence,
-         m_bestRulesConfidence,m_ocrAttempts);
+      if(!m_recognitionReady)
+         m_strStatus=std::format("Best OCR name {}% type {}% rules {}% ({} scans)",
+            m_bestNameConfidence,m_bestTypeConfidence,
+            m_bestRulesConfidence,m_ocrAttempts);
 #endif
    }
 
@@ -899,6 +902,7 @@ public:
          m_liveFrames=0;m_bestSharpness=0;m_autoFlipped=false;
          m_strStatus="Card removed - waiting for next card";
          m_strEdition="Edition not verified";
+         m_recognitionReady=false;
          m_strName="--";m_strType="--";m_strRules="--";
          m_strMana="No mana evidence";
          m_strOrientation="Waiting for card orientation";
@@ -915,6 +919,7 @@ public:
       m_ocrCard=event->number;
       m_strStatus="Card detected - identity unverified";
       m_strEdition="Edition not verified";
+      m_recognitionReady=false;
       m_strName="--";m_strType="--";m_strRules="--";
       m_bestNameConfidence=0;m_bestTypeConfidence=0;m_bestRulesConfidence=0;
       m_liveFrames=0;m_bestSharpness=0;m_ocrAttempts=0;m_ocrAccepted=false;
