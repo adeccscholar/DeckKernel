@@ -1392,11 +1392,10 @@ public:
    [[nodiscard]] std::optional<FoundCard> Observe(cv::Mat const& aFrame) {
       if(!m_tracker.Active()) {
          auto optCard=FindCard(aFrame,nullptr,true);
-         // Do not report a rectangular artwork as a captured physical card.
-         // Standard-frame rejection is visible instead of silently freezing
-         // the wrong crop and reporting an unrelated Scryfall search failure.
+         // Layout is only advisory; acquire a geometrically credible card
+         // even when the internal frame is blurred or nonstandard.
          if(!optCard && !m_cardLocked)
-            m_strStatus="SEARCHING - full standard-card frame required";
+            m_strStatus="SEARCHING - waiting for a stable outer card contour";
          return optCard;
       }
       auto optCorners=m_tracker.Track(aFrame);
@@ -1458,8 +1457,9 @@ public:
 #endif
       }
       if(!event) {
-         // PHASE 01/02: only an intact physical card is admitted.
-         if(!m_cardLocked)SetPhase(found?
+         // PHASE 01/02: maintain ACQUIRING through a few missed frames
+         // instead of flashing SEARCHING/ACQUIRING with every blur event.
+         if(!m_cardLocked)SetPhase(m_detector.StableCount()>0?
             deckkernel::camera::RecognitionPhase::Acquiring:
             deckkernel::camera::RecognitionPhase::Searching);
          return false;
@@ -1509,11 +1509,13 @@ public:
       m_iReferenceOrientation=0;
       if(found) {
          m_boCapturedRotate180=found->boRotate180;
-         m_strOrientation=std::format(
-            "Standard-card frame: auto {} deg",
+         m_strOrientation=found->boLayoutRecognized?
+            std::format("Standard frame: auto {} deg",
+               m_boCapturedRotate180?180:0):
+            "Orientation uncertain - reference search will test both";
+         std::println("[CAM-ORIENTATION] card={} layout={} initial={} deg",
+            event->number,found->boLayoutRecognized?"standard":"uncertain",
             m_boCapturedRotate180?180:0);
-         std::println("[CAM-ORIENTATION] card={} layout=standard auto={} deg",
-            event->number,m_boCapturedRotate180?180:0);
       }
       if(!sourceFrame.empty() && found)
          event->card=RectifyForOcr(sourceFrame,found->corners,
@@ -1937,6 +1939,19 @@ void SelfTest() {
          cv::Scalar(68,72,79),2);
    cv::line(aFramedScene,cv::Point(572,539),cv::Point(846,539),
       cv::Scalar(24,25,28),3);
+   // REGRESSION: an unrecognized internal frame must not block a
+   // geometrically valid physical card. This is important for out-of-focus
+   // and unusual printing layouts in a real 4K MJPEG stream.
+   cv::Mat aUnusualScene(900,1300,CV_8UC3,cv::Scalar(27,29,33));
+   cv::rectangle(aUnusualScene,cv::Rect(400,120,300,420),
+      cv::Scalar(228,233,238),-1);
+   cv::rectangle(aUnusualScene,cv::Rect(400,120,300,420),
+      cv::Scalar(16,18,21),5);
+   auto const aUnusual=FindCard(aUnusualScene,nullptr,true);
+   if(!aUnusual)
+      throw std::runtime_error(
+         "geometry-first acquisition incorrectly requires an internal layout");
+
    auto const aStandard=FindCard(aFramedScene,nullptr,true);
    if(!aStandard)
       throw std::runtime_error(
