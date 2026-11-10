@@ -96,6 +96,7 @@ namespace deckkernel::camera {
          int iFace{};
          int iHash{65};
          int iOrb{};
+         int iRegionDistance{128};
       };
 
       struct PgRelease final {
@@ -379,7 +380,9 @@ namespace deckkernel::camera {
       std::vector<Ranked> FindPrintings(PGconn* pConnection,
          cv::Mat const& aCard, std::optional<Ranked> const& optArtwork) const {
          std::string const strHash = DHashBits(aCard);
-         std::string const strLimit = std::to_string(m_uCandidates);
+         // PHASE 07: once artwork is known, expand candidate enumeration.
+         std::string const strLimit = std::to_string(
+            optArtwork?std::max(1000u,m_uCandidates):m_uCandidates);
          char const* arrParams[]{
             strHash.c_str(),
             optArtwork ? optArtwork->strAssetId.c_str() : nullptr,
@@ -476,6 +479,7 @@ namespace deckkernel::camera {
          aCandidate.iFace=aMatch.iFace;
          aCandidate.iHash=aMatch.iHash;
          aCandidate.iOrb=aMatch.iOrb;
+         aCandidate.iRegionDistance=aMatch.iRegionDistance;
          return aCandidate;
       }
 
@@ -518,6 +522,74 @@ namespace deckkernel::camera {
           \returns Result with conservative, unverified identity.
           \throw None.
       */
+      /**
+      \brief Compare the frozen card's printed margin and set-symbol region.
+      \details Two local 64-bit hashes supply evidence not found in pure
+      artwork similarity. They cannot prove a unique physical printing.
+      \param aCamera Frozen full-resolution input card.
+      \param aReference Original normal/large Scryfall card image.
+      \returns Hamming distance in the two regions, 0..128.
+      \throw cv::Exception If OpenCV cannot process the regions.
+      */
+      [[nodiscard]] static int PrintingRegionDistance(
+         cv::Mat const& aCamera,cv::Mat const& aReference) {
+         if(aCamera.empty()||aReference.empty())return 128;
+         auto Crop=[](cv::Mat const& aImage,int iX,int iY,
+            int iW,int iH)->cv::Mat {
+            int const iLeft=aImage.cols*iX/100;
+            int const iTop=aImage.rows*iY/100;
+            return aImage(cv::Rect(iLeft,iTop,
+               std::max(1,aImage.cols*iW/100),
+               std::max(1,aImage.rows*iH/100)));
+         };
+         int iDistance{};
+         for(auto const& arrRegion:std::array<std::array<int,4>,2>{{
+            {{4,86,92,12}},{{82,50,15,11}}
+         }}) {
+            std::string const strA=DHashBits(Crop(aCamera,
+               arrRegion[0],arrRegion[1],arrRegion[2],arrRegion[3]));
+            std::string const strB=DHashBits(Crop(aReference,
+               arrRegion[0],arrRegion[1],arrRegion[2],arrRegion[3]));
+            for(std::size_t uIndex=0;uIndex<64;++uIndex)
+               iDistance+=strA[uIndex]!=strB[uIndex];
+         }
+         return iDistance;
+      }
+
+      /**
+      \brief Refine leading full-card candidates with printing-specific detail.
+      \details Only twelve references are decoded on the async database thread.
+      The weighting is provisional and must be calibrated against test cards.
+      \param pConnection Database connection.
+      \param aCard Frozen camera card.
+      \param vecMatches ORB/dHash-ranked references to refine.
+      \returns Nothing.
+      \throw std::runtime_error If PostgreSQL fails.
+      */
+      static void RefinePrintingImages(PGconn* pConnection,
+         cv::Mat const& aCard,std::vector<Ranked>& vecMatches) {
+         std::size_t const uCount=std::min<std::size_t>(12,vecMatches.size());
+         for(std::size_t uIndex=0;uIndex<uCount;++uIndex) {
+            Ranked& aMatch=vecMatches[uIndex];
+            if(aMatch.strVariant!="normal" && aMatch.strVariant!="large")
+               continue;
+            CardImageMatchResult aReference;
+            aReference.strAssetId=aMatch.strAssetId;
+            LoadReference(pConnection,aReference);
+            if(aReference.aReferenceImage.empty())continue;
+            aMatch.iRegionDistance=PrintingRegionDistance(
+               aCard,aReference.aReferenceImage);
+         }
+         std::stable_sort(vecMatches.begin(),vecMatches.end(),
+            [](Ranked const& aLeft,Ranked const& aRight) {
+               int const iLeft=4*aLeft.iOrb-aLeft.iHash-
+                  (aLeft.iRegionDistance==128?64:aLeft.iRegionDistance);
+               int const iRight=4*aRight.iOrb-aRight.iHash-
+                  (aRight.iRegionDistance==128?64:aRight.iRegionDistance);
+               return iLeft>iRight;
+            });
+      }
+
       static CardImageMatchResult SummarizePrintings(
          std::vector<Ranked> const& vecMatches, bool boArtwork,
          unsigned uEvent, int iOrientation) {
@@ -719,9 +791,12 @@ namespace deckkernel::camera {
                aArtworkResult.iOrientation=iOrientation;
                LoadReference(pConnection,aArtworkResult);
                Publish(aArtworkResult);
+               std::vector<Ranked> vecPrintings=
+                  FindPrintings(pConnection,aCard,optArt);
+               // PHASE 07: compare full-card and printing-specific regions.
+               RefinePrintingImages(pConnection,aCard,vecPrintings);
                CardImageMatchResult aResult=SummarizePrintings(
-                  FindPrintings(pConnection,aCard,optArt),true,
-                  aTask.uEvent,iOrientation);
+                  vecPrintings,true,aTask.uEvent,iOrientation);
                if(aResult.strAssetId.empty()) {
                   aArtworkResult.boComplete=true;
                   aArtworkResult.strStatus=
@@ -746,8 +821,9 @@ namespace deckkernel::camera {
             Publish(CardImageMatchResult{
                aTask.uEvent,std::format("ARTWORK NOT FOUND - full card {} deg",iOrientation),
                "Searching complete-card index",false});
-            std::vector<Ranked> const vecMatches =
+            std::vector<Ranked> vecMatches =
                FindPrintings(pConnection, aCard, std::nullopt);
+            RefinePrintingImages(pConnection,aCard,vecMatches);
             CardImageMatchResult aResult = SummarizePrintings(
                vecMatches, false, aTask.uEvent, iOrientation);
             if(!vecMatches.empty() && AcceptFull(vecMatches.front()) &&
