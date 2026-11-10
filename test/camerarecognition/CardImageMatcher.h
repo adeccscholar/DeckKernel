@@ -314,18 +314,48 @@ namespace deckkernel::camera {
          return aRegion;
       }
 
-      /** \brief Compute camera ORB descriptors once per candidate orientation.
-          \details The stored reference descriptors are reused without image decoding.
-          \param aImage Camera artwork or full-card view.
-          \returns OpenCV ORB descriptor matrix.
-          \throw cv::Exception If descriptor extraction fails.
+      /**
+      \brief Compute query descriptors with a low-contrast fallback.
+      \details The database's version-1 ORB descriptors are intentionally
+      unchanged. A 500-pixel camera card can have fewer than ten usable
+      raw keypoints, making the existing minimum of twelve good matches
+      impossible. Only a weak query receives local CLAHE preprocessing.
+      No claim is made that extra CLAHE keypoints imply correct matches.
+      \param aImage Artwork or complete-card image from frozen capture.
+      \returns Original ORB descriptors or contrast-recovered descriptors.
+      \throw cv::Exception If OpenCV preprocessing or ORB extraction fails.
+      \note The fallback threshold requires calibration with DB references.
       */
       static cv::Mat Descriptors(cv::Mat const& aImage) {
-         cv::Ptr<cv::ORB> aOrb = cv::ORB::create(500);
-         std::vector<cv::KeyPoint> vecKeypoints;
-         cv::Mat aDescriptors;
-         aOrb->detectAndCompute(aImage, cv::noArray(), vecKeypoints, aDescriptors);
-         return aDescriptors;
+         cv::Ptr<cv::ORB> const aOrb=cv::ORB::create(500);
+         std::vector<cv::KeyPoint> vecRaw;
+         cv::Mat aRaw;
+         aOrb->detectAndCompute(aImage,cv::noArray(),vecRaw,aRaw);
+         if(aRaw.rows>=40) {
+            std::println("[CAM-ORB-QUERY] raw={} enhanced=skipped source={}x{}",
+               aRaw.rows,aImage.cols,aImage.rows);
+            return aRaw;
+         }
+         cv::Mat aGray;
+         if(aImage.channels()==4)
+            cv::cvtColor(aImage,aGray,cv::COLOR_BGRA2GRAY);
+         else if(aImage.channels()==3)
+            cv::cvtColor(aImage,aGray,cv::COLOR_BGR2GRAY);
+         else
+            aGray=aImage;
+         cv::Mat aEnhanced;
+         cv::Ptr<cv::CLAHE> const aClahe=cv::createCLAHE(
+            2.0,cv::Size(8,8));
+         aClahe->apply(aGray,aEnhanced);
+         cv::Mat aImproved;
+         std::vector<cv::KeyPoint> vecImproved;
+         aOrb->detectAndCompute(aEnhanced,cv::noArray(),
+            vecImproved,aImproved);
+         std::println("[CAM-ORB-QUERY] raw={} enhanced={} source={}x{} "
+            "mode={}",aRaw.rows,aImproved.rows,
+            aImage.cols,aImage.rows,
+            aImproved.rows>aRaw.rows?"clahe":"raw");
+         return aImproved.rows>aRaw.rows?std::move(aImproved):std::move(aRaw);
       }
 
       /** \brief Count ratio-filtered ORB matches against persisted descriptors.
