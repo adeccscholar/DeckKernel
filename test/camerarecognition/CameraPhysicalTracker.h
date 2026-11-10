@@ -17,6 +17,7 @@ a new physical card while tracking remains active.
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 namespace deckkernel::camera {
