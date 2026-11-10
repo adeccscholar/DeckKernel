@@ -364,3 +364,82 @@ report only unverified hue diagnostics. The right-hand live preview shows
 the geometrically corrected frame and may differ from a later auto-rotated
 event crop. Neither Windows/BCC64X compilation nor physical GUI testing
 has yet been performed for this change.
+
+## 2026-11-10: artwork-first, orientation-aware printing candidates
+
+The `--artwork` option now uses `CardImageMatcher.h`, a single-slot
+asynchronous worker and the existing `deckkernel_test.scryfall_image_features`
+version-1 feature index. This section supersedes the earlier art-only
+matching descriptions above; no Scryfall request or model reset is made.
+
+Recognition order for each stable presentation:
+
+1. Perspective-normalize the camera card, retaining the best available
+   camera pixels and the existing manual/OCR orientation selection.
+2. Search stored `art_crop` features at orientation 0 degrees, ranking a
+   bounded dHash shortlist by persisted ORB descriptors. A hash-only
+   nearest neighbour is not sufficient for a positive artwork candidate.
+3. If no artwork candidate passes the provisional thresholds, rotate the
+   normalized image 180 degrees and repeat the artwork search.
+4. When artwork is provisionally recognized, find full-card candidates
+   from related image variants: same art asset, or a corresponding
+   illustration ID. Consider `normal`, `border_crop` and `large` images
+   already indexed by scantest. Join image variants to Scryfall printing
+   IDs, sets, collector numbers, languages and faces.
+5. When neither artwork orientation passes, search all available indexed
+   full-card variants at 0 and 180 degrees as a fallback.
+6. Display the asynchronous outcome for the current card presentation
+   in the recognition/edition dashboard fields, ignoring stale results
+   from earlier events. The console logs each search stage.
+
+Only stored `dhash64-orb` / version 1 descriptors are used. The worker
+reads the ORB byte arrays directly from PostgreSQL, without decoding
+the original stored reference image blobs and without recomputing
+reference ORB features. The dHash shortlist SQL is still a full scan
+and sort of eligible bit hashes; it is not a sublinear ANN index.
+
+The stage returns **artwork candidate**, **printing candidate**,
+**ambiguous** or **unknown**. All physical-printing matches remain
+**UNVERIFIED** until calibrated against a labelled physical-card
+corpus. Equal artwork may identify an illustration shared across
+printings, and identical or almost identical full-card renderings
+cannot be used to claim a unique edition or a foil finish.
+No confidence percentage is asserted.
+
+The acceptance and ambiguity thresholds in `CardImageMatcher.h` are
+initial engineering thresholds, not measured accuracy limits. Standard
+artwork ROIs are provisional; split, adventure, full-art and other
+layouts need explicit layout-specific validation. Benchmark both
+recognition stages with known physical printings and confirm the
+compiled application on Windows/BCC64X before treating the output
+as validated.
+
+### Inspect the actual downloaded and indexed variants
+
+The last known import counts do not prove how many version-1 feature
+rows were persisted. Run this read-only SQL query against the existing
+database; it counts unique assets per variant and avoids treating
+shared URLs across printings as separate downloaded images:
+
+```sql
+SELECT v.variant,
+       COUNT(DISTINCT v.asset_id) AS known_assets,
+       COUNT(DISTINCT v.asset_id) FILTER (
+          WHERE a.image_data IS NOT NULL
+       ) AS downloaded_assets,
+       COUNT(DISTINCT v.asset_id) FILTER (
+          WHERE f.algorithm = 'dhash64-orb'
+            AND f.algorithm_version = 1
+            AND f.perceptual_hash IS NOT NULL
+       ) AS indexed_assets
+FROM deckkernel_test.scryfall_card_image_variants AS v
+JOIN deckkernel_test.scryfall_image_assets AS a
+  ON a.id = v.asset_id
+LEFT JOIN deckkernel_test.scryfall_image_features AS f
+  ON f.asset_id = a.id
+GROUP BY v.variant
+ORDER BY v.variant;
+```
+
+Run `deckkernel_card_scantest.exe --all --batch-size=32` to fill
+missing feature rows without re-importing images.
