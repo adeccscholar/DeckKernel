@@ -939,7 +939,10 @@ public:
          MergeOcr();
       }
 #endif
+      // Mana/OCR diagnostics remain opt-in and are never needed for matching.
+#if defined(DECKKERNEL_CAMERA_HAS_OCR)
       if(m_ocr)m_strMana=ReportManaColorCandidates(event->card,event->number,m_verbose);
+#endif
       m_displayCard=event->card.clone();
       if(m_save) {
          auto const zones=deckkernel_camera::ocr::Detect(event->card);
