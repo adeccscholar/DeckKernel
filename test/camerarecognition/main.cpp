@@ -719,6 +719,17 @@ class Processor {
    std::string m_strMana{"No mana evidence"};
    std::string m_strOrientation{"Automatic orientation pending"};
    cv::Mat m_displayCard;
+   cv::Mat m_referenceCard;
+   std::string m_strReferenceLabel{"No database match yet"};
+   std::string m_strReferenceDiagnostic;
+   std::string m_strSet;
+   std::string m_strSetName;
+   std::string m_strCollector;
+   std::string m_strLanguage;
+   std::string m_strRarity;
+   std::string m_strPrintingId;
+   std::string m_strOracleId;
+   std::string m_strManaCost;
    std::string m_strStatus{"Waiting for card"};
    std::string m_strEdition{"Edition not verified"};
    bool m_recognitionReady{};
@@ -746,6 +757,17 @@ public:
    [[nodiscard]] std::string const& Type() const noexcept {return m_strType;}
    [[nodiscard]] std::string const& Status() const noexcept {return m_strStatus;}
    [[nodiscard]] std::string const& Edition() const noexcept {return m_strEdition;}
+   [[nodiscard]] cv::Mat const& ReferenceCard() const noexcept {return m_referenceCard;}
+   [[nodiscard]] std::string const& ReferenceLabel() const noexcept {return m_strReferenceLabel;}
+   [[nodiscard]] std::string const& ReferenceDiagnostic() const noexcept {return m_strReferenceDiagnostic;}
+   [[nodiscard]] std::string const& Set() const noexcept {return m_strSet;}
+   [[nodiscard]] std::string const& SetName() const noexcept {return m_strSetName;}
+   [[nodiscard]] std::string const& Collector() const noexcept {return m_strCollector;}
+   [[nodiscard]] std::string const& Language() const noexcept {return m_strLanguage;}
+   [[nodiscard]] std::string const& Rarity() const noexcept {return m_strRarity;}
+   [[nodiscard]] std::string const& PrintingId() const noexcept {return m_strPrintingId;}
+   [[nodiscard]] std::string const& OracleId() const noexcept {return m_strOracleId;}
+   [[nodiscard]] std::string const& ManaCost() const noexcept {return m_strManaCost;}
    [[nodiscard]] bool CardLocked() const noexcept {return m_cardLocked;}
    [[nodiscard]] bool IdentificationReady() const noexcept {return m_recognitionReady;}
    [[nodiscard]] std::string Guidance() const {
@@ -761,6 +783,22 @@ public:
       m_strStatus=result->strStatus;
       m_strEdition=result->strEdition;
       m_recognitionReady=result->boComplete;
+      if(!result->strName.empty())m_strName=result->strName;
+      if(!result->strTypeLine.empty())m_strType=result->strTypeLine;
+      if(!result->strManaCost.empty())m_strManaCost=result->strManaCost;
+      m_strSet=result->strSet;
+      m_strSetName=result->strSetName;
+      m_strCollector=result->strCollector;
+      m_strLanguage=result->strLanguage;
+      m_strRarity=result->strRarity;
+      m_strPrintingId=result->strPrintingId;
+      m_strOracleId=result->strOracleId;
+      if(!result->strReferenceLabel.empty())
+         m_strReferenceLabel=result->strReferenceLabel;
+      if(!result->strReferenceDiagnostic.empty())
+         m_strReferenceDiagnostic=result->strReferenceDiagnostic;
+      if(!result->aReferenceImage.empty())
+         m_referenceCard=std::move(result->aReferenceImage);
       std::println("[CAM-MATCH] card #{} status={} edition={}",
          result->uEvent,m_strStatus,m_strEdition);
 #endif
@@ -860,6 +898,12 @@ public:
          m_strMana="No mana evidence";
          m_strOrientation="Waiting for card orientation";
          m_displayCard.release();
+         m_referenceCard.release();
+         m_strReferenceLabel="No database match yet";
+         m_strReferenceDiagnostic.clear();
+         m_strSet.clear();m_strSetName.clear();m_strCollector.clear();
+         m_strLanguage.clear();m_strRarity.clear();m_strPrintingId.clear();
+         m_strOracleId.clear();m_strManaCost.clear();
          std::println("[CAM] CARD-NO-LONGER-DETECTED #{} fingerprint={:016x}; "
             "ready-for-next-card",
             event->number,event->fingerprint);
@@ -875,6 +919,12 @@ public:
       m_recognitionReady=false;
       m_cardLocked=true;
       m_strName="--";m_strType="--";m_strRules="--";
+      m_referenceCard.release();
+      m_strReferenceLabel="Searching Scryfall references...";
+      m_strReferenceDiagnostic.clear();
+      m_strSet.clear();m_strSetName.clear();m_strCollector.clear();
+      m_strLanguage.clear();m_strRarity.clear();m_strPrintingId.clear();
+      m_strOracleId.clear();m_strManaCost.clear();
       m_bestNameConfidence=0;m_bestTypeConfidence=0;m_bestRulesConfidence=0;
       m_liveFrames=0;m_bestSharpness=0;m_ocrAttempts=0;m_ocrAccepted=false;
       m_autoFlipped=false;
@@ -889,7 +939,7 @@ public:
          MergeOcr();
       }
 #endif
-      m_strMana=ReportManaColorCandidates(event->card,event->number,m_verbose);
+      if(m_ocr)m_strMana=ReportManaColorCandidates(event->card,event->number,m_verbose);
       m_displayCard=event->card.clone();
       if(m_save) {
          auto const zones=deckkernel_camera::ocr::Detect(event->card);
