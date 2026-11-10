@@ -385,12 +385,28 @@ namespace deckkernel::camera {
          cv::BFMatcher aMatcher(cv::NORM_HAMMING, false);
          std::vector<std::vector<cv::DMatch>> vecPairs;
          aMatcher.knnMatch(aQuery, aReference, vecPairs, 2);
+         // Each reference descriptor may support at most one camera point.
+         // Without this guard 400 CLAHE-enhanced camera points can all match
+         // the SAME DB descriptor, manufacturing apparent evidence.
+         std::vector<cv::DMatch> vecAccepted;
+         for(std::vector<cv::DMatch> const& vecPair:vecPairs) {
+            if(vecPair.size()==2 &&
+               vecPair[0].distance<0.75f*vecPair[1].distance)
+               vecAccepted.push_back(vecPair[0]);
+         }
+         std::sort(vecAccepted.begin(),vecAccepted.end(),
+            [](cv::DMatch const& aLeft,cv::DMatch const& aRight) {
+               return aLeft.distance<aRight.distance;
+            });
+         std::vector<bool> vecUsed(
+            static_cast<std::size_t>(aReference.rows),false);
          int iAccepted{};
-         for(std::vector<cv::DMatch> const& vecPair : vecPairs) {
-            if(vecPair.size() == 2 &&
-               vecPair[0].distance < 0.75f * vecPair[1].distance) {
-               ++iAccepted;
-            }
+         for(cv::DMatch const& aMatch:vecAccepted) {
+            std::size_t const uIndex=
+               static_cast<std::size_t>(aMatch.trainIdx);
+            if(uIndex>=vecUsed.size() || vecUsed[uIndex])continue;
+            vecUsed[uIndex]=true;
+            ++iAccepted;
          }
          return iAccepted;
       }
