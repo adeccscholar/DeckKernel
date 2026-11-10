@@ -209,11 +209,16 @@ namespace deckkernel::camera {
           \returns A non-owning artwork ROI.
           \throw cv::Exception For an invalid image.
       */
-      static cv::Mat Artwork(cv::Mat const& aCard) {
-         int const iX = aCard.cols / 12;
-         int const iY = aCard.rows * 19 / 100;
-         return aCard(cv::Rect(iX, iY,
-            aCard.cols - 2 * iX, aCard.rows * 33 / 100));
+      static cv::Mat Artwork(cv::Mat const& aCard,
+         int iVariant=0) {
+         // Camera-derived borders vary across standard frames and optical
+         // perspective estimates. Try alternative illustration windows
+         // without rewriting the version-1 reference image index.
+         int const iX = aCard.cols * (iVariant==0?8:11) / 100;
+         int const iY = aCard.rows * (iVariant==0?19:22) / 100;
+         int const iW = aCard.cols * (iVariant==0?84:78) / 100;
+         int const iH = aCard.rows * (iVariant==0?33:28) / 100;
+         return aCard(cv::Rect(iX,iY,iW,iH));
       }
 
       /** \brief Compute camera ORB descriptors once per candidate orientation.
@@ -312,7 +317,11 @@ namespace deckkernel::camera {
       std::optional<Ranked> FindArtwork(PGconn* pConnection,
          cv::Mat const& aArt) const {
          std::string const strHash = DHashBits(aArt);
-         std::string const strLimit = std::to_string(m_uCandidates);
+         // With blur and a slightly inaccurate image window dHash can rank
+         // the true artwork outside the old first-100 shortlist. ORB is the
+         // actual second-stage discriminator on a wider candidate set.
+         std::string const strLimit = std::to_string(
+            std::max(400u,m_uCandidates));
          char const* arrParams[]{strHash.c_str(), strLimit.c_str()};
          result_ty aRows(PQexecParams(pConnection,
             "SELECT a.id::text, COALESCE(a.illustration_id, ''), "
@@ -768,53 +777,73 @@ namespace deckkernel::camera {
       }
 
       CardImageMatchResult Match(PGconn* pConnection, Task const& aTask) {
-         cv::Mat aCard = aTask.aCard;
-         for(int iOrientation : {0, 180}) {
-            Publish(CardImageMatchResult{
-               aTask.uEvent,std::format("SEARCHING ARTWORK - orientation {} deg",iOrientation),
-               "Comparing indexed illustrations",false});
-            cv::Mat const aArt = Artwork(aCard);
-            std::optional<Ranked> optArt = FindArtwork(pConnection, aArt);
-            bool const boRecognized = optArt && AcceptArtwork(*optArt);
-            std::println("[CAM-ART] card #{} orientation={} candidate-asset={} "
-               "dhash={}/64 orb-good={} status={}",
-               aTask.uEvent, iOrientation,
-               optArt ? optArt->strAssetId : "",
-               optArt ? optArt->iHash : 65,
-               optArt ? optArt->iOrb : 0,
-               boRecognized ? "ARTWORK_CANDIDATE" : "NO_RELIABLE_ARTWORK");
-            if(boRecognized) {
-               CardImageMatchResult aArtworkResult{
-                  aTask.uEvent,"ARTWORK FOUND - checking concrete printing",
-                  "Illustration matched; printing not yet identified",false};
-               aArtworkResult.strAssetId=optArt->strAssetId;
-               aArtworkResult.strName=ArtworkName(
-                  pConnection,optArt->strAssetId);
-               aArtworkResult.strReferenceLabel="DB artwork (art_crop)";
-               aArtworkResult.iOrientation=iOrientation;
-               LoadReference(pConnection,aArtworkResult);
-               Publish(aArtworkResult);
-               std::vector<Ranked> vecPrintings=
-                  FindPrintings(pConnection,aCard,optArt);
-               // PHASE 07: compare full-card and printing-specific regions.
-               RefinePrintingImages(pConnection,aCard,vecPrintings);
-               CardImageMatchResult aResult=SummarizePrintings(
-                  vecPrintings,true,aTask.uEvent,iOrientation);
-               if(aResult.strAssetId.empty()) {
-                  aArtworkResult.boComplete=true;
-                  aArtworkResult.strStatus=
-                     "ARTWORK FOUND - printing unresolved";
-                  aArtworkResult.strEdition=std::format(
-                     "Illustration {} | possible reprints",
-                     optArt->strIllustrationId);
-                  return aArtworkResult;
+         // PHASE 06: compare BOTH orientations and two card-art windows.
+         // Never stop at the first barely acceptable visual match: it may
+         // be the wrong 180-degree orientation and poison the whole session.
+         struct ArtworkChoice {
+            Ranked aRanked;
+            int iOrientation{};
+            int iVariant{};
+         };
+         std::optional<ArtworkChoice> optArtworkChoice;
+         for(int iOrientation : {0,180}) {
+            cv::Mat aOriented=aTask.aCard;
+            if(iOrientation==180)
+               cv::rotate(aTask.aCard,aOriented,cv::ROTATE_180);
+            for(int iVariant=0;iVariant<2;++iVariant) {
+               Publish(CardImageMatchResult{
+                  aTask.uEvent,std::format(
+                     "SEARCHING ARTWORK - {} deg, window {}",
+                     iOrientation,iVariant+1),
+                  "Comparing indexed illustrations",false});
+               std::optional<Ranked> optCandidate=FindArtwork(
+                  pConnection,Artwork(aOriented,iVariant));
+               bool const boAccepted=optCandidate &&
+                  AcceptArtwork(*optCandidate);
+               std::println("[CAM-ART] card={} orientation={} window={} "
+                  "asset={} hash={}/64 orb={} accepted={}",
+                  aTask.uEvent,iOrientation,iVariant+1,
+                  optCandidate?optCandidate->strAssetId:"",
+                  optCandidate?optCandidate->iHash:65,
+                  optCandidate?optCandidate->iOrb:0,boAccepted);
+               if(boAccepted && (!optArtworkChoice ||
+                  Better(*optCandidate,optArtworkChoice->aRanked))) {
+                  optArtworkChoice=ArtworkChoice{
+                     std::move(*optCandidate),iOrientation,iVariant};
                }
-               LoadReference(pConnection,aResult);
-               return aResult;
             }
-            if(iOrientation == 0) {
-               cv::rotate(aCard, aCard, cv::ROTATE_180);
+         }
+         if(optArtworkChoice) {
+            int const iOrientation=optArtworkChoice->iOrientation;
+            Ranked const& aArt=optArtworkChoice->aRanked;
+            cv::Mat aOriented=aTask.aCard;
+            if(iOrientation==180)
+               cv::rotate(aTask.aCard,aOriented,cv::ROTATE_180);
+            CardImageMatchResult aArtworkResult{
+               aTask.uEvent,"ARTWORK FOUND - checking concrete printing",
+               "Illustration matched; printing not yet identified",false};
+            aArtworkResult.strAssetId=aArt.strAssetId;
+            aArtworkResult.strName=ArtworkName(
+               pConnection,aArt.strAssetId);
+            aArtworkResult.strReferenceLabel="DB artwork (art_crop)";
+            aArtworkResult.iOrientation=iOrientation;
+            LoadReference(pConnection,aArtworkResult);
+            Publish(aArtworkResult);
+            std::vector<Ranked> vecPrintings=FindPrintings(
+               pConnection,aOriented,aArt);
+            RefinePrintingImages(pConnection,aOriented,vecPrintings);
+            CardImageMatchResult aResult=SummarizePrintings(
+               vecPrintings,true,aTask.uEvent,iOrientation);
+            if(aResult.strAssetId.empty()) {
+               aArtworkResult.boComplete=true;
+               aArtworkResult.strStatus="ARTWORK FOUND - printing unresolved";
+               aArtworkResult.strEdition=std::format(
+                  "Illustration {} | possible reprints",
+                  aArt.strIllustrationId);
+               return aArtworkResult;
             }
+            LoadReference(pConnection,aResult);
+            return aResult;
          }
          // Both artwork orientations failed: the full card becomes the fallback.
          std::optional<CardImageMatchResult> optBest;
