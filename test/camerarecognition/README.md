@@ -484,3 +484,34 @@ remove-then-present lifecycle.
 This change has been checked structurally against the current repository,
 but has **not** been compiled and run on the BCC64X/Windows camera machine
 or measured against labelled physical card samples.
+
+## 2026-11-10: focus settling and projective card alignment
+
+A stable card presentation no longer immediately starts artwork index
+lookup. The camera first retains the captured high-resolution perspective
+rectification and observes up to 18 further valid samples, bounded by
+a 2-second settling window. OpenCV scores the card pixels using
+Laplacian sharpness, clipping, darkness and exposure. The best sampled
+full-resolution card crop is retained. Missing contours cannot replace
+it and the time bound avoids indefinite focus delays.
+
+OpenCV requests continuous hardware autofocus when supported by the
+camera backend. Focusing on a card-specific region is not guaranteed:
+CAP_PROP_AUTOFOCUS is a driver request, not a portable ROI autofocus API.
+The sampling stage selects the best observed frame, independently of
+driver support. It does not apply synthetic image sharpening.
+
+Perspective normalization now admits real convex quadrilaterals with
+unequal opposite edges, even when the minimum-area bounding rectangle
+has an atypical aspect ratio. Its vertices are sorted around the
+centroid before applying a four-point homography. The rotated-box
+fallback remains limited to approximately frontoparallel cards;
+a trapezoidal view is not replaced by a guessed rectangle.
+
+A synthetic trapezoidal card was added to the geometric smoke test.
+The DB image remains separate from the captured input, and its
+original card metadata is displayed without requiring OCR.
+
+This has not been compiled or tested with the user's Windows/BCC64X
+camera. Curved cards, partially hidden corners, heavy glare and severe
+perspective distortion require dedicated physical-sample tests.
