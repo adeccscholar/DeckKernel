@@ -1213,8 +1213,12 @@ public:
          cv::Mat aImage=aSource.empty()?pCandidate->rectified.clone():
             RectifyForOcr(aSource,pCandidate->corners,
                m_boCapturedRotate180 != m_manualOrientation);
-         // PHASE 04: offer only images belonging to the tracked physical card.
-         if(m_capture.Offer(aImage))
+         // PHASE 04: optical flow follows the original card, but only a
+         // complete standard-card image may replace the best capture.
+         // Reject a frame accidentally reduced to the inner artwork.
+         auto const aLayout=deckkernel::camera::InspectStandardCard(aImage);
+         if(aLayout.boRecognized && !aLayout.boRotate180 &&
+            m_capture.Offer(aImage))
             m_displayCard=m_capture.Image();
          m_flCaptureScore=m_capture.Score();
          m_flCaptureSharpness=m_capture.Sharpness();
@@ -1327,7 +1331,7 @@ public:
 #endif
       }
       if(!event) {
-         // PHASE 01/02: only the initial physical contour is globally detected.
+         // PHASE 01/02: only an intact physical card is admitted.
          if(!m_cardLocked)SetPhase(found?
             deckkernel::camera::RecognitionPhase::Acquiring:
             deckkernel::camera::RecognitionPhase::Searching);
@@ -1373,7 +1377,14 @@ public:
       }
       std::println("[CAM] NEW-STABLE-CARD #{} fingerprint={:016x}; edition=UNKNOWN",
          event->number,event->fingerprint);
-      if(found)m_boCapturedRotate180=found->boRotate180;
+      if(found) {
+         m_boCapturedRotate180=found->boRotate180;
+         m_strOrientation=std::format(
+            "Standard-card frame: auto {} deg",
+            m_boCapturedRotate180?180:0);
+         std::println("[CAM-ORIENTATION] card={} layout=standard auto={} deg",
+            event->number,m_boCapturedRotate180?180:0);
+      }
       if(!sourceFrame.empty() && found)
          event->card=RectifyForOcr(sourceFrame,found->corners,
             m_boCapturedRotate180 != m_manualOrientation);
