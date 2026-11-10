@@ -51,6 +51,9 @@ class CameraDashboard {
    std::string m_strSet, m_strSetName, m_strCollector, m_strLanguage;
    std::string m_strRarity, m_strPrintingId, m_strOracleId, m_strManaCost;
    bool m_bCardLocked{};
+   int m_iNavigation{};
+   bool m_boConfirm{};
+   std::string m_strPhase{"01 SEARCHING"};
    static sk_sp<SkTypeface>& Typeface() {
       static sk_sp<SkTypeface> face=[] {
          auto manager=SkFontMgr_New_DirectWrite();
@@ -149,6 +152,10 @@ public:
          if(aEvent.type==SDL_KEYDOWN) {
             if(aEvent.key.keysym.sym==SDLK_ESCAPE)m_bRunning=false;
             if(aEvent.key.keysym.sym==SDLK_r)m_bFlip=!m_bFlip;
+            if(aEvent.key.keysym.sym==SDLK_LEFT)--m_iNavigation;
+            if(aEvent.key.keysym.sym==SDLK_RIGHT)++m_iNavigation;
+            if(aEvent.key.keysym.sym==SDLK_RETURN ||
+               aEvent.key.keysym.sym==SDLK_KP_ENTER)m_boConfirm=true;
             if(aEvent.key.keysym.sym==SDLK_PLUS ||
                aEvent.key.keysym.sym==SDLK_EQUALS ||
                aEvent.key.keysym.sym==SDLK_KP_PLUS)
@@ -161,6 +168,17 @@ public:
       return m_bRunning;
    }
    [[nodiscard]] bool Flip180() const noexcept{return m_bFlip;}
+   [[nodiscard]] int ConsumeNavigation() noexcept {
+      int const iDelta=m_iNavigation;
+      m_iNavigation=0;
+      return iDelta;
+   }
+   [[nodiscard]] bool ConsumeConfirmation() noexcept {
+      bool const boConfirm=m_boConfirm;
+      m_boConfirm=false;
+      return boConfirm;
+   }
+   void SetPhase(std::string strPhase) {m_strPhase=std::move(strPhase);}
    /**
    \brief Update the read-only DB recognition fields.
    \details No OCR field is required for image-based identification.
@@ -264,6 +282,8 @@ public:
       Fill(pCanvas,SkRect::MakeXYWH(16.f,flBottom,
          iWidth-32.f,flFooterHeight),0xff172936);
       Text(pCanvas,25.f,35.f,"DECKKERNEL  /  IMAGE RECOGNITION",23.f,0xfff5f7fa);
+      Text(pCanvas,static_cast<float>(iWidth)-230.f,35.f,
+         m_strPhase,17.f,0xff8ed5ee);
       Text(pCanvas,30.f,84.f,
          m_bCardLocked?"INPUT / CAPTURED CARD":"INPUT / CAMERA",
          16.f,0xff8ed5ee);
