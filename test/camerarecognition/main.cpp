@@ -186,8 +186,7 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
             rectangle.size.width,rectangle.size.height);
          double const longSide=std::max(
             rectangle.size.width,rectangle.size.height);
-         if(shortSide<22.0||longSide/shortSide<1.22||
-            longSide/shortSide>1.72)continue;
+         if(shortSide<22.0)continue;
          double const rectangleArea=
             static_cast<double>(rectangle.size.width)*rectangle.size.height;
          if(rectangleArea<=0)continue;
@@ -203,6 +202,11 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
          bool const recovered=corners.size()!=4||
             !cv::isContourConvex(corners);
          if(recovered) {
+            // An axis-rotated minimum-area box cannot recover strong perspective.
+            // Use it only for near-frontoparallel cards, never as an arbitrary
+            // substitute for a strongly trapezoidal projection.
+            if(longSide/shortSide<1.22 || longSide/shortSide>1.72)
+               continue;
             // Recover the quadrilateral from the rotated minimum-area box.
             // Only accept contours filling most of that box, not arbitrary
             // elongated edges, hands or a tabletop boundary.
@@ -214,6 +218,16 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
                corners.emplace_back(cvRound(point.x),cvRound(point.y));
             ++stats.rotatedCandidates;
          } else {
+            // Projective distortions may produce a trapezoidal silhouette.
+            // Accept a convex quadrilateral with plausible short/long edges
+            // even if its bounding rectangle differs from the card's ratio.
+            std::array<double,4> arrLengths{};
+            for(int iSide=0;iSide<4;++iSide)
+               arrLengths[iSide]=cv::norm(
+                  cv::Point2d(corners[iSide])-cv::Point2d(corners[(iSide+1)%4]));
+            double const flMin=*std::min_element(arrLengths.begin(),arrLengths.end());
+            double const flMax=*std::max_element(arrLengths.begin(),arrLengths.end());
+            if(flMin<18.0 || flMax/flMin>3.5)continue;
             ++stats.quadrilaterals;
          }
          ++stats.aspectCandidates;
@@ -267,19 +281,30 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
    if(diagnostics)*diagnostics=stats;
    if(best.size()!=4)return std::nullopt;
 
+   // Order four corners around the polygon centroid. Sum/difference extrema
+   // can assign the same point to multiple corners under strong perspective.
    std::array<cv::Point2f,4> pts{};
-   double smallest=std::numeric_limits<double>::max(),largest=-smallest;
-   double smallDiff=smallest,largeDiff=largest;
-   for(auto const& point:best) {
-      double const x=point.x/scale,y=point.y/scale;
-      double const sum=x+y,diff=x-y;
-      cv::Point2f const p(static_cast<float>(x),
-         static_cast<float>(y));
-      if(sum<smallest){smallest=sum;pts[0]=p;}
-      if(diff>largeDiff){largeDiff=diff;pts[1]=p;}
-      if(sum>largest){largest=sum;pts[2]=p;}
-      if(diff<smallDiff){smallDiff=diff;pts[3]=p;}
+   cv::Point2f aCenter{};
+   for(auto const& aPoint:best) {
+      aCenter+=cv::Point2f(static_cast<float>(aPoint.x/scale),
+         static_cast<float>(aPoint.y/scale));
    }
+   aCenter*=0.25f;
+   for(std::size_t uIndex=0;uIndex<pts.size();++uIndex) {
+      pts[uIndex]=cv::Point2f(static_cast<float>(best[uIndex].x/scale),
+         static_cast<float>(best[uIndex].y/scale));
+   }
+   std::sort(pts.begin(),pts.end(),[&](cv::Point2f const& aLeft,
+      cv::Point2f const& aRight) {
+      return std::atan2(aLeft.y-aCenter.y,aLeft.x-aCenter.x) <
+         std::atan2(aRight.y-aCenter.y,aRight.x-aCenter.x);
+   });
+   auto const itTopLeft=std::min_element(pts.begin(),pts.end(),
+      [](cv::Point2f const& aLeft,cv::Point2f const& aRight) {
+         return aLeft.x+aLeft.y<aRight.x+aRight.y;
+      });
+   std::rotate(pts.begin(),itTopLeft,pts.end());
+   // Preserve portrait normalization independently of in-plane card rotation.
    if(cv::norm(pts[0]-pts[1])>cv::norm(pts[1]-pts[2]))
       std::rotate(pts.begin(),pts.begin()+1,pts.end());
 
