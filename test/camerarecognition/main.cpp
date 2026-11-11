@@ -2727,6 +2727,31 @@ void SelfTest() {
    if(aStandard->boRotate180)
       throw std::runtime_error("upright standard card was rotated 180 degrees");
 
+   // REGRESSION: a split / borderless-style card has no conventional
+   // horizontal title/art/type separators, but contains independent
+   // differently oriented rectangular face regions inside its outer edge.
+   cv::Mat aSplitScene(960,1500,CV_8UC3,cv::Scalar(25,30,36));
+   cv::Rect const aSplitOuter(550,125,320,448);
+   cv::rectangle(aSplitScene,aSplitOuter,cv::Scalar(135,145,153),-1);
+   cv::rectangle(aSplitScene,aSplitOuter,cv::Scalar(12,16,20),5);
+   cv::Rect const aSplitVertical(572,168,118,285);
+   cv::rectangle(aSplitScene,aSplitVertical,
+      cv::Scalar(210,196,175),-1);
+   cv::rectangle(aSplitScene,aSplitVertical,
+      cv::Scalar(28,28,31),4);
+   cv::Rect const aSplitHorizontal(710,193,135,220);
+   cv::rectangle(aSplitScene,aSplitHorizontal,
+      cv::Scalar(190,210,223),-1);
+   cv::rectangle(aSplitScene,aSplitHorizontal,
+      cv::Scalar(26,31,34),4);
+   CardDetectionDiagnostics aSplitStats;
+   auto const aSplitCard=FindCard(aSplitScene,&aSplitStats,true);
+   if(!aSplitCard ||
+      cv::boundingRect(aSplitCard->corners).area()<
+         aSplitOuter.area()*0.70 ||
+      aSplitStats.acceptedNestedLayouts==0)
+      throw std::runtime_error(
+         "nested split-face card failed outer-card acquisition");
    // DEMO TEST 01: the same physical card, actually upside-down, must
    // retain the outer contour and correct the 180-degree orientation.
    cv::Mat aReversedScene;
