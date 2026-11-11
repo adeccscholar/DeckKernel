@@ -236,8 +236,12 @@ namespace deckkernel::camera {
          cv::Mat aSmall,aGray;
          cv::resize(aFrame(aArea),aSmall,cv::Size(120,90),
             0.0,0.0,cv::INTER_AREA);
-         cv::cvtColor(aSmall,aGray,aSmall.channels()==4?
-            cv::COLOR_BGRA2GRAY:cv::COLOR_BGR2GRAY);
+         if(aSmall.channels()==4)
+            cv::cvtColor(aSmall,aGray,cv::COLOR_BGRA2GRAY);
+         else if(aSmall.channels()==3)
+            cv::cvtColor(aSmall,aGray,cv::COLOR_BGR2GRAY);
+         else
+            aGray=aSmall;
          bool boStable=true;
          if(!m_previous.empty()) {
             cv::Mat aDelta;
@@ -284,7 +288,8 @@ namespace deckkernel::camera {
                m_flLockedSharpness,aMetric.flSharpness);
             ++m_uVerifySamples;
          }
-         if(flElapsed<0.6 && m_uVerifySamples<8)return true;
+         if(flElapsed<0.6 ||
+            (m_uVerifySamples<8 && flElapsed<1.2))return true;
          if(m_uVerifySamples<3 ||
             m_flLockedSharpness<m_flBestSharpness*0.55) {
             Fallback(aCapture,"manual lock lost tabletop sharpness");
