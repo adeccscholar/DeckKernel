@@ -123,6 +123,8 @@ struct CardDetectionDiagnostics {
    unsigned rejectedAspect{};
    unsigned rejectedOrientation{};
    unsigned selectedInnerPanels{};
+   unsigned selectedRotatedPanels{};
+   unsigned acceptedNestedLayouts{};
    double selectedRatio{};
    bool inferredOuterFrame{};
 };
@@ -200,6 +202,7 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
    bool boBestRotate180{};
    bool boBestLayoutRecognized{};
    unsigned uBestInnerPanels{};
+   unsigned uBestRotatedPanels{};
    double flBestRatio{};
    CardDetectionDiagnostics stats;
 
@@ -220,6 +223,7 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
          cv::Rect aBox;
          cv::Point2f aCenter;
          double flArea{};
+         double flAngle{};
       };
       // Precompute nested rectangular shapes once per Canny pass. Iterating
       // approxPolyDP over every contour for every card candidate would make
@@ -239,9 +243,17 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
             cv::arcLength(aCandidate,true)*0.025,true);
          if(vecCorners.size()!=4 || !cv::isContourConvex(vecCorners))
             continue;
+         cv::RotatedRect const aPanel=cv::minAreaRect(aCandidate);
+         cv::Point2f const aAxis=aPanel.size.width>=aPanel.size.height?
+            cv::Point2f(std::cos(aPanel.angle*CV_PI/180.0),
+               std::sin(aPanel.angle*CV_PI/180.0)):
+            cv::Point2f(-std::sin(aPanel.angle*CV_PI/180.0),
+               std::cos(aPanel.angle*CV_PI/180.0));
+         double const flAngle=std::atan2(
+            std::abs(static_cast<double>(aAxis.x)),
+            std::abs(static_cast<double>(aAxis.y)))*180.0/CV_PI;
          vecPossiblePanels.push_back(InnerOutline{
-            aBox,cv::Point2f(aBox.x+aBox.width*0.5f,
-               aBox.y+aBox.height*0.5f),flArea});
+            aBox,aPanel.center,flArea,flAngle});
       }
       for(auto const& contour:contours) {
          double const area=std::abs(cv::contourArea(contour));
@@ -457,19 +469,21 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
          // a mouse or isolated artwork does not. Count substantial, distinct
          // nested panels (art and rules) as additional evidence; do not
          // require them, because blur or unconventional printings hide them.
-         unsigned uInnerPanels{};
-         std::array<cv::Rect,3> arrPanels{};
+         unsigned uInnerPanels{},uRotatedPanels{};
+         std::array<cv::Rect,4> arrPanels{};
+         std::array<cv::Point2f,4> arrPanelCenters{};
          for(auto const& aInner:vecPossiblePanels) {
-            if(aInner.flArea<area*0.075 ||
-               aInner.flArea>area*0.70)continue;
-            cv::Rect const& aInnerBox=aInner.aBox;
+            if(aInner.flArea<area*0.055 ||
+               aInner.flArea>area*0.72)continue;
+            // Test the center against the actual quadrilateral, not its
+            // axis-aligned bounding box. Inner faces may be rotated.
             if(cv::pointPolygonTest(corners,aInner.aCenter,true)<
-               shortSide*0.06)continue;
+               shortSide*0.045)continue;
             bool boDuplicate{};
             for(unsigned uPanel=0;uPanel<uInnerPanels;++uPanel) {
-               cv::Rect const aCommon=aInnerBox&arrPanels[uPanel];
+               cv::Rect const aCommon=aInner.aBox&arrPanels[uPanel];
                double const flOverlap=static_cast<double>(aCommon.area())/
-                  std::max(1,std::min(aInnerBox.area(),
+                  std::max(1,std::min(aInner.aBox.area(),
                      arrPanels[uPanel].area()));
                if(flOverlap>0.75) {
                   boDuplicate=true;
@@ -477,8 +491,28 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
                }
             }
             if(boDuplicate)continue;
-            arrPanels[uInnerPanels++]=aInnerBox;
-            if(uInnerPanels==arrPanels.size())break;
+            arrPanels[uInnerPanels]=aInner.aBox;
+            arrPanelCenters[uInnerPanels]=aInner.aCenter;
+            uRotatedPanels+=aInner.flAngle>15.0;
+            if(++uInnerPanels==arrPanels.size())break;
+         }
+         // Two distinct inner panels spread across the physical face
+         // provide structural evidence even without standard horizontal
+         // title/art/type separators (borderless, split, rotated faces).
+         bool boNestedLayout=false;
+         if(uInnerPanels>=2) {
+            for(unsigned uFirst=0;uFirst<uInnerPanels &&
+               !boNestedLayout;++uFirst)
+               for(unsigned uSecond=uFirst+1;uSecond<uInnerPanels;
+                  ++uSecond) {
+                  cv::Point2f const aDelta=
+                     arrPanelCenters[uFirst]-arrPanelCenters[uSecond];
+                  if(std::abs(aDelta.x)>=shortSide*0.18 ||
+                     std::abs(aDelta.y)>=longSide*0.18) {
+                     boNestedLayout=true;
+                     break;
+                  }
+               }
          }
          double const flGeometryScore=area*fill*
             (0.65+0.35*ratioFitness)*
@@ -533,7 +567,7 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
             // and falsely accepted as a physical card.
             auto const aWholeFrame=
                deckkernel::camera::InspectWholeCardFrame(aCandidateImage);
-            if(!aWholeFrame.boWholeCard) {
+            if(!aWholeFrame.boWholeCard && !boNestedLayout) {
                // PHASE 01 fallback: when the low-resolution interior is
                // washed out, accept a physical outline ONLY if its four
                // straight sides are independently supported by the
@@ -554,6 +588,8 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
                // With no reliable title/text separators, do not invent
                // orientation; the artwork matcher still tests both.
             }
+            if(!aWholeFrame.boWholeCard && boNestedLayout)
+               ++stats.acceptedNestedLayouts;
             ++stats.layoutChecked;
             auto const aLayout=
                deckkernel::camera::InspectStandardCard(aCandidateImage);
@@ -582,6 +618,7 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
          bestArea=area;
          recoveredBest=recovered;
          uBestInnerPanels=uInnerPanels;
+         uBestRotatedPanels=uRotatedPanels;
          flBestRatio=ratio;
          boBestRotate180=boRotate180;
          boBestLayoutRecognized=boLayoutRecognized;
@@ -609,6 +646,7 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
    stats.recoveredRectangle=recoveredBest;
    stats.selectedLayoutRecognized=boBestLayoutRecognized;
    stats.selectedInnerPanels=uBestInnerPanels;
+   stats.selectedRotatedPanels=uBestRotatedPanels;
    stats.selectedRatio=flBestRatio;
    if(diagnostics)*diagnostics=stats;
    if(best.size()!=4)return std::nullopt;
@@ -3383,7 +3421,8 @@ int main(int argc,char** argv) {
                      "quadrilaterals={} rotated={} plausible={} "
                      "shape-rejected={} aspect-rejected={} orientation-rejected={} full-frame-rejected={} "
                      "broken-outline={} physical-outline={} "
-                     "layout={}/{} chosen-ratio={:.3f} nested-panels={} area={:.2f}%",
+                     "layout={}/{} nested-layouts={} chosen-ratio={:.3f} "
+                     "nested-panels={} rotated-panels={} area={:.2f}%",
                      detection.contours,detection.areaCandidates,
                      detection.quadrilaterals,detection.rotatedCandidates,
                      detection.aspectCandidates,detection.rejectedShape,
@@ -3392,8 +3431,9 @@ int main(int argc,char** argv) {
                      detection.incompleteOutlineCandidates,
                      detection.outerFrameFallbackCandidates,
                      detection.layoutRecognized,
-                     detection.layoutChecked,detection.selectedRatio,
-                     detection.selectedInnerPanels,
+                     detection.layoutChecked,detection.acceptedNestedLayouts,
+                     detection.selectedRatio,detection.selectedInnerPanels,
+                     detection.selectedRotatedPanels,
                      detection.selectedAreaPercent);
             }
             count=0;interval=now;
