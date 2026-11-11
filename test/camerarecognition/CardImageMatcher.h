@@ -797,13 +797,43 @@ namespace deckkernel::camera {
          std::vector<Ranked> const& vecMatches, bool boArtwork,
          unsigned uEvent, int iOrientation) {
          CardImageMatchResult aResult{uEvent};
-         if(vecMatches.empty() || !AcceptFull(vecMatches.front())) {
-            aResult.strStatus = boArtwork ?
-               "ARTWORK_CANDIDATE; printing unresolved" :
-               "UNKNOWN; no reliable artwork or full-card match";
+         if(vecMatches.empty()) {
+            aResult.strStatus=boArtwork?
+               "ARTWORK FOUND - no indexed full-card variants for this face":
+               "UNKNOWN - no reliable full-card candidates";
             return aResult;
          }
-         Ranked const& aBest = vecMatches.front();
+         Ranked const& aBest=vecMatches.front();
+         bool const boVisualPrintingMatch=AcceptFull(aBest);
+         if(!boArtwork && !boVisualPrintingMatch) {
+            aResult.strStatus="FULL-CARD MATCH INSUFFICIENT";
+            return aResult;
+         }
+         // An accepted artwork already identifies the illustration and
+         // restricts its linked printing faces. Weak FULL-CARD similarity
+         // must not erase those database candidates. Expose them for manual
+         // confirmation, but never claim the printing was recognized.
+         if(boArtwork && !boVisualPrintingMatch) {
+            for(Ranked const& aMatch:vecMatches) {
+               aResult.vecCandidates.push_back(Candidate(aMatch));
+               if(aResult.vecCandidates.size()>=32) {
+                  aResult.boCandidatesTruncated=
+                     vecMatches.size()>aResult.vecCandidates.size();
+                  break;
+               }
+            }
+            SetPrinting(aResult,aResult.vecCandidates.front());
+            aResult.strStatus=std::format(
+               "ARTWORK FOUND - printing unverified, {} DB candidates",
+               aResult.vecCandidates.size());
+            aResult.strEdition=
+               "Full-card comparison inconclusive; select printing manually";
+            aResult.iOrientation=iOrientation;
+            std::println("[CAM-PRINT] card={} artwork-linked={} "
+               "full-card-verified=false best-orb={} best-dhash={}",
+               uEvent,vecMatches.size(),aBest.iOrb,aBest.iHash);
+            return aResult;
+         }
          // Phase PRINTING: retain distinct alternatives. A large score gap
          // narrows choices, but optical similarity is not physical proof.
          for(Ranked const& aMatch:vecMatches) {
