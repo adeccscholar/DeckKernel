@@ -15,6 +15,27 @@
 
 namespace deckkernel::camera {
    inline std::atomic_bool g_boCameraTrace{false};
+   inline std::atomic_bool g_boDeepSearch{false};
+
+   /**
+   \brief Enable the legacy global full-card fallback independently of logs.
+   \details Normal live scans skip this expensive, weakly discriminating pass.
+   \param boEnabled Explicit --deep-search option.
+   \returns Nothing.
+   \throw None.
+   */
+   inline void SetDeepSearchEnabled(bool boEnabled) noexcept {
+      g_boDeepSearch.store(boEnabled,std::memory_order_relaxed);
+   }
+
+   /**
+   \brief Test whether exhaustive full-card matching is requested.
+   \returns True for --deep-search.
+   \throw None.
+   */
+   [[nodiscard]] inline bool DeepSearchEnabled() noexcept {
+      return g_boDeepSearch.load(std::memory_order_relaxed);
+   }
 
    /**
    \brief Control expensive diagnostic console output.
