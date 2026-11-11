@@ -57,6 +57,7 @@ class CameraDashboard {
    bool m_bCardLocked{};
    int m_iNavigation{};
    bool m_boConfirm{};
+   bool m_boFocusReset{};
    std::string m_strPhase{"01 SEARCHING"};
    std::size_t m_uCandidateIndex{};
    std::size_t m_uCandidateCount{};
@@ -159,6 +160,7 @@ public:
          if(aEvent.type==SDL_KEYDOWN) {
             if(aEvent.key.keysym.sym==SDLK_ESCAPE)m_bRunning=false;
             if(aEvent.key.keysym.sym==SDLK_r)m_bFlip=!m_bFlip;
+            if(aEvent.key.keysym.sym==SDLK_f)m_boFocusReset=true;
             if(aEvent.key.keysym.sym==SDLK_LEFT)--m_iNavigation;
             if(aEvent.key.keysym.sym==SDLK_RIGHT)++m_iNavigation;
             if(aEvent.key.keysym.sym==SDLK_RETURN ||
@@ -184,6 +186,11 @@ public:
       bool const boConfirm=m_boConfirm;
       m_boConfirm=false;
       return boConfirm;
+   }
+   [[nodiscard]] bool ConsumeFocusReset() noexcept {
+      bool const boReset=m_boFocusReset;
+      m_boFocusReset=false;
+      return boReset;
    }
    void SetPhase(std::string strPhase) {m_strPhase=std::move(strPhase);}
    /**
