@@ -1817,6 +1817,7 @@ public:
          return;
       }
       m_focusPending=false;
+      auto const eFreezeReason=m_capture.Reason();
       // PHASE 05: freeze once. No recognition stage may mutate these pixels.
       if(!m_capture.Freeze()) {
          SetPhase(deckkernel::camera::RecognitionPhase::Unresolved);
@@ -1887,9 +1888,14 @@ public:
       m_recognitionReady=true;
 #endif
       deckkernel::camera::Trace("[CAM-FOCUS] card #{} frames={} seconds={:.2f} "
-         "sharpness={:.2f} score={:.2f}",
+         "sharpness={:.2f} printed-detail={:.2f} score={:.2f} "
+         "freeze={} focus-improved={} usable={}",
          *m_ocrCard,m_uFocusFrames,flSeconds,
-         m_flCaptureSharpness,m_flCaptureScore);
+         m_flCaptureSharpness,m_capture.Quality().detailSharpness,
+         m_flCaptureScore,
+         eFreezeReason==deckkernel::camera::CardCapture::FreezeReason::Deadline?
+            "deadline":"stabilized",
+         m_capture.FocusImproved(),m_capture.UsableForMatching());
    }
 
    /**
