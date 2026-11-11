@@ -977,42 +977,20 @@ module evaluation is unchanged.
 PostgreSQL printing-query duration, preview of `frozen-overscan.png`,
 and OCR success on known printed collector/set fields.
 
-## 2026-11-11: borderless acquisition and batched split-face artwork matching
+## 2026-11-11: identification regression and targeted rollback
 
-The physical-card detector now has an additional, conservative borderless
-silhouette fallback when the conventional title/art separators are missing.
-It requires at least three well-supported physical sides, plausible outer
-card proportions, sufficient size, foreground/background contrast, and at
-least one distinct nested panel (such as a text box). Completely blank
-rectangles and artwork-only regions remain subject to the existing
-false-positive regressions. A synthetic borderless-text-panel case is
-included in the camera self-test.
+The experimental shared dHash shortlist and split-face matching fallback
+caused a significant identification regression in live testing. The four
+normal artwork crops were competing for a single global shortlist; a strong
+candidate for one crop could be excluded by other crops before ORB ranking.
+The matcher has therefore been restored to its previous per-window SQL
+shortlist and early-stop behavior, as used before the experiment.
 
-For normal cards, the asynchronous matcher now computes all four
-0/180-degree artwork windows and submits their perceptual hashes in a
-single PostgreSQL shortlist query. It uses the minimum candidate hash
-distance for the shared shortlist and then scores ORB matches separately
-for each actual crop. The query logs `[CAM-ART-BATCH]` with database and ORB
-times; measured speedups are **not yet verified**.
-
-Only if ordinary artwork matching fails, an additional bounded split-face
-stage considers two halves of the physical card: top/bottom faces rotated
-90/270 degrees, or left/right faces at 0/180 degrees. Each hypothesis
-extracts a separate artwork window and shares one further database
-shortlist. Split-face acceptance requires at least 18 matching ORB features
-plus the existing hash/ORB validity rule, and successful hypotheses are
-reported as `[CAM-SPLIT-FACE]`. The matching printing still remains
-unverified until additional evidence is present. In this mode the matched
-face, not the complete split-card image, is used for the printing query.
-
-Important limitations: split boundaries are currently half-card
-hypotheses, not detected actual face separators; this is a fallback, not
-a complete parser for every MTG card layout. The combined-hash shortlist
-is heuristic and can exclude a true match. The existing database schema,
-feature version, camera focus controls and explicit deep-search mode are
-unchanged. The new behavior must be compiled under BCC64X and validated
-on real split and borderless card samples before accuracy or performance
-improvements can be claimed.
+The physical card detector (including the borderless silhouette fallback,
+nested panels and outer-frame recovery), fixed-focus default, and camera
+session handling are unchanged. Split-face identification remains unresolved
+and requires a separately validated approach; do not treat the reverted
+experimental split search as active. No local BCC64X build was run.
 
 ## 2026-11-11: outer-frame recovery after card candidate selection
 
