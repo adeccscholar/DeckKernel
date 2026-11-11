@@ -726,6 +726,18 @@ public:
       cv::Mat card;
    };
 
+   /**
+   \brief Release tracked geometry for an explicit next scan.
+   \details Preserve the monotonically increasing event number so late
+      asynchronous results cannot be attributed to a new physical card.
+   \returns Nothing.
+   \throw None.
+   */
+   void Reset() noexcept {
+      m_previousBox.reset();m_activeBox.reset();m_bestFrame.release();
+      m_bestScore=-1.0;m_activeNumber.reset();m_activeFingerprint=0;
+      m_stable=0;m_absent=0;m_acquireMissed=0;
+   }
    [[nodiscard]] unsigned StableCount() const noexcept{return m_stable;}
    [[nodiscard]] static constexpr unsigned RequiredFrames() noexcept{
       return stableFrames;
@@ -1086,6 +1098,7 @@ class Processor {
    deckkernel::camera::CardCapture m_capture;
    // PHASE 06-10: CardIdentity owns Oracle identity and printing options.
    deckkernel::camera::CardIdentity m_identity;
+   std::vector<deckkernel::camera::CollectedCard> m_vecCollected;
    bool m_boUserNavigated{};
    unsigned m_uSelectionSerial{};
    deckkernel::camera::RecognitionPhase m_ePhase{
@@ -1175,6 +1188,11 @@ public:
    [[nodiscard]] std::string const& OracleId() const noexcept {return m_strOracleId;}
    [[nodiscard]] std::string const& ManaCost() const noexcept {return m_strManaCost;}
    [[nodiscard]] bool CardLocked() const noexcept {return m_cardLocked;}
+   [[nodiscard]] bool RecognitionPaused() const noexcept {
+      return m_capture.Frozen();
+   }
+   [[nodiscard]] std::vector<deckkernel::camera::CollectedCard> const&
+      CollectedCards() const noexcept {return m_vecCollected;}
    [[nodiscard]] deckkernel::camera::RecognitionPhase Phase() const noexcept {
       return m_ePhase;
    }
@@ -1227,12 +1245,82 @@ public:
       m_strStatus=std::format("PRINTING SELECT {}/{} - press Enter",
          m_identity.Index()+1,m_identity.Count());
    }
-   void ConfirmCandidate() {
-      // PHASE 10: explicit user choice, not additional optical evidence.
-      if(!m_identity.Confirm())return;
-      SetPhase(deckkernel::camera::RecognitionPhase::Confirmed);
-      m_strStatus="PRINTING MANUALLY CONFIRMED - remove card for next scan";
+   /**
+   \brief Reset only the current scan while retaining collected cards.
+   \details Camera focus calibration is restarted by the caller, and late
+      asynchronous image results remain isolated by their event number.
+   \returns Nothing.
+   \throw None.
+   */
+   void ResetScan() {
+      m_detector.Reset();
+      m_tracker.Reset();
+      m_capture.Clear();
+      m_identity.Clear();
+      m_ocrCard.reset();
+      m_cardLocked=false;m_focusPending=false;m_recognitionReady=false;
+      m_boFocusHintShown=false;m_boUserNavigated=false;
+      m_uSelectionSerial=0;m_uFocusFrames=0;
+      m_flCaptureScore=-1.0;m_flCaptureSharpness=0.0;
+      m_bestNameConfidence=0;m_bestTypeConfidence=0;
+      m_bestRulesConfidence=0;
+      m_liveFrames=0;m_ocrAttempts=0;m_ocrAccepted=false;
+      m_bestSharpness=0.0;m_autoFlipped=false;
+      m_boCapturedRotate180=false;m_iReferenceOrientation=0;
+#if defined(DECKKERNEL_CAMERA_HAS_OCR)
+      m_uPrintingOcrEvent=0;
+#endif
+      m_strName="--";m_strType="--";m_strRules="--";
+      m_strMana="No mana evidence";
+      m_strOrientation="Waiting for card orientation";
+      m_displayCard.release();m_referenceCard.release();
+      m_strReferenceLabel="No database match yet";
+      m_strReferenceDiagnostic.clear();
+      m_strSet.clear();m_strSetName.clear();m_strCollector.clear();
+      m_strLanguage.clear();m_strRarity.clear();m_strPrintingId.clear();
+      m_strOracleId.clear();m_strManaCost.clear();
+      m_strEdition="Edition not verified";
+      SetPhase(deckkernel::camera::RecognitionPhase::Searching);
+   }
+
+   /**
+   \brief Accept the selected printing and start a fresh scan.
+   \details Confirmation explicitly records a user choice, not an
+      additional verified image match. The list survives ResetScan().
+   \returns True if a concrete printing was added to the list.
+   \throw std::bad_alloc If adding the list entry fails.
+   */
+   [[nodiscard]] bool ConfirmCandidate() {
+      if(!m_capture.Frozen() || !m_recognitionReady ||
+         !m_identity.Selected() || !m_identity.Confirm())return false;
       ApplySelectedPrinting();
+      auto const& aSelected=*m_identity.Selected();
+      m_vecCollected.push_back(deckkernel::camera::CollectedCard{
+         aSelected.strName,aSelected.strSet,aSelected.strSetName,
+         aSelected.strCollector,aSelected.strPrintingId,
+         aSelected.strOracleId});
+      std::println("[CAM-COLLECT] added #{} name={} set={} collector={} "
+         "printing={}",m_vecCollected.size(),aSelected.strName,
+         aSelected.strSet,aSelected.strCollector,aSelected.strPrintingId);
+      std::string const strName=aSelected.strName;
+      ResetScan();
+      m_strStatus=std::format("ADDED {} - focus table for next card",strName);
+      return true;
+   }
+
+   /**
+   \brief Discard the active recognition and return to tabletop focusing.
+   \details Does not modify previously accepted cards.
+   \returns True when a frozen or tracked scan was discarded.
+   \throw None.
+   */
+   [[nodiscard]] bool DiscardScan() {
+      if(!m_cardLocked)return false;
+      std::println("[CAM-COLLECT] discarded event={} collected={}",
+         m_ocrCard.value_or(0),m_vecCollected.size());
+      ResetScan();
+      m_strStatus="SCAN DISCARDED - focus table for next card";
+      return true;
    }
    [[nodiscard]] bool Focusing() const noexcept {return m_focusPending;}
    [[nodiscard]] bool TrackingActive() const noexcept {
