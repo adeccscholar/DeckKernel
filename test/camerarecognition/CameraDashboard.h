@@ -14,6 +14,7 @@
 #include "include/core/SkFontStyle.h"
 #include "include/ports/SkTypeface_win.h"
 #include "CameraTypography.h"
+#include "CameraCardSession.h"
 #include "include/core/SkImageInfo.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkRect.h"
@@ -57,6 +58,8 @@ class CameraDashboard {
    bool m_bCardLocked{};
    int m_iNavigation{};
    bool m_boConfirm{};
+   bool m_boReject{};
+   std::vector<deckkernel::camera::CollectedCard> m_vecCollected;
    bool m_boFocusReset{};
    std::string m_strPhase{"01 SEARCHING"};
    std::size_t m_uCandidateIndex{};
@@ -158,7 +161,10 @@ public:
       while(SDL_PollEvent(&aEvent)) {
          if(aEvent.type==SDL_QUIT)m_bRunning=false;
          if(aEvent.type==SDL_KEYDOWN) {
-            if(aEvent.key.keysym.sym==SDLK_ESCAPE)m_bRunning=false;
+            if(aEvent.key.keysym.sym==SDLK_ESCAPE) {
+               if(m_bCardLocked)m_boReject=true;
+               else m_bRunning=false;
+            }
             if(aEvent.key.keysym.sym==SDLK_r)m_bFlip=!m_bFlip;
             if(aEvent.key.keysym.sym==SDLK_f)m_boFocusReset=true;
             if(aEvent.key.keysym.sym==SDLK_LEFT)--m_iNavigation;
@@ -173,6 +179,13 @@ public:
                aEvent.key.keysym.sym==SDLK_KP_MINUS)
                m_cardZoom=std::max(1.0f,m_cardZoom-0.5f);
          }
+         if(aEvent.type==SDL_MOUSEWHEEL && m_bCardLocked &&
+            aEvent.wheel.y!=0)
+            m_iNavigation-=aEvent.wheel.y;
+         if(aEvent.type==SDL_MOUSEBUTTONDOWN && m_bCardLocked) {
+            if(aEvent.button.button==SDL_BUTTON_LEFT)m_boConfirm=true;
+            if(aEvent.button.button==SDL_BUTTON_RIGHT)m_boReject=true;
+         }
       }
       return m_bRunning;
    }
@@ -186,6 +199,23 @@ public:
       bool const boConfirm=m_boConfirm;
       m_boConfirm=false;
       return boConfirm;
+   }
+   [[nodiscard]] bool ConsumeRejection() noexcept {
+      bool const boReject=m_boReject;
+      m_boReject=false;
+      return boReject;
+   }
+   /**
+   \brief Update the persistent list of explicitly accepted cards.
+   \details The list is independent of transient input and DB reference
+      images and remains visible after a scan is accepted or discarded.
+   \param vecCards Cards already accepted during this application session.
+   \returns Nothing.
+   \throw std::bad_alloc If copying the list fails.
+   */
+   void SetCollectedCards(
+      std::vector<deckkernel::camera::CollectedCard> const& vecCards) {
+      m_vecCollected=vecCards;
    }
    [[nodiscard]] bool ConsumeFocusReset() noexcept {
       bool const boReset=m_boFocusReset;
@@ -314,18 +344,24 @@ public:
       SkCanvas* pCanvas=aSurface->getCanvas();
       pCanvas->clear(0xff0a141d);
       float const flGap=18.f;
-      float const flPaneWidth=(iWidth-48.f-flGap)/2.f;
+      float const flListWidth=std::max(230.f,iWidth*0.23f);
+      float const flPaneWidth=
+         (iWidth-32.f-2.f*flGap-flListWidth)/2.f;
       float const flPaneTop=58.f;
       float const flPaneHeight=std::max(190.f,iHeight*0.62f);
       float const flRight=16.f+flPaneWidth+flGap;
+      float const flListX=flRight+flPaneWidth+flGap;
       float const flBottom=flPaneTop+flPaneHeight+16.f;
       float const flFooterHeight=std::max(80.f,iHeight-flBottom-14.f);
+      float const flDetailsWidth=flListX-16.f-flGap;
       Fill(pCanvas,SkRect::MakeXYWH(16.f,flPaneTop,
          flPaneWidth,flPaneHeight),0xff142633);
       Fill(pCanvas,SkRect::MakeXYWH(flRight,flPaneTop,
          flPaneWidth,flPaneHeight),0xff142633);
       Fill(pCanvas,SkRect::MakeXYWH(16.f,flBottom,
-         iWidth-32.f,flFooterHeight),0xff172936);
+         flDetailsWidth,flFooterHeight),0xff172936);
+      Fill(pCanvas,SkRect::MakeXYWH(flListX,flPaneTop,
+         flListWidth,iHeight-flPaneTop-14.f),0xff142633);
       Text(pCanvas,25.f,35.f,"DECKKERNEL  /  IMAGE RECOGNITION",23.f,0xfff5f7fa);
       Text(pCanvas,static_cast<float>(iWidth)-230.f,35.f,
          m_strPhase,17.f,0xff8ed5ee);
@@ -333,6 +369,9 @@ public:
          m_bCardLocked?"INPUT / CAPTURED CARD":"INPUT / CAMERA",
          16.f,0xff8ed5ee);
       Text(pCanvas,flRight+14.f,84.f,"REFERENCE / DATABASE",16.f,0xff8ed5ee);
+      Text(pCanvas,flListX+14.f,84.f,
+         std::format("COLLECTED CARDS ({})",m_vecCollected.size()),
+         15.f,0xff8ed5ee);
       auto const Clip=[&](std::string const& strValue,
          int iMaxPixels)->std::string {
          std::size_t const uMax=static_cast<std::size_t>(
@@ -340,6 +379,27 @@ public:
          if(strValue.size()<=uMax)return strValue;
          return strValue.substr(0,uMax-3)+"...";
       };
+      // Accepted cards are stable across subsequent scan cycles.
+      // Display the newest entries if the column cannot fit every item.
+      std::size_t const uVisible=static_cast<std::size_t>(
+         std::max(1,static_cast<int>(
+            (iHeight-flPaneTop-132.f)/29.f)));
+      std::size_t const uStart=m_vecCollected.size()>uVisible?
+         m_vecCollected.size()-uVisible:0;
+      for(std::size_t uIndex=uStart;uIndex<m_vecCollected.size();
+         ++uIndex) {
+         auto const& aCard=m_vecCollected[uIndex];
+         std::string const strSet=aCard.strSetName.empty()?
+            aCard.strSet:aCard.strSetName;
+         Text(pCanvas,flListX+14.f,
+            flPaneTop+65.f+static_cast<float>(uIndex-uStart)*29.f,
+            Clip(std::format("{}. {} ({})",uIndex+1,aCard.strName,
+               strSet),static_cast<int>(flListWidth-28.f)),
+            14.f,0xfff5f7fa);
+      }
+      Text(pCanvas,flListX+14.f,iHeight-34.f,
+         "Enter/click: add | Esc/right-click: reject",
+         11.f,0xff9dddb9);
       if(m_bCardLocked) {
          Text(pCanvas,30.f,flPaneTop+flPaneHeight-18.f,
             "Captured: locked | "+m_strOrientation,14.f,0xff9dddb9);
@@ -392,13 +452,16 @@ public:
          12.f,0xff9dddb9);
 
       Text(pCanvas,flLeftX,flBottom+146.f,
-         Clip("Recognition: "+m_strStatus,iWidth-70),
+         Clip("Recognition: "+m_strStatus,
+            static_cast<int>(flDetailsWidth-30.f)),
          15.f,0xffffcc79);
       Text(pCanvas,flLeftX,flBottom+171.f,
-         Clip("Reference: "+m_strReferenceDiagnostic,iWidth-70),
+         Clip("Reference: "+m_strReferenceDiagnostic,
+            static_cast<int>(flDetailsWidth-30.f)),
          13.f,0xff9dddb9);
       Text(pCanvas,flLeftX,flBottom+195.f,
-         Clip("Next: "+m_strGuidance,iWidth-70),
+         Clip("Next: "+m_strGuidance,
+            static_cast<int>(flDetailsWidth-30.f)),
          13.f,0xff8ed5ee);
       // Reuse the SDL background raster; actual card textures are rendered above it.
       SkPixmap aPixels;
