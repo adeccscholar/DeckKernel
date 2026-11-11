@@ -2781,6 +2781,26 @@ void SelfTest() {
    if(FindNearbyOuterFrame(aWithoutOuter,arrPrintFrameCorners))
       throw std::runtime_error(
          "outer frame was inferred without independently supported edges");
+   // Slight convexity of the real left/right border must still provide
+   // sufficient longitudinal support for the outer-frame probe.
+   cv::Mat aBowedEdges(640,640,CV_8UC1,cv::Scalar(0));
+   cv::rectangle(aBowedEdges,aPrintRect,cv::Scalar(255),1);
+   std::vector<cv::Point> vecBowedRight,vecBowedLeft;
+   for(int iY=88;iY<=447;iY+=3) {
+      double const flProgress=static_cast<double>(iY-88)/359.0;
+      int const iBow=static_cast<int>(
+         std::round(2.0*std::sin(CV_PI*flProgress)));
+      vecBowedRight.emplace_back(430+iBow,iY);
+      vecBowedLeft.emplace_back(169-iBow,iY);
+   }
+   cv::polylines(aBowedEdges,vecBowedRight,false,cv::Scalar(255),1);
+   cv::polylines(aBowedEdges,vecBowedLeft,false,cv::Scalar(255),1);
+   auto const optBowed=FindNearbyOuterFrame(
+      aBowedEdges,arrPrintFrameCorners);
+   if(!optBowed || (*optBowed)[1].x<=419 ||
+      (*optBowed)[0].x>=180)
+      throw std::runtime_error(
+         "slightly convex physical card sides were not recovered");
    // DEMO TEST 01: a genuine standard card contains artwork, title, a
    // type separator and printed text. Its artwork is not a physical card.
    cv::Mat aFramedScene(960,1500,CV_8UC3,cv::Scalar(26,31,39));
