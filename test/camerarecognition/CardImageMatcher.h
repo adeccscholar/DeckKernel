@@ -1162,7 +1162,7 @@ namespace deckkernel::camera {
                if(Cancelled(aTask.uEvent))return CardImageMatchResult{aTask.uEvent};
                // Normal mode evaluates the measured crop first. A strong
                // illustration match need not pay for three other SQL scans.
-               if(optArtworkChoice && !deckkernel::camera::TraceEnabled() &&
+               if(optArtworkChoice &&
                   optArtworkChoice->aRanked.iOrb>=25 &&
                   optArtworkChoice->aRanked.iHash<=20)break;
                ArtworkRegion const aRegion=Artwork(aOriented,iVariant);
@@ -1248,8 +1248,8 @@ namespace deckkernel::camera {
          // In normal live scanning, a global full-card search over millions
          // of images is expensive and produces frame/text false positives.
          // Return quickly and let frozen-image OCR be the last resort.
-         // --verbose retains the legacy global fallback for diagnosis.
-         if(!deckkernel::camera::TraceEnabled())
+         // --deep-search explicitly enables the slow legacy global fallback.
+         if(!deckkernel::camera::DeepSearchEnabled())
             return CardImageMatchResult{aTask.uEvent,
                "ARTWORK NOT FOUND - OCR fallback", "Visual evidence insufficient"};
          // Both artwork orientations failed: the full card becomes the fallback.
