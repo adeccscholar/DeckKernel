@@ -1965,6 +1965,9 @@ class CameraWindow {
    cv::Mat m_rectifiedPixels;
    bool m_flip180{};
    bool m_focusReset{};
+   bool m_boConfirm{};
+   bool m_boReject{};
+   int m_iNavigation{};
    static void PaintImage(HDC dc,cv::Mat const& image,RECT const& area) {
       if(image.empty())return;
       int const availableWidth=area.right-area.left;
@@ -2015,6 +2018,27 @@ class CameraWindow {
       }
       if(msg==WM_KEYDOWN && self && wp==static_cast<WPARAM>('F')) {
          self->m_focusReset=true;
+         return 0;
+      }
+      if(msg==WM_KEYDOWN && self) {
+         if(wp==VK_LEFT)--self->m_iNavigation;
+         if(wp==VK_RIGHT)++self->m_iNavigation;
+         if(wp==VK_RETURN)self->m_boConfirm=true;
+         if(wp==VK_ESCAPE)self->m_boReject=true;
+         if(wp==VK_LEFT || wp==VK_RIGHT || wp==VK_RETURN ||
+            wp==VK_ESCAPE)return 0;
+      }
+      if(msg==WM_MOUSEWHEEL && self) {
+         self->m_iNavigation-=
+            GET_WHEEL_DELTA_WPARAM(wp)/WHEEL_DELTA;
+         return 0;
+      }
+      if(msg==WM_LBUTTONDOWN && self) {
+         self->m_boConfirm=true;
+         return 0;
+      }
+      if(msg==WM_RBUTTONDOWN && self) {
+         self->m_boReject=true;
          return 0;
       }
       if(msg==WM_CLOSE){DestroyWindow(hwnd);return 0;}
@@ -2088,6 +2112,21 @@ public:
       bool const boReset=m_focusReset;
       m_focusReset=false;
       return boReset;
+   }
+   [[nodiscard]] int ConsumeNavigation() noexcept {
+      int const iDelta=m_iNavigation;
+      m_iNavigation=0;
+      return iDelta;
+   }
+   [[nodiscard]] bool ConsumeConfirmation() noexcept {
+      bool const boResult=m_boConfirm;
+      m_boConfirm=false;
+      return boResult;
+   }
+   [[nodiscard]] bool ConsumeRejection() noexcept {
+      bool const boResult=m_boReject;
+      m_boReject=false;
+      return boResult;
    }
    bool Messages() {
       MSG message{};
