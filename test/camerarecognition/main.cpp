@@ -38,6 +38,7 @@
 #endif
 #if defined(DECKKERNEL_CAMERA_HAS_VIDEOIO)
 #include <opencv2/videoio.hpp>
+#include "CameraTableFocus.h"
 #endif
 #include <algorithm>
 #include <array>
@@ -2611,6 +2612,8 @@ void Usage() {
    std::println("   optional: --ocr --tessdata=PATH_TO_TESSDATA (eng.traineddata required)");
    std::println("   camera: indexed artwork/printing recognition enabled by default");
    std::println("   optional: --artwork [--artwork-limit=100] or --no-artwork");
+   std::println("   camera focus: --table-focus (default), --continuous-autofocus or --focus-position=N");
+   std::println("   press F to re-calibrate the focus at the tabletop before searching");
    std::println("   optional: --verbose (periodic camera and OCR console diagnostics)");
 }
 }
@@ -2618,6 +2621,8 @@ int main(int argc,char** argv) {
    try{
       bool selfTest=false,save=false,verbose=false;
       bool ocr=false,artwork=false,noArtwork=false;
+      bool tableFocus=true;
+      std::optional<int> manualFocusPosition;
       unsigned artworkLimit=100;
       std::string tessdata;
       std::string backend="any";
@@ -2637,6 +2642,10 @@ int main(int argc,char** argv) {
          else if(arg=="--ocr")ocr=true;
          else if(arg=="--artwork")artwork=true;
          else if(arg=="--no-artwork")noArtwork=true;
+         else if(arg=="--table-focus")tableFocus=true;
+         else if(arg=="--continuous-autofocus")tableFocus=false;
+         else if(arg.starts_with("--focus-position="))
+            manualFocusPosition=CameraIndex(arg.substr(17));
          else if(arg.starts_with("--artwork-limit="))artworkLimit=static_cast<unsigned>(CameraIndex(arg.substr(16)));
          else if(arg.starts_with("--tessdata="))tessdata=arg.substr(11);
          else if(arg.starts_with("--backend="))backend=arg.substr(10);
@@ -2816,11 +2825,12 @@ int main(int argc,char** argv) {
          capture.get(cv::CAP_PROP_CONTRAST),
          capture.get(cv::CAP_PROP_SATURATION),
          capture.get(cv::CAP_PROP_WB_TEMPERATURE));
-      // Camera-side focus is driver/backend dependent. Enable continuous AF
-      // only if supported; image-space sharpness selection always remains on.
-      bool const bAutoFocus=capture.set(cv::CAP_PROP_AUTOFOCUS,1.0);
-      std::println("[CAM-FOCUS] autofocus-request accepted={} reported={}",
-         bAutoFocus,capture.get(cv::CAP_PROP_AUTOFOCUS));
+      // PHASE 00: pre-focus on the expected horizontal table plane BEFORE
+      // physical card recognition. Keep the previous continuous AF as a
+      // fallback for cameras which cannot report or lock manual focus.
+      deckkernel::camera::TablePlaneFocus aTableFocus(
+         tableFocus,manualFocusPosition);
+      aTableFocus.Begin(capture);
 #if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
       CameraDashboard preview;
 #else
@@ -2843,10 +2853,13 @@ int main(int argc,char** argv) {
          failures=0;
          ++count;
          FrameSignal const signal=MeasureFrame(frame);
+         // Pre-focus independently of contours: a blurred table card must
+         // never be required to pass layout recognition first.
+         bool const boFocusCalibrating=aTableFocus.Observe(capture,frame);
          // One contour detection/rectification per frame. Use precisely the
          // same pixels for the side panel, the OCR and the artwork worker.
          CardDetectionDiagnostics detection;
-         auto found=signal.nonblack?
+         auto found=(signal.nonblack && !boFocusCalibrating)?
             processor.Observe(frame,&detection):
             std::optional<FoundCard>{};
          bool const flip=preview.Flip180();
@@ -2857,7 +2870,8 @@ int main(int argc,char** argv) {
          if(found&&flip)FlipRectifiedCard(*found);
          if(signal.nonblack) {
             blackFrames=0;
-            processor.Process(found,frame,processor.TrackingActive());
+            if(!boFocusCalibrating)
+               processor.Process(found,frame,processor.TrackingActive());
          } else {
             ++blackFrames;
          }
@@ -2872,7 +2886,14 @@ int main(int argc,char** argv) {
          processor.PollPrintingOcr();
          // Visual diagnostic: mark the four corners that pass card geometry checks.
          cv::Mat annotated=frame.clone();
-         if(found && !processor.CardLocked()) {
+         if(boFocusCalibrating) {
+            cv::rectangle(annotated,
+               deckkernel::camera::TablePlaneFocus::FocusRegion(frame.size()),
+               cv::Scalar(0,180,250),3,cv::LINE_AA);
+            cv::putText(annotated,"TABLE FOCUS CALIBRATION",cv::Point(12,26),
+               cv::FONT_HERSHEY_SIMPLEX,0.7,
+               cv::Scalar(0,180,250),2,cv::LINE_AA);
+         } else if(found && !processor.CardLocked()) {
             for(unsigned i=0;i<4;++i)
                cv::line(annotated,found->corners[i],found->corners[(i+1)%4],
                   cv::Scalar(0,220,0),2,cv::LINE_AA);
@@ -2886,11 +2907,13 @@ int main(int argc,char** argv) {
                cv::FONT_HERSHEY_SIMPLEX,0.7,cv::Scalar(0,170,240),2,cv::LINE_AA);
          }
 #if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
-         std::string qualityStatus=processor.CardLocked()?
+         std::string qualityStatus=boFocusCalibrating?
+            aTableFocus.Status():processor.CardLocked()?
             "Captured frame retained; no further card search until removal":
             (found?"Card boundary found; stabilizing capture":
-               "Looking for a card boundary");
-         preview.SetPhase(deckkernel::camera::PhaseName(processor.Phase()));
+               aTableFocus.Status()+" | Looking for a card boundary");
+         preview.SetPhase(boFocusCalibrating?
+            "00 TABLE FOCUS":deckkernel::camera::PhaseName(processor.Phase()));
          preview.SetFields(processor.Name(),processor.Type(),processor.Rules(),
             processor.Mana(),processor.Status(),processor.Edition(),
             flip?"Manual 180 deg / "+processor.Orientation():processor.Orientation(),
