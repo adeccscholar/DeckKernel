@@ -1414,11 +1414,15 @@ public:
          aRead=m_printingOcr.get();
       }
       catch(std::exception const& aException) {
-         if(!m_identity.Confirmed()) {
+         if(m_ocrCard && *m_ocrCard==m_uPrintingOcrEvent &&
+            !m_identity.Confirmed()) {
             SetPhase(deckkernel::camera::RecognitionPhase::Selecting);
             m_strStatus=std::format("PRINTING OCR unavailable: {}",
                aException.what());
          }
+         else if(m_ocrCard && !m_identity.Confirmed() &&
+            !m_boUserNavigated && m_identity.Count()>1)
+            StartPrintingOcr();
          return;
       }
       auto const& [strRecognized,iConfidence]=aRead;
