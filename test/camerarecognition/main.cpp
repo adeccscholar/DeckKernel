@@ -2008,6 +2008,33 @@ public:
 #endif
 
 void SelfTest() {
+   // REGRESSION: a printed collector strip just OUTSIDE the detected
+   // inner frame must be visible in the source-pixel overscan, while the
+   // canonical artwork/full-card image remains geometrically unchanged.
+   cv::Mat aMarginSource(950,950,CV_8UC3,cv::Scalar(25,30,36));
+   cv::rectangle(aMarginSource,cv::Rect(300,220,300,420),
+      cv::Scalar(225,235,245),-1);
+   cv::rectangle(aMarginSource,cv::Rect(305,633,290,6),
+      cv::Scalar(0,0,255),-1);
+   std::array<cv::Point,4> const arrInnerCorners{{
+      {300,230},{600,230},{600,630},{300,630}
+   }};
+   cv::Mat const aCanonical=RectifyForOcr(
+      aMarginSource,arrInnerCorners,false);
+   cv::Mat const aOverscan=RectifyWithMargin(
+      aMarginSource,arrInnerCorners,false);
+   cv::Mat aCanonicalRed,aOverscanRed;
+   cv::inRange(aCanonical,cv::Scalar(0,0,200),
+      cv::Scalar(45,45,255),aCanonicalRed);
+   cv::inRange(aOverscan,cv::Scalar(0,0,200),
+      cv::Scalar(45,45,255),aOverscanRed);
+   if(aOverscan.cols<=aCanonical.cols ||
+      aOverscan.rows<=aCanonical.rows ||
+      cv::countNonZero(aCanonicalRed)!=0 ||
+      cv::countNonZero(aOverscanRed)<15)
+      throw std::runtime_error(
+         "overscan did not retain collector strip outside inner card frame");
+
    // DEMO TEST 04/05: the capture becomes immutable after Freeze().
    deckkernel::camera::CardCapture aCapture;
    cv::Mat aInitial(672,480,CV_8UC3,cv::Scalar(75,115,155));
