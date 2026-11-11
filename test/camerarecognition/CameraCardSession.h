@@ -79,6 +79,14 @@ namespace deckkernel::camera {
       unsigned m_uSamples{};
       bool m_boFrozen{};
       std::chrono::steady_clock::time_point m_started{};
+      std::chrono::steady_clock::time_point m_lastImproved{};
+      double m_flLastImprovedDetail{};
+      bool m_boObservedFocusImprovement{};
+
+   public:
+      enum class FreezeReason { Stabilized, Deadline };
+
+   private:
    public:
       /**
       \brief Start a new capture of a physical card.
@@ -91,6 +99,7 @@ namespace deckkernel::camera {
          cv::Mat const& aOverscan={}) {
          Clear();
          m_started=std::chrono::steady_clock::now();
+         m_lastImproved=m_started;
          static_cast<void>(Offer(aInitial,iNativeWidth,aOverscan));
       }
 
@@ -109,6 +118,14 @@ namespace deckkernel::camera {
          ++m_uSamples;
          if(!m_aBest.empty() && aMetrics.score<=m_flBestScore)
             return false;
+         // A better total score is not necessarily better printed detail.
+         // Track genuine detail improvements separately from exposure changes.
+         if(m_aBest.empty() ||
+            aMetrics.detailSharpness>m_flLastImprovedDetail*1.08) {
+            if(!m_aBest.empty())m_boObservedFocusImprovement=true;
+            m_flLastImprovedDetail=aMetrics.detailSharpness;
+            m_lastImproved=std::chrono::steady_clock::now();
+         }
          m_flBestScore=aMetrics.score;
          m_flSharpness=aMetrics.sharpness;
          m_bestMetrics=aMetrics;
@@ -120,21 +137,35 @@ namespace deckkernel::camera {
       }
 
       /**
-      \brief Finish the bounded image sampling phase.
-      \details Quality is diagnostic evidence, never a condition that can
-      prevent searching a physically captured card. We use at least eight
-      observations when available, but stop after three seconds even if
-      the tracker occasionally loses the card contour.
-      \returns True after enough samples and settling, or at the deadline.
+      \brief Determine whether the best frame is ready to become immutable.
+      \details Early freezing requires genuinely usable printed detail, at
+         least eight observations, and no meaningful detail improvement for
+         350 milliseconds. Weak frames remain eligible for the three-second
+         deadline, preventing a permanent camera stall. No extra time is
+         imposed when the first good focus is already stable.
+      \returns True when the image is stable or the deadline is reached.
       \throw None.
       */
       [[nodiscard]] bool Ready() const noexcept {
+         using namespace std::chrono;
+         auto const aNow=steady_clock::now();
+         double const flElapsed=duration<double>(aNow-m_started).count();
+         if(flElapsed>=3.0)return true;
+         if(m_uSamples<8 || flElapsed<0.55 ||
+            !m_bestMetrics.UsableForMatching())return false;
+         return duration<double>(aNow-m_lastImproved).count()>=0.35;
+      }
+
+      /**
+      \brief Report why sampling can finish without altering image evidence.
+      \returns Stabilized or the fixed capture deadline.
+      \throw None.
+      */
+      [[nodiscard]] FreezeReason Reason() const noexcept {
          double const flElapsed=std::chrono::duration<double>(
             std::chrono::steady_clock::now()-m_started).count();
-         // PHASE 04: the prior UsableForMatching() hard gate could hold a
-         // clearly readable physical card in FOCUSING forever.
-         // The index must receive the best available captured image.
-         return (m_uSamples>=8 && flElapsed>=1.5) || flElapsed>=3.0;
+         return flElapsed>=3.0?FreezeReason::Deadline:
+            FreezeReason::Stabilized;
       }
 
       /**
@@ -174,6 +205,9 @@ namespace deckkernel::camera {
          m_aFrozen.release();m_aFrozenOverscan.release();m_aBottom.release();
          m_flBestScore=-1.0;m_flSharpness=0.0;m_uSamples=0;
          m_bestMetrics={};
+         m_flLastImprovedDetail=0.0;
+         m_boObservedFocusImprovement=false;
+         m_lastImproved={};
          m_boFrozen=false;
       }
 
@@ -200,6 +234,9 @@ namespace deckkernel::camera {
       [[nodiscard]] double Sharpness() const noexcept{return m_flSharpness;}
       [[nodiscard]] double Score() const noexcept{return m_flBestScore;}
       [[nodiscard]] unsigned Samples() const noexcept{return m_uSamples;}
+      [[nodiscard]] bool FocusImproved() const noexcept {
+         return m_boObservedFocusImprovement;
+      }
       [[nodiscard]] deckkernel_camera::quality::Metrics const& Quality()
          const noexcept {return m_bestMetrics;}
       [[nodiscard]] bool UsableForMatching() const noexcept {
