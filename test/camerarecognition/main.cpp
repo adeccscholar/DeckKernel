@@ -1100,6 +1100,7 @@ class Processor {
    deckkernel::camera::CardIdentity m_identity;
    std::vector<deckkernel::camera::CollectedCard> m_vecCollected;
    bool m_boUserNavigated{};
+   bool m_boArtworkRecognized{};
    unsigned m_uSelectionSerial{};
    deckkernel::camera::RecognitionPhase m_ePhase{
       deckkernel::camera::RecognitionPhase::Searching};
@@ -1260,6 +1261,7 @@ public:
       m_ocrCard.reset();
       m_cardLocked=false;m_focusPending=false;m_recognitionReady=false;
       m_boFocusHintShown=false;m_boUserNavigated=false;
+      m_boArtworkRecognized=false;
       m_uSelectionSerial=0;m_uFocusFrames=0;
       m_flCaptureScore=-1.0;m_flCaptureSharpness=0.0;
       m_bestNameConfidence=0;m_bestTypeConfidence=0;
@@ -1292,9 +1294,10 @@ public:
    */
    [[nodiscard]] bool ConfirmCandidate() {
       if(!m_capture.Frozen() || !m_recognitionReady ||
+         !m_boArtworkRecognized ||
          !m_identity.Selected() || !m_identity.Confirm()) {
          if(m_capture.Frozen())
-            m_strStatus="NO PRINTING SELECTED - wait or discard this scan";
+            m_strStatus="ARTWORK/PRINTING NOT READY - wait or discard";
          return false;
       }
       ApplySelectedPrinting();
@@ -1335,13 +1338,14 @@ public:
       if(m_focusPending)return m_boFocusHintShown?
          "Move card closer or adjust focus; physical card remains locked":
          "Autofocus settling; selecting the sharpest frame";
-      if(m_identity.Count()>0 && m_recognitionReady)
+      if(m_identity.Count()>0 && m_recognitionReady &&
+         m_boArtworkRecognized)
          return std::format(
             "Left/right or wheel: printing {}/{} | Enter/click: add | Esc/right-click: discard",
             m_identity.Index()+1,m_identity.Count());
       if(!m_recognitionReady)
          return "Image search active; Esc/right-click discards this scan";
-      return "No printing candidate; Esc/right-click to rescan";
+      return "Artwork or printing not established; Esc/right-click to rescan";
    }
    /**
    \brief Normalize printed set codes and collector numbers for OCR comparison.
@@ -1419,7 +1423,15 @@ public:
       }
       auto const& [strRecognized,iConfidence]=aRead;
       if(!m_ocrCard || *m_ocrCard!=m_uPrintingOcrEvent ||
-         m_identity.Confirmed() || m_boUserNavigated)return;
+         m_identity.Confirmed() || m_boUserNavigated) {
+         // A discarded scan may still finish OCR after the new event has
+         // started. Drain that future, then start the NEW card's OCR if
+         // it was delayed by the previous valid future.
+         if(m_ocrCard && !m_identity.Confirmed() &&
+            !m_boUserNavigated && m_identity.Count()>1)
+            StartPrintingOcr();
+         return;
+      }
       std::string const strNormalized=NormalizePrintingText(strRecognized);
       std::optional<std::size_t> optMatch;
       bool boMultiple{};
@@ -1506,6 +1518,9 @@ public:
          }
          return;
       }
+      if(!result->boCandidateSelection &&
+         result->strStatus.starts_with("ARTWORK FOUND"))
+         m_boArtworkRecognized=true;
       m_strStatus=result->strStatus;
       m_strEdition=result->strEdition;
       if(!result->boCandidateSelection)
@@ -1888,6 +1903,7 @@ public:
       m_focusStarted=std::chrono::steady_clock::now();
       m_identity.Clear();
       m_boUserNavigated=false;
+      m_boArtworkRecognized=false;
       m_uSelectionSerial=0;
       SetPhase(deckkernel::camera::RecognitionPhase::Tracking);
       SetPhase(deckkernel::camera::RecognitionPhase::Focusing);
