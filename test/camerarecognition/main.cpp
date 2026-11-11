@@ -2980,12 +2980,12 @@ void Usage() {
    std::println("   optional: --artwork [--artwork-limit=100] or --no-artwork");
    std::println("   camera focus: --table-focus (default), --continuous-autofocus or --focus-position=N");
    std::println("   press F to re-calibrate the focus at the tabletop before searching");
-   std::println("   optional: --verbose (periodic camera and OCR console diagnostics)");
+   std::println("   optional: --verbose (diagnostics only), --deep-search (slow global full-card fallback)");
 }
 }
 int main(int argc,char** argv) {
    try{
-      bool selfTest=false,save=false,verbose=false;
+      bool selfTest=false,save=false,verbose=false,deepSearch=false;
       bool ocr=false,artwork=false,noArtwork=false;
       bool tableFocus=true;
       std::optional<int> manualFocusPosition;
@@ -3004,6 +3004,7 @@ int main(int argc,char** argv) {
          if(arg=="--help"){Usage();return 0;}
          if(arg=="--self-test")selfTest=true;
          else if(arg=="--verbose")verbose=true;
+         else if(arg=="--deep-search")deepSearch=true;
          else if(arg=="--save-events")save=true;
          else if(arg=="--ocr")ocr=true;
          else if(arg=="--artwork")artwork=true;
@@ -3028,6 +3029,7 @@ int main(int argc,char** argv) {
          else throw std::runtime_error("unknown argument (use --help)");
       }
       deckkernel::camera::SetTraceEnabled(verbose);
+      deckkernel::camera::SetDeepSearchEnabled(deepSearch);
       if(selfTest){SelfTest();return 0;}
       if(probeCamera) {
 #if defined(DECKKERNEL_CAMERA_HAS_VIDEOIO)
