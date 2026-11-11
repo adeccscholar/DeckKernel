@@ -623,6 +623,51 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
    if(flip180)cv::rotate(result,result,cv::ROTATE_180);
    return result;
 }
+/**
+\brief Preserve the physical margins outside the detected frame contour.
+\details The canonical crop maps detected corners to the image boundary;
+if those corners are on an interior frame, the collector-number strip
+may be excluded. Here the four SOURCE points remain unchanged, but are
+projected with an inset destination rectangle. Sampling the additional
+6% border retrieves surrounding camera pixels, not artificial padding.
+\param aSource Original source-frame pixels.
+\param arrCorners The exact physical quadrilateral used for canonical crop.
+\param boRotate180 Apply the same session orientation as the canonical crop.
+\returns Independently rectified overscan view for OCR and display.
+\throw cv::Exception If the transform fails.
+\note Source pixels outside the camera sensor cannot be reconstructed.
+*/
+[[nodiscard]] cv::Mat RectifyWithMargin(cv::Mat const& aSource,
+   std::array<cv::Point,4> const& arrCorners,bool boRotate180) {
+   if(aSource.empty())return {};
+   std::array<cv::Point2f,4> arrSource{};
+   for(std::size_t uIndex=0;uIndex<4;++uIndex)
+      arrSource[uIndex]=cv::Point2f(
+         static_cast<float>(arrCorners[uIndex].x),
+         static_cast<float>(arrCorners[uIndex].y));
+   double const flWidth=std::max(
+      cv::norm(arrSource[0]-arrSource[1]),
+      cv::norm(arrSource[2]-arrSource[3]));
+   int const iWidth=std::clamp(static_cast<int>(flWidth),480,1120);
+   int const iHeight=iWidth*7/5;
+   int const iMarginX=std::max(1,iWidth*6/100);
+   int const iMarginY=std::max(1,iHeight*6/100);
+   std::array<cv::Point2f,4> const arrTarget{{
+      {static_cast<float>(iMarginX),static_cast<float>(iMarginY)},
+      {static_cast<float>(iMarginX+iWidth-1),static_cast<float>(iMarginY)},
+      {static_cast<float>(iMarginX+iWidth-1),
+         static_cast<float>(iMarginY+iHeight-1)},
+      {static_cast<float>(iMarginX),
+         static_cast<float>(iMarginY+iHeight-1)}
+   }};
+   cv::Mat aOverscan;
+   cv::warpPerspective(aSource,aOverscan,
+      cv::getPerspectiveTransform(arrSource.data(),arrTarget.data()),
+      cv::Size(iWidth+2*iMarginX,iHeight+2*iMarginY),
+      cv::INTER_LINEAR,cv::BORDER_CONSTANT,cv::Scalar(0,0,0));
+   if(boRotate180)cv::rotate(aOverscan,aOverscan,cv::ROTATE_180);
+   return aOverscan;
+}
 // Manual 180-degree correction of an upside-down card. Use the same pixels
 // for OCR, artwork matching, saved evidence and the diagnostic preview.
 // This is NOT automatic orientation detection.
@@ -1237,7 +1282,7 @@ public:
       // PHASE 08: use the reference-confirmed orientation of the frozen
       // display copy. CardCapture itself remains immutable throughout.
       if(m_displayCard.empty())return;
-      int const iTop=m_displayCard.rows*85/100;
+      int const iTop=m_displayCard.rows*80/100;
       cv::Mat const aMargin=m_displayCard(cv::Rect(
          0,iTop,m_displayCard.cols,m_displayCard.rows-iTop)).clone();
       std::string const strData=m_strPrintingOcrData;
@@ -1340,7 +1385,7 @@ public:
          m_capture.Frozen() &&
          result->iOrientation!=m_iReferenceOrientation) {
          m_iReferenceOrientation=result->iOrientation;
-         m_displayCard=m_capture.Image().clone();
+         m_displayCard=m_capture.Overscan().clone();
          if(m_iReferenceOrientation==180)
             cv::rotate(m_displayCard,m_displayCard,cv::ROTATE_180);
          m_strOrientation=std::format(
@@ -1472,9 +1517,12 @@ public:
          // The tracker owns the four outer corners, not artwork detection.
          // Check that we are still tracking approximately the same full-card
          // footprint before offering a new registered frame.
+         cv::Mat const aExtended=aSource.empty()?cv::Mat{}:
+            RectifyWithMargin(aSource,pCandidate->corners,
+               m_boCapturedRotate180 != m_manualOrientation);
          if(m_capture.Offer(aImage,
-            NativeCardWidth(pCandidate->corners))) {
-            m_displayCard=m_capture.Image();
+            NativeCardWidth(pCandidate->corners),aExtended)) {
+            m_displayCard=m_capture.Overscan();
             if(m_boFocusHintShown)
                m_strStatus="FOCUSING - received an improved card frame";
          }
@@ -1510,7 +1558,7 @@ public:
          m_strStatus="CAPTURE FAILED - no usable card image";
          return;
       }
-      m_displayCard=m_capture.Image().clone();
+      m_displayCard=m_capture.Overscan().clone();
       SetPhase(deckkernel::camera::RecognitionPhase::Frozen);
       if(m_save) {
          std::filesystem::create_directories(m_root);
@@ -1523,6 +1571,15 @@ public:
          else
             std::println("[CAM-EVIDENCE] frozen-search-input={}",
                aPath.string());
+         auto const aOverscanPath=m_root/std::format(
+            "event-{:06}-frozen-overscan.png",*m_ocrCard);
+         if(!cv::imwrite(aOverscanPath.string(),m_capture.Overscan()))
+            std::println(std::cerr,
+               "[CAM-EVIDENCE] could not save overscan {}",
+               aOverscanPath.string());
+         else
+            std::println("[CAM-EVIDENCE] frozen-overscan={}",
+               aOverscanPath.string());
       }
       auto const& aQuality=m_capture.Quality();
       std::println("[CAM-QUALITY] card={} source={}x{} rectified={}x{} "
@@ -1765,9 +1822,14 @@ public:
       if(m_ocr)m_strMana=ReportManaColorCandidates(event->card,event->number,m_verbose);
 #endif
       // PHASE 04: initially collect the normalized card, then sharper frames.
+      cv::Mat const aInitialOverscan=
+         (!sourceFrame.empty() && found)?
+            RectifyWithMargin(sourceFrame,found->corners,
+               m_boCapturedRotate180 != m_manualOrientation):cv::Mat{};
       m_capture.Begin(event->card,
-         found?NativeCardWidth(found->corners):event->card.cols);
-      m_displayCard=m_capture.Image();
+         found?NativeCardWidth(found->corners):event->card.cols,
+         aInitialOverscan);
+      m_displayCard=m_capture.Overscan();
       m_flCaptureScore=m_capture.Score();
       m_flCaptureSharpness=m_capture.Sharpness();
       m_uFocusFrames=m_capture.Samples();
