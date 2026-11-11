@@ -181,7 +181,7 @@ namespace deckkernel::camera {
          connection_ty aConnection(PQconnectdbParams(arrKeys, arrValues, 0));
          double const flElapsed=std::chrono::duration<double>(
             std::chrono::steady_clock::now()-aStart).count();
-         std::println("[CAM-DB] connect elapsed={:.2f}s status={}",
+         deckkernel::camera::Trace("[CAM-DB] connect elapsed={:.2f}s status={}",
             flElapsed,aConnection && PQstatus(aConnection.get())==CONNECTION_OK?
                "ready":"failed");
          if(!aConnection || PQstatus(aConnection.get()) != CONNECTION_OK) {
@@ -338,7 +338,7 @@ namespace deckkernel::camera {
          cv::Mat aRaw;
          aOrb->detectAndCompute(aImage,cv::noArray(),vecRaw,aRaw);
          if(aRaw.rows>=40) {
-            std::println("[CAM-ORB-QUERY] raw={} enhanced=skipped source={}x{}",
+            deckkernel::camera::Trace("[CAM-ORB-QUERY] raw={} enhanced=skipped source={}x{}",
                aRaw.rows,aImage.cols,aImage.rows);
             return aRaw;
          }
@@ -357,7 +357,7 @@ namespace deckkernel::camera {
          std::vector<cv::KeyPoint> vecImproved;
          aOrb->detectAndCompute(aEnhanced,cv::noArray(),
             vecImproved,aImproved);
-         std::println("[CAM-ORB-QUERY] raw={} enhanced={} source={}x{} "
+         deckkernel::camera::Trace("[CAM-ORB-QUERY] raw={} enhanced={} source={}x{} "
             "mode={}",aRaw.rows,aImproved.rows,
             aImage.cols,aImage.rows,
             aImproved.rows>aRaw.rows?"clahe":"raw");
@@ -501,7 +501,7 @@ namespace deckkernel::camera {
          }
          double const flTotalSeconds=std::chrono::duration<double>(
             std::chrono::steady_clock::now()-aQueryStart).count();
-         std::println("[CAM-ART-QUERY] shortlisted={} sql={:.2f}s "
+         deckkernel::camera::Trace("[CAM-ART-QUERY] shortlisted={} sql={:.2f}s "
             "orb={:.2f}s best-orb={} best-hash={}",
             PQntuples(aRows.get()),flDbSeconds,
             flTotalSeconds-flDbSeconds,
@@ -656,7 +656,7 @@ namespace deckkernel::camera {
          std::sort(vecMatches.begin(), vecMatches.end(), Better);
          double const flTotalSeconds=std::chrono::duration<double>(
             std::chrono::steady_clock::now()-aQueryStart).count();
-         std::println("[CAM-PRINT-QUERY] shortlist={} distinct={} "
+         deckkernel::camera::Trace("[CAM-PRINT-QUERY] shortlist={} distinct={} "
             "sql={:.2f}s orb={:.2f}s restricted={}",
             PQntuples(aRows.get()),vecMatches.size(),flDbSeconds,
             flTotalSeconds-flDbSeconds,optArtwork.has_value());
@@ -835,7 +835,7 @@ namespace deckkernel::camera {
                aCard,aReference.aReferenceImage);
             aMatch.iArtworkMatches=FullCardArtworkMatches(
                aCard,aReference.aReferenceImage);
-            std::println("[CAM-FULL-ART] asset={} name={} "
+            deckkernel::camera::Trace("[CAM-FULL-ART] asset={} name={} "
                "full-orb={} art-orb={} hash={}",
                aMatch.strAssetId,aMatch.strName,aMatch.iOrb,
                aMatch.iArtworkMatches,aMatch.iHash);
@@ -875,7 +875,7 @@ namespace deckkernel::camera {
             // between frames and printed text are not a card identity.
             aResult.strStatus=
                "FULL-CARD UNRESOLVED - artwork uncorroborated";
-            std::println("[CAM-FULL-REJECT] card={} asset={} "
+            deckkernel::camera::Trace("[CAM-FULL-REJECT] card={} asset={} "
                "full-orb={} art-orb={} required-art-orb=12",
                uEvent,aBest.strAssetId,aBest.iOrb,
                aBest.iArtworkMatches);
@@ -901,7 +901,7 @@ namespace deckkernel::camera {
             aResult.strEdition=
                "Full-card comparison inconclusive; select printing manually";
             aResult.iOrientation=iOrientation;
-            std::println("[CAM-PRINT] card={} artwork-linked={} "
+            deckkernel::camera::Trace("[CAM-PRINT] card={} artwork-linked={} "
                "full-card-verified=false best-orb={} best-dhash={}",
                uEvent,vecMatches.size(),aBest.iOrb,aBest.iHash);
             return aResult;
@@ -930,7 +930,7 @@ namespace deckkernel::camera {
                "FULL_CARD_FALLBACK; printing candidate");
          SetPrinting(aResult,aResult.vecCandidates.front());
          aResult.iOrientation = iOrientation;
-         std::println("[CAM-PRINT] card #{} orientation={} variant={} "
+         deckkernel::camera::Trace("[CAM-PRINT] card #{} orientation={} variant={} "
             "scryfall_id={} set={} number={} lang={} face={} "
             "dhash={}/64 orb-good={} candidates={} status={}",
             uEvent, iOrientation, aBest.strVariant, aBest.strPrintingId,
@@ -977,7 +977,7 @@ namespace deckkernel::camera {
          auto const uMissingSha=std::stoull(PQgetvalue(aRows.get(),0,2));
          auto const uIndexed=std::stoull(PQgetvalue(aRows.get(),0,3));
          auto const uMissingOrb=std::stoull(PQgetvalue(aRows.get(),0,4));
-         std::println("[CAM-INDEX] assets={} downloaded={} indexed={} missing-sha256={} empty-orb={}",
+         deckkernel::camera::Trace("[CAM-INDEX] assets={} downloaded={} indexed={} missing-sha256={} empty-orb={}",
             uTotal,uDownloaded,uIndexed,uMissingSha,uMissingOrb);
          if(uTotal==0)return "NO IMAGE ASSETS in database";
          if(uDownloaded==0)return "NO IMAGE DATA downloaded";
@@ -1043,7 +1043,7 @@ namespace deckkernel::camera {
          aResult.strReferenceDiagnostic=strSha256.size()==64?
             "Original DB image loaded; SHA-256 metadata present":
             "Original DB image loaded; SHA-256 metadata missing/invalid";
-         std::println("[CAM-REFERENCE] card #{} asset={} size={}x{} bytes={} sha256={}",
+         deckkernel::camera::Trace("[CAM-REFERENCE] card #{} asset={} size={}x{} bytes={} sha256={}",
             aResult.uEvent,aResult.strAssetId,aResult.aReferenceImage.cols,
             aResult.aReferenceImage.rows,uSize,
             strSha256.size()==64?"present":"missing-or-invalid");
@@ -1109,7 +1109,7 @@ namespace deckkernel::camera {
                      std::println(std::cerr,
                         "[CAM-ART] cannot save {}",aImagePath.string());
                }
-               std::println("[CAM-ART-CROP] card={} orientation={} window={} "
+               deckkernel::camera::Trace("[CAM-ART-CROP] card={} orientation={} window={} "
                   "origin={},{} size={}x{} measured={} separators={:.2f}/{:.2f}",
                   aTask.uEvent,iOrientation,iVariant+1,
                   aRegion.aRect.x,aRegion.aRect.y,
@@ -1127,7 +1127,7 @@ namespace deckkernel::camera {
                   return CardImageMatchResult{aTask.uEvent};
                bool const boAccepted=optCandidate &&
                   AcceptArtwork(*optCandidate);
-               std::println("[CAM-ART] card={} orientation={} window={} "
+               deckkernel::camera::Trace("[CAM-ART] card={} orientation={} window={} "
                   "asset={} hash={}/64 orb={} accepted={}",
                   aTask.uEvent,iOrientation,iVariant+1,
                   optCandidate?optCandidate->strAssetId:"",
@@ -1256,7 +1256,7 @@ namespace deckkernel::camera {
             if(Cancelled(aTask.uEvent))continue;
             try {
                auto const aStart=std::chrono::steady_clock::now();
-               std::println("[CAM-MATCH] card #{} worker started selection={}",
+               deckkernel::camera::Trace("[CAM-MATCH] card #{} worker started selection={}",
                   aTask.uEvent,aTask.optSelection.has_value());
                if(!aConnection || PQstatus(aConnection.get())!=CONNECTION_OK) {
                   Publish(CardImageMatchResult{aTask.uEvent,
@@ -1264,14 +1264,14 @@ namespace deckkernel::camera {
                      "Waiting for database connection",false});
                   aConnection=Connect();
                }
-               std::println("[CAM-MATCH] card #{} database ready",
+               deckkernel::camera::Trace("[CAM-MATCH] card #{} database ready",
                   aTask.uEvent);
                if(Cancelled(aTask.uEvent))continue;
                if(aTask.optSelection)
                   Publish(DisplaySelection(aConnection.get(),aTask));
                else
                   Publish(Match(aConnection.get(),aTask));
-               std::println("[CAM-MATCH] card #{} worker finished elapsed={:.2f}s",
+               deckkernel::camera::Trace("[CAM-MATCH] card #{} worker finished elapsed={:.2f}s",
                   aTask.uEvent,std::chrono::duration<double>(
                      std::chrono::steady_clock::now()-aStart).count());
             }
@@ -1329,7 +1329,7 @@ namespace deckkernel::camera {
             m_pending=Task{uEvent,aCard.clone(),{},0,aEvidenceDirectory};
          }
          m_signal.notify_one();
-         std::println("[CAM-MATCH] card #{} queued: art 0/180, then full card; "
+         deckkernel::camera::Trace("[CAM-MATCH] card #{} queued: art 0/180, then full card; "
             "capture={}x{}",uEvent,aCard.cols,aCard.rows);
       }
 
