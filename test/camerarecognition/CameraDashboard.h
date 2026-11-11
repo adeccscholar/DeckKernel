@@ -161,13 +161,15 @@ public:
       while(SDL_PollEvent(&aEvent)) {
          if(aEvent.type==SDL_QUIT)m_bRunning=false;
          if(aEvent.type==SDL_KEYDOWN) {
-            if(aEvent.key.keysym.sym==SDLK_ESCAPE)m_boReject=true;
+            if(aEvent.key.keysym.sym==SDLK_ESCAPE &&
+               aEvent.key.repeat==0)m_boReject=true;
             if(aEvent.key.keysym.sym==SDLK_r)m_bFlip=!m_bFlip;
             if(aEvent.key.keysym.sym==SDLK_f)m_boFocusReset=true;
             if(aEvent.key.keysym.sym==SDLK_LEFT)--m_iNavigation;
             if(aEvent.key.keysym.sym==SDLK_RIGHT)++m_iNavigation;
-            if(aEvent.key.keysym.sym==SDLK_RETURN ||
-               aEvent.key.keysym.sym==SDLK_KP_ENTER)m_boConfirm=true;
+            if((aEvent.key.keysym.sym==SDLK_RETURN ||
+               aEvent.key.keysym.sym==SDLK_KP_ENTER) &&
+               aEvent.key.repeat==0)m_boConfirm=true;
             if(aEvent.key.keysym.sym==SDLK_PLUS ||
                aEvent.key.keysym.sym==SDLK_EQUALS ||
                aEvent.key.keysym.sym==SDLK_KP_PLUS)
@@ -213,7 +215,10 @@ public:
    */
    void SetCollectedCards(
       std::vector<deckkernel::camera::CollectedCard> const& vecCards) {
-      m_vecCollected=vecCards;
+      // The session list is append-only: do not copy historical strings
+      // on every one of the camera's ~20 video frames per second.
+      if(m_vecCollected.size()!=vecCards.size())
+         m_vecCollected=vecCards;
    }
    [[nodiscard]] bool ConsumeFocusReset() noexcept {
       bool const boReset=m_boFocusReset;
