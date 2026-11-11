@@ -2994,7 +2994,12 @@ int main(int argc,char** argv) {
          // One contour detection/rectification per frame. Use precisely the
          // same pixels for the side panel, the OCR and the artwork worker.
          CardDetectionDiagnostics detection;
-         auto found=(signal.nonblack && !boFocusCalibrating)?
+         // PHASE 05+: stop ALL contour detection and optical tracking once
+         // the card is frozen. The camera remains open only for rendering
+         // and for a later calibration after an explicit user decision.
+         bool const boRecognitionPaused=processor.RecognitionPaused();
+         auto found=(signal.nonblack && !boFocusCalibrating &&
+            !boRecognitionPaused)?
             processor.Observe(frame,&detection):
             std::optional<FoundCard>{};
          bool const flip=preview.Flip180();
@@ -3005,20 +3010,36 @@ int main(int argc,char** argv) {
          if(found&&flip)FlipRectifiedCard(*found);
          if(signal.nonblack) {
             blackFrames=0;
-            if(!boFocusCalibrating)
+            if(!boFocusCalibrating && !boRecognitionPaused)
                processor.Process(found,frame,processor.TrackingActive());
          } else {
             ++blackFrames;
          }
-         // PHASE 09/10: UI selection only changes the DB reference and
-         // never requests another physical capture or artwork recognition.
-#if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
-         int const iBrowse=preview.ConsumeNavigation();
-         if(iBrowse!=0)processor.NavigateCandidate(iBrowse);
-         if(preview.ConsumeConfirmation())processor.ConfirmCandidate();
-#endif
+         // PHASE 06-09: asynchronous matching and OCR continue while
+         // the physical camera detector is paused on its frozen snapshot.
          processor.PollRecognition();
          processor.PollPrintingOcr();
+         // PHASE 09: only the selected DB reference changes. A mouse wheel
+         // or arrow cannot start a second physical capture.
+         int const iBrowse=preview.ConsumeNavigation();
+         if(iBrowse!=0 && processor.RecognitionPaused()) {
+            int const iStep=iBrowse<0?-1:1;
+            for(int iCount=0;iCount<std::abs(iBrowse);++iCount)
+               processor.NavigateCandidate(iStep);
+         }
+         // PHASE 10: a completed scan ends only by a deliberate decision.
+         // Accepted cards survive ResetScan() in the collected list.
+         bool const boReject=preview.ConsumeRejection();
+         bool const boAccept=preview.ConsumeConfirmation();
+         bool boRestartFocus{};
+         if(boReject)
+            boRestartFocus=processor.DiscardScan();
+         else if(boAccept)
+            boRestartFocus=processor.ConfirmCandidate();
+         if(boRestartFocus) {
+            std::println("[CAM-SCAN] next scan: pre-focus tabletop");
+            aTableFocus.Begin(capture);
+         }
          // Visual diagnostic: mark the four corners that pass card geometry checks.
          cv::Mat annotated=frame.clone();
          if(boFocusCalibrating) {
@@ -3049,6 +3070,7 @@ int main(int argc,char** argv) {
                aTableFocus.Status()+" | Looking for a card boundary");
          preview.SetPhase(boFocusCalibrating?
             "00 TABLE FOCUS":deckkernel::camera::PhaseName(processor.Phase()));
+         preview.SetCollectedCards(processor.CollectedCards());
          preview.SetFields(processor.Name(),processor.Type(),processor.Rules(),
             processor.Mana(),processor.Status(),processor.Edition(),
             flip?"Manual 180 deg / "+processor.Orientation():processor.Orientation(),
