@@ -234,8 +234,11 @@ struct CardDetectionDiagnostics {
                iY>=aEdges.rows-2)continue;
             ++uSamples;
             bool boHit=false;
-            for(int iDY=-1;iDY<=1 && !boHit;++iDY)
-               for(int iDX=-1;iDX<=1;++iDX)
+            // Tolerate modest bowed physical edges and antialiasing.
+            // Keep the 70% longitudinal coverage gate unchanged so
+            // isolated artwork strokes cannot fabricate an outer side.
+            for(int iDY=-2;iDY<=2 && !boHit;++iDY)
+               for(int iDX=-2;iDX<=2;++iDX)
                   if(aEdges.at<unsigned char>(iY+iDY,iX+iDX)) {
                      boHit=true;
                      break;
@@ -2763,11 +2766,11 @@ void SelfTest() {
    cv::rectangle(aBorderEdges,aPrintRect,cv::Scalar(255),1);
    cv::rectangle(aBorderEdges,
       cv::Rect(169,88,262,360),cv::Scalar(255),1);
-   std::array<cv::Point,4> const arrInnerCorners{{
+   std::array<cv::Point,4> const arrPrintFrameCorners{{
       {180,100},{419,100},{419,435},{180,435}
    }};
    auto const optRecovered=FindNearbyOuterFrame(
-      aBorderEdges,arrInnerCorners);
+      aBorderEdges,arrPrintFrameCorners);
    if(!optRecovered || (*optRecovered)[1].x<=419 ||
       (*optRecovered)[2].x<=419 ||
       (*optRecovered)[0].x>=180)
@@ -2775,7 +2778,7 @@ void SelfTest() {
          "nearby physical outline was not recovered outside inner frame");
    cv::Mat aWithoutOuter(640,640,CV_8UC1,cv::Scalar(0));
    cv::rectangle(aWithoutOuter,aPrintRect,cv::Scalar(255),1);
-   if(FindNearbyOuterFrame(aWithoutOuter,arrInnerCorners))
+   if(FindNearbyOuterFrame(aWithoutOuter,arrPrintFrameCorners))
       throw std::runtime_error(
          "outer frame was inferred without independently supported edges");
    // DEMO TEST 01: a genuine standard card contains artwork, title, a
