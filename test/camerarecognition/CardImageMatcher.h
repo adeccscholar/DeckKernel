@@ -34,7 +34,6 @@ both orientations. Results are suggestions until physically validated.
 #include <stdexcept>
 #include <system_error>
 #include <string>
-#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -509,88 +508,6 @@ namespace deckkernel::camera {
             PQntuples(aRows.get()),flDbSeconds,
             flTotalSeconds-flDbSeconds,
             optBest?optBest->iOrb:0,optBest?optBest->iHash:65);
-         return optBest;
-      }
-
-
-      /**
-      \brief Match multiple face crops against one shared database shortlist.
-      \details The minimum dHash rank across the crops avoids repeated global
-         feature-table scans; each crop retains its own ORB descriptor.
-      \param pConnection Dedicated worker connection.
-      \param vecImages Candidate image crops.
-      \returns The best match with its query index, or no result.
-      \throw std::runtime_error On database lookup failure.
-      \note The combined shortlist is heuristic, not exhaustive.
-      */
-      [[nodiscard]] std::optional<std::pair<Ranked,std::size_t>>
-      FindArtworksBatch(PGconn* pConnection,
-         std::vector<cv::Mat> const& vecImages) const {
-         if(vecImages.empty())return std::nullopt;
-         std::vector<std::string> vecHashes;
-         std::vector<cv::Mat> vecDescriptors;
-         for(cv::Mat const& aImage:vecImages) {
-            vecHashes.push_back(DHashBits(aImage));
-            vecDescriptors.push_back(Descriptors(aImage));
-         }
-         std::string strDistance="LEAST(";
-         std::vector<char const*> vecParameters;
-         for(std::size_t uIndex=0;uIndex<vecHashes.size();++uIndex) {
-            if(uIndex>0)strDistance+=",";
-            strDistance+="bit_count(f.perceptual_hash # $"+
-               std::to_string(uIndex+1)+"::bit(64))";
-            vecParameters.push_back(vecHashes[uIndex].c_str());
-         }
-         strDistance+=")";
-         std::string const strLimit=std::to_string(
-            std::max(800u,m_uCandidates));
-         vecParameters.push_back(strLimit.c_str());
-         std::string const strSql=
-            "SELECT a.id::text,COALESCE(a.illustration_id,''),"
-            +strDistance+",f.orb_descriptors,f.perceptual_hash::text "
-            "FROM deckkernel_test.scryfall_image_features f "
-            "JOIN deckkernel_test.scryfall_image_assets a ON a.id=f.asset_id "
-            "WHERE f.algorithm='dhash64-orb' AND f.algorithm_version=1 "
-            "AND f.perceptual_hash IS NOT NULL AND a.image_data IS NOT NULL "
-            "AND EXISTS (SELECT 1 FROM deckkernel_test.scryfall_card_image_variants v "
-            "WHERE v.asset_id=a.id AND v.variant='art_crop') "
-            "ORDER BY "+strDistance+",a.id "
-            "LIMIT $"+std::to_string(vecParameters.size())+"::integer";
-         auto const aStart=std::chrono::steady_clock::now();
-         result_ty aRows(PQexecParams(pConnection,strSql.c_str(),
-            static_cast<int>(vecParameters.size()),nullptr,
-            vecParameters.data(),nullptr,nullptr,0));
-         if(!aRows || PQresultStatus(aRows.get())!=PGRES_TUPLES_OK)
-            throw std::runtime_error(std::format(
-               "batch artwork search failed: {}",PQerrorMessage(pConnection)));
-         double const flSql=std::chrono::duration<double>(
-            std::chrono::steady_clock::now()-aStart).count();
-         std::optional<std::pair<Ranked,std::size_t>> optBest;
-         for(int iRow=0;iRow<PQntuples(aRows.get());++iRow) {
-            std::string_view const svReference=PQgetvalue(aRows.get(),iRow,4);
-            for(std::size_t uQuery=0;uQuery<vecImages.size();++uQuery) {
-               if(vecDescriptors[uQuery].empty())continue;
-               Ranked aMatch;
-               aMatch.strAssetId=PQgetvalue(aRows.get(),iRow,0);
-               aMatch.strIllustrationId=PQgetvalue(aRows.get(),iRow,1);
-               aMatch.iHash=0;
-               for(std::size_t uBit=0;uBit<64 && uBit<svReference.size();++uBit)
-                  aMatch.iHash+=vecHashes[uQuery][uBit]!=svReference[uBit];
-               aMatch.iOrb=OrbMatches(
-                  vecDescriptors[uQuery],aRows.get(),iRow,3);
-               if(!optBest || Better(aMatch,optBest->first))
-                  optBest=std::pair<Ranked,std::size_t>{
-                     std::move(aMatch),uQuery};
-            }
-         }
-         double const flElapsed=std::chrono::duration<double>(
-            std::chrono::steady_clock::now()-aStart).count();
-         deckkernel::camera::Trace(
-            "[CAM-ART-BATCH] crops={} candidates={} sql={:.2f}s "
-            "orb={:.2f}s best-orb={} best-hash={}",
-            vecImages.size(),PQntuples(aRows.get()),flSql,
-            flElapsed-flSql,optBest?optBest->first.iOrb:0,
-            optBest?optBest->first.iHash:65);
          return optBest;
       }
 
@@ -1227,115 +1144,68 @@ namespace deckkernel::camera {
       }
 
       CardImageMatchResult Match(PGconn* pConnection, Task const& aTask) {
-         // Normal cards: four artwork windows share ONE feature-index SQL
-         // shortlist rather than running the global ranking four times.
-         // Only failed normal matching activates the split-face search.
+         // PHASE 06: compare BOTH orientations and two card-art windows.
+         // Never stop at the first barely acceptable visual match: it may
+         // be the wrong 180-degree orientation and poison the whole session.
          struct ArtworkChoice {
             Ranked aRanked;
             int iOrientation{};
             int iVariant{};
-            bool boSplit{};
-            cv::Mat aFaceImage;
          };
          std::optional<ArtworkChoice> optArtworkChoice;
-         std::vector<cv::Mat> vecNormalCrops;
-         std::vector<std::pair<int,int>> vecNormalLabels;
-         for(int iOrientation:{0,180}) {
+         for(int iOrientation : {0,180}) {
+            if(Cancelled(aTask.uEvent))return CardImageMatchResult{aTask.uEvent};
             cv::Mat aOriented=aTask.aCard;
             if(iOrientation==180)
                cv::rotate(aTask.aCard,aOriented,cv::ROTATE_180);
             for(int iVariant=0;iVariant<2;++iVariant) {
+               if(Cancelled(aTask.uEvent))return CardImageMatchResult{aTask.uEvent};
+               // Normal mode evaluates the measured crop first. A strong
+               // illustration match need not pay for three other SQL scans.
+               if(optArtworkChoice &&
+                  optArtworkChoice->aRanked.iOrb>=25 &&
+                  optArtworkChoice->aRanked.iHash<=20)break;
                ArtworkRegion const aRegion=Artwork(aOriented,iVariant);
                if(aRegion.aImage.empty())continue;
-               vecNormalCrops.push_back(aRegion.aImage);
-               vecNormalLabels.emplace_back(iOrientation,iVariant);
-               deckkernel::camera::Trace(
-                  "[CAM-ART-CROP] card={} orientation={} window={} "
+               if(!aTask.aEvidenceDirectory.empty()) {
+                  std::filesystem::create_directories(
+                     aTask.aEvidenceDirectory);
+                  std::filesystem::path const aImagePath=
+                     aTask.aEvidenceDirectory/std::format(
+                        "event-{:06}-artwork-{}-window-{}.png",
+                        aTask.uEvent,iOrientation,iVariant+1);
+                  if(!cv::imwrite(aImagePath.string(),aRegion.aImage))
+                     std::println(std::cerr,
+                        "[CAM-ART] cannot save {}",aImagePath.string());
+               }
+               deckkernel::camera::Trace("[CAM-ART-CROP] card={} orientation={} window={} "
                   "origin={},{} size={}x{} measured={} separators={:.2f}/{:.2f}",
                   aTask.uEvent,iOrientation,iVariant+1,
                   aRegion.aRect.x,aRegion.aRect.y,
                   aRegion.aRect.width,aRegion.aRect.height,
                   aRegion.boDetected,aRegion.flTopCoverage,
                   aRegion.flBottomCoverage);
-            }
-         }
-         if(!vecNormalCrops.empty()) {
-            Publish(CardImageMatchResult{aTask.uEvent,
-               "SEARCHING ARTWORK - batched 0/180", 
-               "Comparing indexed illustrations",false});
-            auto optBatch=FindArtworksBatch(pConnection,vecNormalCrops);
-            if(Cancelled(aTask.uEvent))
-               return CardImageMatchResult{aTask.uEvent};
-            if(optBatch && AcceptArtwork(optBatch->first)) {
-               auto const [iOrientation,iVariant]=
-                  vecNormalLabels[optBatch->second];
-               optArtworkChoice=ArtworkChoice{
-                  std::move(optBatch->first),iOrientation,iVariant,false,{}};
-            }
-         }
-         if(!optArtworkChoice) {
-            // Split cards can place two faces sideways on the SAME physical
-            // portrait card, or use two upright side-by-side faces. A face
-            // is normalized independently before applying the artwork ROI.
-            // These are the only geometrically orthogonal layout hypotheses.
-            std::vector<cv::Mat> vecFaceCrops;
-            std::vector<cv::Mat> vecFaceCards;
-            std::vector<int> vecFaceAngles;
-            auto const AddFace=[&](cv::Mat const& aFace,
-               int iAngle) {
-               if(aFace.cols<80 || aFace.rows<100)return;
-               cv::Mat aOriented=aFace;
-               if(iAngle==90)
-                  cv::rotate(aFace,aOriented,cv::ROTATE_90_CLOCKWISE);
-               else if(iAngle==270)
-                  cv::rotate(aFace,aOriented,
-                     cv::ROTATE_90_COUNTERCLOCKWISE);
-               ArtworkRegion const aRegion=Artwork(aOriented,1);
-               if(aRegion.aImage.empty())return;
-               vecFaceCards.push_back(aOriented);
-               vecFaceCrops.push_back(aRegion.aImage);
-               vecFaceAngles.push_back(iAngle);
-            };
-            int const iHalfHeight=aTask.aCard.rows/2;
-            int const iHalfWidth=aTask.aCard.cols/2;
-            cv::Mat const aUpper=aTask.aCard(
-               cv::Rect(0,0,aTask.aCard.cols,iHalfHeight));
-            cv::Mat const aLower=aTask.aCard(
-               cv::Rect(0,iHalfHeight,aTask.aCard.cols,
-                  aTask.aCard.rows-iHalfHeight));
-            for(cv::Mat const& aHalf:{aUpper,aLower}) {
-               AddFace(aHalf,90);
-               AddFace(aHalf,270);
-            }
-            cv::Mat const aLeft=aTask.aCard(
-               cv::Rect(0,0,iHalfWidth,aTask.aCard.rows));
-            cv::Mat const aRight=aTask.aCard(
-               cv::Rect(iHalfWidth,0,
-                  aTask.aCard.cols-iHalfWidth,aTask.aCard.rows));
-            for(cv::Mat const& aHalf:{aLeft,aRight}) {
-               AddFace(aHalf,0);
-               cv::Mat aRotated;
-               cv::rotate(aHalf,aRotated,cv::ROTATE_180);
-               AddFace(aRotated,180);
-            }
-            if(!vecFaceCrops.empty()) {
-               Publish(CardImageMatchResult{aTask.uEvent,
-                  "SEARCHING ARTWORK - split face hypotheses",
-                  "Comparing individually oriented faces",false});
-               auto optBatch=FindArtworksBatch(pConnection,vecFaceCrops);
+               Publish(CardImageMatchResult{
+                  aTask.uEvent,std::format(
+                     "SEARCHING ARTWORK - {} deg, window {}",
+                     iOrientation,iVariant+1),
+                  "Comparing indexed illustrations",false});
+               std::optional<Ranked> optCandidate=FindArtwork(
+                  pConnection,aRegion.aImage);
                if(Cancelled(aTask.uEvent))
                   return CardImageMatchResult{aTask.uEvent};
-               if(optBatch && AcceptArtwork(optBatch->first) &&
-                  optBatch->first.iOrb>=18) {
-                  std::size_t const uFace=optBatch->second;
-                  deckkernel::camera::Trace(
-                     "[CAM-SPLIT-FACE] card={} hypothesis={} "
-                     "rotation={} orb={} hash={}",
-                     aTask.uEvent,uFace,vecFaceAngles[uFace],
-                     optBatch->first.iOrb,optBatch->first.iHash);
+               bool const boAccepted=optCandidate &&
+                  AcceptArtwork(*optCandidate);
+               deckkernel::camera::Trace("[CAM-ART] card={} orientation={} window={} "
+                  "asset={} hash={}/64 orb={} accepted={}",
+                  aTask.uEvent,iOrientation,iVariant+1,
+                  optCandidate?optCandidate->strAssetId:"",
+                  optCandidate?optCandidate->iHash:65,
+                  optCandidate?optCandidate->iOrb:0,boAccepted);
+               if(boAccepted && (!optArtworkChoice ||
+                  Better(*optCandidate,optArtworkChoice->aRanked))) {
                   optArtworkChoice=ArtworkChoice{
-                     std::move(optBatch->first),0,0,true,
-                     vecFaceCards[uFace]};
+                     std::move(*optCandidate),iOrientation,iVariant};
                }
             }
          }
@@ -1343,9 +1213,8 @@ namespace deckkernel::camera {
          if(optArtworkChoice) {
             int const iOrientation=optArtworkChoice->iOrientation;
             Ranked const& aArt=optArtworkChoice->aRanked;
-            cv::Mat aOriented=optArtworkChoice->boSplit?
-               optArtworkChoice->aFaceImage:aTask.aCard;
-            if(!optArtworkChoice->boSplit && iOrientation==180)
+            cv::Mat aOriented=aTask.aCard;
+            if(iOrientation==180)
                cv::rotate(aTask.aCard,aOriented,cv::ROTATE_180);
             CardImageMatchResult aArtworkResult{
                aTask.uEvent,"ARTWORK FOUND - checking concrete printing",
