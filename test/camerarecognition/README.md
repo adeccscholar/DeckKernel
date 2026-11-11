@@ -1104,3 +1104,70 @@ event loop must be exercised with keyboard, wheel and mouse. Verify
 both one-candidate and ambiguous-printing cases, discard during
 active asynchronous matching, successive cards added to the list and
 the table-focus restart on each decision.
+
+## 2026-11-11: tabletop detection regression and unrelated full-card result
+
+Two overhead-camera screenshots show complete but small, inverted MTG
+cards on a wooden tabletop. A third screenshot shows a captured inverted
+card next to an unrelated DB printing ("Praetorhoof Behemoth"). The
+diagnosis separates **physical object detection** from **identity
+verification**; an apparently plausible whole-card match is not enough.
+
+### Physical acquisition: broken outer outlines
+
+Offline analysis of the downscaled provided screenshots (not the
+original 3840x2160 frames) found that low-threshold Canny (15/40)
+revealed card-shaped contours which had previously been rejected as
+minAreaRect fallbacks. Some had only approximately 17-73% contour fill
+despite strong straight-side evidence. This happens when the visible
+physical border is broken into partial edge contours. An 86% area-fill
+requirement is therefore not a reliable prerequisite for a physical card.
+
+The minimum-rectangle recovery path now checks at least three strongly
+supported sides for low-fill contours. The four-side, strongly
+supported geometric fallback is allowed only at the expected physical
+aspect ratio and above the specified area floor if the provisional
+internal title/artwork/text classifier is inconclusive. Normal
+standard-layout evidence is still preferred. A third, low-threshold
+Canny contour pass runs only if standard and contrast-enhanced passes
+produce no accepted card. The additional `[CAM-DETECT]` counters
+`broken-outline` and `physical-outline` show where these paths
+participate.
+
+These rules deliberately do **not** accept every minAreaRect. A rounded
+mouse with only tangent contacts should still fail the straight
+side-coverage requirements. As with all current heuristics, this must
+be validated against real tabletop frames and multiple non-card objects.
+
+### Full-card identity: require independent artwork evidence
+
+An image containing similar card borders and printed text can pass
+global full-card dHash/ORB thresholds while depicting entirely different
+artwork. Therefore, **a whole-card fallback cannot identify a card
+solely from global full-card features**.
+
+Up to twelve top full-card references are decoded from the already
+indexed DB as before. Their isolated illustrations are compared to the
+camera illustration using CLAHE-assisted query descriptors, ratio-tested
+and unique-reference ORB matches. A full-card fallback now requires
+both the previous whole-card acceptance floor and at least 12 unique
+artwork correspondences. Candidates with independent artwork evidence
+are ranked ahead of text/frame-only results; unverified candidates
+cannot be presented as an identified printing or cause orientation
+correction. Failed corroboration produces
+`FULL-CARD UNRESOLVED - artwork uncorroborated`, with a
+`[CAM-FULL-REJECT]` record. The per-reference
+`[CAM-FULL-ART]` line reports full-card versus illustration matches.
+
+The artwork threshold remains provisional and is not a reported
+accuracy benchmark. If the camera image is blurry, the correct card
+may also fail this test; an unresolved result is preferable to a
+wrong identification. The pre-existing art_crop-first lookup and its
+illustration-linked printing selection remain unchanged, as do the
+PostgreSQL feature index and pinned OpenCV 5.0 runtime.
+
+**Verification status:** the source was edited and structurally
+checked. BCC64X compilation and real-time camera/database acceptance
+tests are not performed in this environment. Use the same cards to
+compare: card acquisition count, non-card false locks, artwork-first
+top-k hits, wrong fallback identities and latencies.
