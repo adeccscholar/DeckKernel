@@ -3088,8 +3088,8 @@ void Usage() {
    std::println("   optional: --ocr --tessdata=PATH_TO_TESSDATA (eng.traineddata required)");
    std::println("   camera: indexed artwork/printing recognition enabled by default");
    std::println("   optional: --artwork [--artwork-limit=100] or --no-artwork");
-   std::println("   camera focus: --table-focus (default), --continuous-autofocus or --focus-position=N");
-   std::println("   press F to re-calibrate the focus at the tabletop before searching");
+   std::println("   camera focus: fixed/external (default), --auto-focus (legacy table calibration), --continuous-autofocus or --focus-position=N");
+   std::println("   press F to re-calibrate only in --auto-focus / --continuous-autofocus mode");
    std::println("   optional: --verbose (diagnostics only), --deep-search (slow global full-card fallback)");
 }
 }
@@ -3097,7 +3097,8 @@ int main(int argc,char** argv) {
    try{
       bool selfTest=false,save=false,verbose=false,deepSearch=false;
       bool ocr=false,artwork=false,noArtwork=false;
-      bool tableFocus=true;
+      bool tableFocus=false;
+      bool autoFocus=false;
       std::optional<int> manualFocusPosition;
       unsigned artworkLimit=100;
       std::string tessdata;
@@ -3119,8 +3120,14 @@ int main(int argc,char** argv) {
          else if(arg=="--ocr")ocr=true;
          else if(arg=="--artwork")artwork=true;
          else if(arg=="--no-artwork")noArtwork=true;
-         else if(arg=="--table-focus")tableFocus=true;
-         else if(arg=="--continuous-autofocus")tableFocus=false;
+         else if(arg=="--auto-focus" || arg=="--table-focus") {
+            autoFocus=true;
+            tableFocus=true;
+         }
+         else if(arg=="--continuous-autofocus") {
+            autoFocus=true;
+            tableFocus=false;
+         }
          else if(arg.starts_with("--focus-position="))
             manualFocusPosition=CameraIndex(arg.substr(17));
          else if(arg.starts_with("--artwork-limit="))artworkLimit=static_cast<unsigned>(CameraIndex(arg.substr(16)));
@@ -3304,11 +3311,14 @@ int main(int argc,char** argv) {
          capture.get(cv::CAP_PROP_CONTRAST),
          capture.get(cv::CAP_PROP_SATURATION),
          capture.get(cv::CAP_PROP_WB_TEMPERATURE));
-      // PHASE 00: pre-focus on the expected horizontal table plane BEFORE
-      // physical card recognition. Keep the previous continuous AF as a
-      // fallback for cameras which cannot report or lock manual focus.
+      // Fixed external focus is the default. No camera focus setting is
+      // changed on startup, hotkey F, or after finishing a scan.
+      // --auto-focus explicitly restores the former table calibration,
+      // including its continuous-autofocus fallback.
+      bool const boPreserveExternalFocus=!autoFocus &&
+         !manualFocusPosition.has_value();
       deckkernel::camera::TablePlaneFocus aTableFocus(
-         tableFocus,manualFocusPosition);
+         tableFocus,manualFocusPosition,boPreserveExternalFocus);
       aTableFocus.Begin(capture);
 #if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
       CameraDashboard preview;
@@ -3334,11 +3344,16 @@ int main(int argc,char** argv) {
          if(preview.ConsumeFocusReset()) {
             // Recalibrate only between physical sessions: never change
             // optical settings while examining a frozen card.
-            if(!processor.CardLocked()) {
-               deckkernel::camera::Trace("[CAM-TABLE-FOCUS] recalibration requested by F");
+            if(boPreserveExternalFocus)
+               deckkernel::camera::Trace(
+                  "[CAM-TABLE-FOCUS] F ignored: fixed external focus mode");
+            else if(!processor.CardLocked()) {
+               deckkernel::camera::Trace(
+                  "[CAM-TABLE-FOCUS] recalibration requested by F");
                aTableFocus.Begin(capture);
             }
-            else deckkernel::camera::Trace("[CAM-TABLE-FOCUS] F ignored: card locked");
+            else deckkernel::camera::Trace(
+               "[CAM-TABLE-FOCUS] F ignored: card locked");
          }
          FrameSignal const signal=MeasureFrame(frame);
          // Pre-focus independently of contours: a blurred table card must
@@ -3390,7 +3405,7 @@ int main(int argc,char** argv) {
             boRestartFocus=processor.DiscardScan();
          else if(boAccept)
             boRestartFocus=processor.ConfirmCandidate();
-         if(boRestartFocus) {
+         if(boRestartFocus && !boPreserveExternalFocus) {
             deckkernel::camera::Trace("[CAM-SCAN] next scan: pre-focus tabletop");
             aTableFocus.Begin(capture);
          }
