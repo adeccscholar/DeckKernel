@@ -981,7 +981,9 @@ and OCR success on known printed collector/set fields.
 
 Physical-card acquisition now retains the 15-degree upright requirement for
 the **outer** card only. During each bounded Canny contour pass, it collects
-rectangular inner panels independently of their rotation. A plausible physical
+rectangular inner panels whose long axes are parallel or perpendicular to
+the outer card's long axis, within 5 degrees in either case. Diagonal inner
+panels are not counted as structural evidence. A plausible physical
 outer contour with at least two distinct, spatially separated nested panels
 can supply structural evidence where the usual standard-card title/art/text
 separator classifier fails. The outer card must still pass existing geometric
@@ -990,7 +992,7 @@ unchanged.
 
 The live CAM-DETECT trace now includes `nested-layouts` (candidate contours
 accepted specifically through nested panels) and `rotated-panels` (nested
-panels not aligned with the upright card axis). A synthetic split-face
+panels perpendicular to the outer card axis). A synthetic split-face
 regression checks that the accepted rectangle is the outer physical card,
 not one of its inside panels.
 
