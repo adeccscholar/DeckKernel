@@ -977,6 +977,26 @@ module evaluation is unchanged.
 PostgreSQL printing-query duration, preview of `frozen-overscan.png`,
 and OCR success on known printed collector/set fields.
 
+## 2026-11-11: outer-frame recovery after card candidate selection
+
+Before rectifying a selected card, the contour detector now searches outside
+the candidate rectangle for stronger evidence of the physical card boundary.
+A narrow band of up to ten percent of the card's corresponding dimensions
+is examined along each side. At least two independently supported, mostly
+parallel exterior edge segments must be found before the quadrilateral is
+expanded; otherwise the original corners are preserved.
+
+The original 15-degree outer-card orientation constraint is unchanged.
+The recovered corners, rather than the inner printed frame, feed subsequent
+high-resolution OCR rectification and artwork feature matching. The
+`outer-corrected` CAM-DETECT field indicates when an expanded boundary
+was accepted. Synthetic regression checks both an outer border with a
+right-side extension and the absence of unsupported expansion.
+
+This is an evidence-based local recovery, not an unconditional percentage
+crop. It must still be validated against real 4K Brio acquisitions and
+unconventional card layouts.
+
 ## 2026-11-11: externally configured fixed focus is the default
 
 Live camera acquisition now preserves the focus settings established outside
