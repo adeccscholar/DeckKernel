@@ -977,6 +977,23 @@ module evaluation is unchanged.
 PostgreSQL printing-query duration, preview of `frozen-overscan.png`,
 and OCR success on known printed collector/set fields.
 
+## 2026-11-11: adaptive frozen-frame selection
+
+The capture stage now monitors printed-detail sharpness independently of the
+overall image-quality score. It freezes after at least eight valid card
+samples and 350 ms without a significant printed-detail improvement, provided
+the selected frame passes the existing usability checks and the capture has
+lasted at least 550 ms. It retains a three-second upper bound for weak or
+unstable input, preserving the previous best frame rather than taking the
+latest frame. A still-improving card is not frozen solely because 1.5 seconds
+have elapsed. The verbose CAM-FOCUS line reports frame count, elapsed time,
+printed-detail score, freeze reason (stabilized/deadline), and usability.
+
+This change does not modify physical-card contour acceptance, the camera's
+hardware autofocus API, or indexed artwork matching. It requires validation
+with the actual BCC64X camera and frozen image evidence before recognizing a
+quality improvement.
+
 ## 2026-11-11: focus the fixed horizontal tabletop before card search
 
 New real camera logs and original saved frames separate *recognition* from
