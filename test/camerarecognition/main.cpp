@@ -1167,6 +1167,8 @@ class Processor {
    std::vector<deckkernel::camera::CollectedCard> m_vecCollected;
    bool m_boUserNavigated{};
    bool m_boArtworkRecognized{};
+   bool m_boNameOcrStarted{};
+   bool m_boOcrNameRecognized{};
    unsigned m_uSelectionSerial{};
    deckkernel::camera::RecognitionPhase m_ePhase{
       deckkernel::camera::RecognitionPhase::Searching};
@@ -1209,8 +1211,6 @@ class Processor {
    unsigned m_uPrintingOcrEvent{};
    std::future<std::pair<std::string,int>> m_nameOcr;
    unsigned m_uNameOcrEvent{};
-   bool m_boNameOcrStarted{};
-   bool m_boOcrNameRecognized{};
 #endif
    std::string m_strEdition{"Edition not verified"};
    bool m_recognitionReady{};
@@ -1335,6 +1335,8 @@ public:
       m_cardLocked=false;m_focusPending=false;m_recognitionReady=false;
       m_boFocusHintShown=false;m_boUserNavigated=false;
       m_boArtworkRecognized=false;
+      m_boNameOcrStarted=false;
+      m_boOcrNameRecognized=false;
       m_uSelectionSerial=0;m_uFocusFrames=0;
       m_flCaptureScore=-1.0;m_flCaptureSharpness=0.0;
       m_bestNameConfidence=0;m_bestTypeConfidence=0;
@@ -2002,8 +2004,6 @@ public:
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
          m_uPrintingOcrEvent=0;
          m_uNameOcrEvent=0;
-         m_boNameOcrStarted=false;
-         m_boOcrNameRecognized=false;
 #endif
          SetPhase(deckkernel::camera::RecognitionPhase::Searching);
          m_strName="--";m_strType="--";m_strRules="--";
@@ -2061,6 +2061,8 @@ public:
       m_identity.Clear();
       m_boUserNavigated=false;
       m_boArtworkRecognized=false;
+      m_boNameOcrStarted=false;
+      m_boOcrNameRecognized=false;
       m_uSelectionSerial=0;
       SetPhase(deckkernel::camera::RecognitionPhase::Tracking);
       SetPhase(deckkernel::camera::RecognitionPhase::Focusing);
