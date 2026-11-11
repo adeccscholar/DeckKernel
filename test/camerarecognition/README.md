@@ -896,3 +896,81 @@ CLAHE keypoints alone.
 Source review and local image experiments were completed. The BCC64X
 compilation, actual database replay and camera recognition rate remain
 **unverified**.
+
+## 2026-11-11: illustration-first printing query and preserved scan margins
+
+The November 10 camera log (three real captures) demonstrated that
+**artwork recognition worked** for all three close-up cards:
+77, 39 and 49 ORB matches, respectively, at 806x1128, 952x1332
+and 874x1223 frozen canonical resolutions. The following printing
+query then failed on each card with PostgreSQL's 12-second
+`statement_timeout`. These are observed logs, not hypothetical
+image-score failures.
+
+### Printing lookup: filter card faces first
+
+The old full-card SQL filtered matching art printings inside a
+correlated EXISTS after joining the global multi-million-row image
+feature index and ordering by perceptual distance. The filter did not
+guarantee a small query plan, and all three real examples timed out.
+
+The restricted path now materializes the **related (card_id,face_id)**
+rows from the matched art_crop asset or the asset's illustration_id
+(using the pre-existing illustration index), then joins those rows to
+normal/large/border_crop variants and their feature rows. Only those
+relevant variants are ordered by full-card dHash distance. The global
+fallback query remains a separate branch for unrecognized artwork.
+
+When a known artwork supplies candidates but full-card ORB/dHash
+similarity is insufficient, the known linked printings are **not
+discarded**: up to 32 distinct candidate printings are exposed, clearly
+marked unverified and available for left/right and Enter selection.
+If multiple remain, the optional OCR phase can compare collector/set
+information. This does not claim a visually confirmed printing.
+
+Neither schema nor stored feature/index data is changed by this
+camera-client update. The 12-second statement timeout remains in
+place as an error boundary; the new query plan must be verified with
+the user's PostgreSQL instance and may require EXPLAIN ANALYZE
+before claiming performance improvement.
+
+### Original-pixel overscan for the collector-number strip
+
+An inspection of the archived `event-00000{1,2,3}-frozen-search-input.png`
+showed that the perspective warp was clipped to the detected inner
+frame; the collector-number/footer strip was partly or fully
+absent. OCR cannot reconstruct information outside that crop.
+
+Every selected source frame now yields **two synchronized views** from
+the same camera image and exact same four physical corners:
+
+1. **Canonical crop:** unchanged perspective and dimensions, used
+   for existing artwork and full-card dHash/ORB matching.
+2. **Overscan crop:** an additional six percent on each side,
+   obtained by moving the output destination quadrilateral inward
+   while sampling real pixels from outside the detected contour.
+   Used for the large left display and the lower-margin OCR.
+
+The extended OCR margin is cut from the lower 20 percent of overscan;
+it includes the additional bottom pixels. The original canonical
+image is still saved as `event-NNNNNN-frozen-search-input.png`;
+`--save-events` now also saves
+`event-NNNNNN-frozen-overscan.png`.
+
+A synthetic regression verifies that a printed strip outside the
+canonical detected frame is recovered in the overscan and is absent
+from the unchanged canonical crop.
+
+**Limitations:** the overscan only recovers pixels already present in
+the real 3840x2160 source frame. It cannot recover clipped sensor
+content, severe perspective occlusion, missing detail from bad focus,
+or a border more than six percent beyond the selected contour.
+The physical card still needs sufficient camera coverage for OCR.
+
+No additional OpenCV 5.1 modules are enabled; camera remains pinned
+to the existing OpenCV 5.0 components. Future `photo` and `calib`
+module evaluation is unchanged.
+
+**Verification pending:** BCC64X build, synthetic self-test, real
+PostgreSQL printing-query duration, preview of `frozen-overscan.png`,
+and OCR success on known printed collector/set fields.
