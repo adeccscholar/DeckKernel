@@ -88,7 +88,6 @@ namespace deckkernel::camera {
          unsigned uSelectionSerial{};
          std::filesystem::path aEvidenceDirectory;
          std::optional<std::string> optOcrName;
-         bool boOrientationReliable{};
       };
 
       struct Ranked final {
@@ -1155,7 +1154,6 @@ namespace deckkernel::camera {
          };
          std::optional<ArtworkChoice> optArtworkChoice;
          for(int iOrientation : {0,180}) {
-            if(aTask.boOrientationReliable && iOrientation==180)break;
             if(Cancelled(aTask.uEvent))return CardImageMatchResult{aTask.uEvent};
             cv::Mat aOriented=aTask.aCard;
             if(iOrientation==180)
@@ -1260,7 +1258,6 @@ namespace deckkernel::camera {
          int iBestOrb = -1, iBestHash = 65;
          aCard = aTask.aCard;
          for(int iOrientation : {0, 180}) {
-            if(aTask.boOrientationReliable && iOrientation==180)break;
             if(Cancelled(aTask.uEvent))return CardImageMatchResult{aTask.uEvent};
             Publish(CardImageMatchResult{
                aTask.uEvent,std::format("ARTWORK NOT FOUND - full card {} deg",iOrientation),
@@ -1396,19 +1393,15 @@ namespace deckkernel::camera {
           \throw std::bad_alloc If image cloning fails.
       */
       void Search(cv::Mat const& aCard,unsigned uEvent,
-         std::filesystem::path const& aEvidenceDirectory={},
-         bool boOrientationReliable=false) {
+         std::filesystem::path const& aEvidenceDirectory={}) {
          {
             std::lock_guard const aLock(m_mutex);
             m_uActiveEvent.store(uEvent,std::memory_order_relaxed);
-            m_pending=Task{uEvent,aCard.clone(),{},0,aEvidenceDirectory,
-               {},boOrientationReliable};
+            m_pending=Task{uEvent,aCard.clone(),{},0,aEvidenceDirectory};
          }
          m_signal.notify_one();
-         deckkernel::camera::Trace("[CAM-MATCH] card #{} queued: orientation={} "
-            "capture={}x{}",uEvent,
-            boOrientationReliable?"verified 0":"uncertain 0/180",
-            aCard.cols,aCard.rows);
+         deckkernel::camera::Trace("[CAM-MATCH] card #{} queued: art 0/180, then full card; "
+            "capture={}x{}",uEvent,aCard.cols,aCard.rows);
       }
 
       /**
