@@ -976,3 +976,74 @@ module evaluation is unchanged.
 **Verification pending:** BCC64X build, synthetic self-test, real
 PostgreSQL printing-query duration, preview of `frozen-overscan.png`,
 and OCR success on known printed collector/set fields.
+
+## 2026-11-11: focus the fixed horizontal tabletop before card search
+
+New real camera logs and original saved frames separate *recognition* from
+*optical acquisition*. On the same 3840x2160 DirectShow/MJPG device,
+strongly focused captures had camera sharpness scores of about 346 and
+685, whereas difficult table captures were around 25-30. In the latter
+cases, the raw artwork ROI sometimes produced 0-5 ORB keypoints. CLAHE
+can produce additional features but **cannot restore optical detail**.
+
+A fixed overhead camera should have its expected *table plane* in focus
+before physical-card contour detection. The camera now enables
+`--table-focus` by default (or explicitly); the former behavior is
+available with `--continuous-autofocus`.
+
+PHASE 00, `TABLE FOCUS`, precedes the physical-card state machine.
+It first enables camera autofocus and observes the middle 30% by 60%
+region of the actual original camera frame while autofocus settles.
+The region is drawn as a rectangle in the live image during calibration.
+Measurements require enough contrast, optical sharpness, illumination
+and a stationary image; the algorithm avoids locking to low-texture
+or moving input. It records the device-reported focus positions and
+their corresponding measured ROI sharpness.
+
+After 2-4 seconds of settling, if enough good measurements are
+available, the best observed device focus position is applied using
+`CAP_PROP_AUTOFOCUS=0` and `CAP_PROP_FOCUS`. Device acknowledgements
+and the focus-position readback are verified. A separate 0.6-1.2s
+verification compares sharpness against the calibration frames.
+If any camera control is unsupported, the data is inadequate or
+optical quality is significantly worse after focus locking, it
+automatically restores continuous autofocus and reports the reason.
+The hardware focus must NEVER be silently assumed to have changed.
+
+**Important:** the highlighted software ROI is a *measurement* region.
+OpenCV's portable VideoCapture API does not configure the camera
+driver's internal autofocus ROI. This calibration works only if the
+camera reports a usable manual focus position and permits it to be
+locked. Some DirectShow devices support only continuous autofocus,
+or give untrustworthy reported values. A blank, low-texture tabletop
+is also insufficient for reliable software focus calibration.
+
+Camera options:
+
+~~~bat
+apps\Release\deckkernel_camera_recognition_test.exe --camera=4 --fps=30 --fourcc=mjpg --table-focus --save-events --verbose
+
+apps\Release\deckkernel_camera_recognition_test.exe --camera=4 --fps=30 --fourcc=mjpg --continuous-autofocus
+
+apps\Release\deckkernel_camera_recognition_test.exe --camera=4 --fps=30 --fourcc=mjpg --focus-position=NN
+~~~
+
+The last command is an **explicit manually measured focus position** in
+the device's own focus units. Never guess NN: use a value documented or
+calibrated for the actual camera. The driver may reject it and the
+program then falls back to continuous autofocus. `--focus-position`
+takes precedence over table calibration when both are supplied.
+
+Press **F** in the preview to rerun the configured focus procedure,
+**only when no physical card is currently locked**. The stable card,
+its frozen capture, printing candidates and database queries are
+not changed by recalibration. If a locked card is present, the command
+is ignored and logged. `[CAM-TABLE-FOCUS]` reports calibration steps,
+selected device focus position, ROI sharpness, verification or fallback.
+
+**Validation pending:** Windows/BCC64X build and hardware tests with the
+specific user camera. Focus on the horizontal surface should improve
+table-card detection only when the camera's manual focus control is
+functional and the surface provides enough features for calibration.
+Neither camera minimum focus distance nor numerical focus range is
+established by the existing logs.
