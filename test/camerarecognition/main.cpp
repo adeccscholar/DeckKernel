@@ -1874,6 +1874,7 @@ class CameraWindow {
    cv::Mat m_pixels;
    cv::Mat m_rectifiedPixels;
    bool m_flip180{};
+   bool m_focusReset{};
    static void PaintImage(HDC dc,cv::Mat const& image,RECT const& area) {
       if(image.empty())return;
       int const availableWidth=area.right-area.left;
@@ -1920,6 +1921,10 @@ class CameraWindow {
          std::println("[CAM] manual card orientation={} degrees (R toggles)",
             self->m_flip180?180:0);
          InvalidateRect(hwnd,nullptr,FALSE);
+         return 0;
+      }
+      if(msg==WM_KEYDOWN && self && wp==static_cast<WPARAM>('F')) {
+         self->m_focusReset=true;
          return 0;
       }
       if(msg==WM_CLOSE){DestroyWindow(hwnd);return 0;}
@@ -1989,6 +1994,11 @@ public:
          "input; press R to toggle 0/180 degrees");
    }
    [[nodiscard]] bool Flip180() const noexcept {return m_flip180;}
+   [[nodiscard]] bool ConsumeFocusReset() noexcept {
+      bool const boReset=m_focusReset;
+      m_focusReset=false;
+      return boReset;
+   }
    bool Messages() {
       MSG message{};
       while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){
@@ -2852,6 +2862,15 @@ int main(int argc,char** argv) {
          }
          failures=0;
          ++count;
+         if(preview.ConsumeFocusReset()) {
+            // Recalibrate only between physical sessions: never change
+            // optical settings while examining a frozen card.
+            if(!processor.CardLocked()) {
+               std::println("[CAM-TABLE-FOCUS] recalibration requested by F");
+               aTableFocus.Begin(capture);
+            }
+            else std::println("[CAM-TABLE-FOCUS] F ignored: card locked");
+         }
          FrameSignal const signal=MeasureFrame(frame);
          // Pre-focus independently of contours: a blurred table card must
          // never be required to pass layout recognition first.
