@@ -16,6 +16,7 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
+#include "CameraTrace.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -70,7 +71,7 @@ namespace deckkernel::camera {
          bool const boRestored=aCapture.set(cv::CAP_PROP_AUTOFOCUS,1.0);
          m_eState=State::Fallback;
          m_strStatus="Table focus unavailable - continuous autofocus";
-         std::println("[CAM-TABLE-FOCUS] fallback={} autofocus-restored={} "
+         deckkernel::camera::Trace("[CAM-TABLE-FOCUS] fallback={} autofocus-restored={} "
             "autofocus={} focus={}",szReason,boRestored,
             aCapture.get(cv::CAP_PROP_AUTOFOCUS),
             aCapture.get(cv::CAP_PROP_FOCUS));
@@ -184,7 +185,7 @@ namespace deckkernel::camera {
                m_eState=State::Locked;
                m_strStatus=std::format(
                   "Manual tabletop focus locked at {}",flPosition);
-               std::println("[CAM-TABLE-FOCUS] manual position={} "
+               deckkernel::camera::Trace("[CAM-TABLE-FOCUS] manual position={} "
                   "reported={}",flPosition,
                   aCapture.get(cv::CAP_PROP_FOCUS));
             }
@@ -196,7 +197,7 @@ namespace deckkernel::camera {
                aCapture.set(cv::CAP_PROP_AUTOFOCUS,1.0);
             m_eState=State::Continuous;
             m_strStatus="Continuous autofocus";
-            std::println("[CAM-TABLE-FOCUS] mode=continuous accepted={} "
+            deckkernel::camera::Trace("[CAM-TABLE-FOCUS] mode=continuous accepted={} "
                "reported={}",boAccepted,
                aCapture.get(cv::CAP_PROP_AUTOFOCUS));
             return;
@@ -215,7 +216,7 @@ namespace deckkernel::camera {
          }
          m_eState=State::Settling;
          m_strStatus="Calibrating focus at the tabletop";
-         std::println("[CAM-TABLE-FOCUS] settle start position={} "
+         deckkernel::camera::Trace("[CAM-TABLE-FOCUS] settle start position={} "
             "ROI=center 30%x60% (software scoring)",flFocus);
       }
 
@@ -278,7 +279,7 @@ namespace deckkernel::camera {
             m_uVerifySamples=0;
             m_flLockedSharpness=0.0;
             m_strStatus="Verifying locked tabletop focus";
-            std::println("[CAM-TABLE-FOCUS] selected position={} "
+            deckkernel::camera::Trace("[CAM-TABLE-FOCUS] selected position={} "
                "best-roi-sharpness={:.1f} stable-samples={}",
                m_flBestPosition,m_flBestSharpness,m_uStableSamples);
             return true;
@@ -298,7 +299,7 @@ namespace deckkernel::camera {
          m_eState=State::Locked;
          m_strStatus=std::format("Tabletop focus locked at {:.0f}",
             aCapture.get(cv::CAP_PROP_FOCUS));
-         std::println("[CAM-TABLE-FOCUS] locked position={} "
+         deckkernel::camera::Trace("[CAM-TABLE-FOCUS] locked position={} "
             "before={:.1f} after={:.1f} verified-frames={}",
             aCapture.get(cv::CAP_PROP_FOCUS),m_flBestSharpness,
             m_flLockedSharpness,m_uVerifySamples);
