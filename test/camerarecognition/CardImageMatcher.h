@@ -70,6 +70,7 @@ namespace deckkernel::camera {
       // Explicit evidence survives when an intermediate status update is
       // overwritten by a newer worker result before the next UI poll.
       bool boArtworkRecognized{};
+      bool boOcrNameRecognized{};
       unsigned uSelectionSerial{};
    };
 
@@ -86,6 +87,7 @@ namespace deckkernel::camera {
          std::optional<PrintingCandidate> optSelection;
          unsigned uSelectionSerial{};
          std::filesystem::path aEvidenceDirectory;
+         std::optional<std::string> optOcrName;
       };
 
       struct Ranked final {
@@ -1070,6 +1072,73 @@ namespace deckkernel::camera {
          return aResult;
       }
 
+      /**
+      \brief Recover printing candidates using an OCR card title as last resort.
+      \details Exact case-insensitive name equality is required. OCR cannot
+         establish a printing: every returned printing stays unverified.
+         The query runs only after artwork recognition failed.
+      \param pConnection Worker-owned PostgreSQL connection.
+      \param aTask Frozen-card event containing a name-OCR observation.
+      \returns Candidate printings with no claim of visual verification.
+      \throw std::runtime_error On SQL errors.
+      */
+      CardImageMatchResult MatchOcrName(PGconn* pConnection,
+         Task const& aTask) {
+         CardImageMatchResult aResult{aTask.uEvent};
+         aResult.boComplete=true;
+         aResult.strStatus="OCR NAME NOT FOUND - discard or retry";
+         if(!aTask.optOcrName || aTask.optOcrName->size()<3)
+            return aResult;
+         char const* arrParams[]{aTask.optOcrName->c_str()};
+         result_ty aRows(PQexecParams(pConnection,
+            "SELECT a.id::text,c.scryfall_id,cf.face_id::text,cf.name,"
+            "s.code,c.collector_number,c.lang,v.variant,"
+            "cf.type_line,cf.mana_cost,s.name,r.code,"
+            "COALESCE(c.oracle_id,'') "
+            "FROM deckkernel_test.scryfall_card_faces cf "
+            "JOIN deckkernel_test.scryfall_cards c ON c.id=cf.card_id "
+            "JOIN deckkernel_test.scryfall_sets s ON s.id=c.set_id "
+            "JOIN deckkernel_test.dom_rarities r ON r.id=c.rarity_id "
+            "JOIN deckkernel_test.scryfall_card_image_variants v "
+            "ON v.card_id=cf.card_id AND v.face_id=cf.face_id "
+            "AND v.variant='normal' "
+            "JOIN deckkernel_test.scryfall_image_assets a "
+            "ON a.id=v.asset_id AND a.image_data IS NOT NULL "
+            "WHERE lower(cf.name)=lower($1::text) "
+            "ORDER BY s.code,c.collector_number LIMIT 32",
+            1,nullptr,arrParams,nullptr,nullptr,0));
+         if(!aRows || PQresultStatus(aRows.get())!=PGRES_TUPLES_OK)
+            throw std::runtime_error(std::format(
+               "OCR name lookup failed: {}",PQerrorMessage(pConnection)));
+         for(int iRow=0;iRow<PQntuples(aRows.get());++iRow) {
+            PrintingCandidate aCandidate;
+            aCandidate.strAssetId=PQgetvalue(aRows.get(),iRow,0);
+            aCandidate.strPrintingId=PQgetvalue(aRows.get(),iRow,1);
+            aCandidate.iFace=std::stoi(PQgetvalue(aRows.get(),iRow,2));
+            aCandidate.strName=PQgetvalue(aRows.get(),iRow,3);
+            aCandidate.strSet=PQgetvalue(aRows.get(),iRow,4);
+            aCandidate.strCollector=PQgetvalue(aRows.get(),iRow,5);
+            aCandidate.strLanguage=PQgetvalue(aRows.get(),iRow,6);
+            aCandidate.strVariant=PQgetvalue(aRows.get(),iRow,7);
+            aCandidate.strTypeLine=PQgetvalue(aRows.get(),iRow,8);
+            aCandidate.strManaCost=PQgetvalue(aRows.get(),iRow,9);
+            aCandidate.strSetName=PQgetvalue(aRows.get(),iRow,10);
+            aCandidate.strRarity=PQgetvalue(aRows.get(),iRow,11);
+            aCandidate.strOracleId=PQgetvalue(aRows.get(),iRow,12);
+            aResult.vecCandidates.push_back(std::move(aCandidate));
+         }
+         if(aResult.vecCandidates.empty())return aResult;
+         aResult.boOcrNameRecognized=true;
+         aResult.boCandidatesTruncated=PQntuples(aRows.get())==32;
+         SetPrinting(aResult,aResult.vecCandidates.front());
+         aResult.strStatus=std::format(
+            "OCR TITLE MATCH - {} possible printings (UNVERIFIED)",
+            aResult.vecCandidates.size());
+         aResult.strEdition="OCR title only; printing requires manual selection";
+         LoadReference(pConnection,aResult);
+         return aResult;
+      }
+
       [[nodiscard]] bool Cancelled(unsigned uEvent) const noexcept {
          return m_uActiveEvent.load(std::memory_order_relaxed)!=uEvent;
       }
@@ -1269,6 +1338,8 @@ namespace deckkernel::camera {
                if(Cancelled(aTask.uEvent))continue;
                if(aTask.optSelection)
                   Publish(DisplaySelection(aConnection.get(),aTask));
+               else if(aTask.optOcrName)
+                  Publish(MatchOcrName(aConnection.get(),aTask));
                else
                   Publish(Match(aConnection.get(),aTask));
                deckkernel::camera::Trace("[CAM-MATCH] card #{} worker finished elapsed={:.2f}s",
@@ -1364,6 +1435,22 @@ namespace deckkernel::camera {
          m_uActiveEvent.store(0,std::memory_order_relaxed);
          m_pending.reset();
          m_result.reset();
+      }
+
+      /**
+      \brief Search candidate printings by the final title-OCR observation.
+      \details Reuses the existing worker and current frozen event. No
+         artwork rescan or global full-card match is launched.
+      \param strName OCR text with adequate confidence.
+      \param uEvent Frozen card event.
+      \returns Nothing.
+      \throw std::bad_alloc If queueing the OCR result fails.
+      */
+      void SearchName(std::string const& strName,unsigned uEvent) {
+         std::lock_guard const aLock(m_mutex);
+         if(m_uActiveEvent.load(std::memory_order_relaxed)!=uEvent)return;
+         m_pending=Task{uEvent,{}, {},0,{},strName};
+         m_signal.notify_one();
       }
 
       /** \brief Receive the latest completed asynchronous result.
