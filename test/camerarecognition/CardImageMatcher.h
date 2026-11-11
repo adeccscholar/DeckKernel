@@ -511,6 +511,88 @@ namespace deckkernel::camera {
          return optBest;
       }
 
+
+      /**
+      \brief Match multiple face crops against one shared database shortlist.
+      \details The minimum dHash rank across the crops avoids repeated global
+         feature-table scans; each crop retains its own ORB descriptor.
+      \param pConnection Dedicated worker connection.
+      \param vecImages Candidate image crops.
+      \returns The best match with its query index, or no result.
+      \throw std::runtime_error On database lookup failure.
+      \note The combined shortlist is heuristic, not exhaustive.
+      */
+      [[nodiscard]] std::optional<std::pair<Ranked,std::size_t>>
+      FindArtworksBatch(PGconn* pConnection,
+         std::vector<cv::Mat> const& vecImages) const {
+         if(vecImages.empty())return std::nullopt;
+         std::vector<std::string> vecHashes;
+         std::vector<cv::Mat> vecDescriptors;
+         for(cv::Mat const& aImage:vecImages) {
+            vecHashes.push_back(DHashBits(aImage));
+            vecDescriptors.push_back(Descriptors(aImage));
+         }
+         std::string strDistance="LEAST(";
+         std::vector<char const*> vecParameters;
+         for(std::size_t uIndex=0;uIndex<vecHashes.size();++uIndex) {
+            if(uIndex>0)strDistance+=",";
+            strDistance+="bit_count(f.perceptual_hash # $"+
+               std::to_string(uIndex+1)+"::bit(64))";
+            vecParameters.push_back(vecHashes[uIndex].c_str());
+         }
+         strDistance+=")";
+         std::string const strLimit=std::to_string(
+            std::max(800u,m_uCandidates));
+         vecParameters.push_back(strLimit.c_str());
+         std::string const strSql=
+            "SELECT a.id::text,COALESCE(a.illustration_id,''),"
+            +strDistance+",f.orb_descriptors,f.perceptual_hash::text "
+            "FROM deckkernel_test.scryfall_image_features f "
+            "JOIN deckkernel_test.scryfall_image_assets a ON a.id=f.asset_id "
+            "WHERE f.algorithm='dhash64-orb' AND f.algorithm_version=1 "
+            "AND f.perceptual_hash IS NOT NULL AND a.image_data IS NOT NULL "
+            "AND EXISTS (SELECT 1 FROM deckkernel_test.scryfall_card_image_variants v "
+            "WHERE v.asset_id=a.id AND v.variant='art_crop') "
+            "ORDER BY "+strDistance+",a.id "
+            "LIMIT $"+std::to_string(vecParameters.size())+"::integer";
+         auto const aStart=std::chrono::steady_clock::now();
+         result_ty aRows(PQexecParams(pConnection,strSql.c_str(),
+            static_cast<int>(vecParameters.size()),nullptr,
+            vecParameters.data(),nullptr,nullptr,0));
+         if(!aRows || PQresultStatus(aRows.get())!=PGRES_TUPLES_OK)
+            throw std::runtime_error(std::format(
+               "batch artwork search failed: {}",PQerrorMessage(pConnection)));
+         double const flSql=std::chrono::duration<double>(
+            std::chrono::steady_clock::now()-aStart).count();
+         std::optional<std::pair<Ranked,std::size_t>> optBest;
+         for(int iRow=0;iRow<PQntuples(aRows.get());++iRow) {
+            std::string_view const svReference=PQgetvalue(aRows.get(),iRow,4);
+            for(std::size_t uQuery=0;uQuery<vecImages.size();++uQuery) {
+               if(vecDescriptors[uQuery].empty())continue;
+               Ranked aMatch;
+               aMatch.strAssetId=PQgetvalue(aRows.get(),iRow,0);
+               aMatch.strIllustrationId=PQgetvalue(aRows.get(),iRow,1);
+               aMatch.iHash=0;
+               for(std::size_t uBit=0;uBit<64 && uBit<svReference.size();++uBit)
+                  aMatch.iHash+=vecHashes[uQuery][uBit]!=svReference[uBit];
+               aMatch.iOrb=OrbMatches(
+                  vecDescriptors[uQuery],aRows.get(),iRow,3);
+               if(!optBest || Better(aMatch,optBest->first))
+                  optBest=std::pair<Ranked,std::size_t>{
+                     std::move(aMatch),uQuery};
+            }
+         }
+         double const flElapsed=std::chrono::duration<double>(
+            std::chrono::steady_clock::now()-aStart).count();
+         deckkernel::camera::Trace(
+            "[CAM-ART-BATCH] crops={} candidates={} sql={:.2f}s "
+            "orb={:.2f}s best-orb={} best-hash={}",
+            vecImages.size(),PQntuples(aRows.get()),flSql,
+            flElapsed-flSql,optBest?optBest->first.iOrb:0,
+            optBest?optBest->first.iHash:65);
+         return optBest;
+      }
+
       /** \brief Resolve a shared art image to a display name.
           \details This does not establish the printing.
           \param pConnection Worker database connection.
