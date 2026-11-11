@@ -1332,11 +1332,13 @@ public:
       if(m_focusPending)return m_boFocusHintShown?
          "Move card closer or adjust focus; physical card remains locked":
          "Autofocus settling; selecting the sharpest frame";
-      if(m_identity.Count()>1 && !m_identity.Confirmed())
-         return std::format("Left/right: printing {}/{} | Enter: confirm",
+      if(m_identity.Count()>0 && m_recognitionReady)
+         return std::format(
+            "Left/right or wheel: printing {}/{} | Enter/click: add | Esc/right-click: discard",
             m_identity.Index()+1,m_identity.Count());
-      if(!m_recognitionReady)return "Card captured; identifying artwork / printing...";
-      return "Card held; remove it for the next scan";
+      if(!m_recognitionReady)
+         return "Image search active; Esc/right-click discards this scan";
+      return "No printing candidate; Esc/right-click to rescan";
    }
    /**
    \brief Normalize printed set codes and collector numbers for OCR comparison.
@@ -2128,10 +2130,10 @@ void SelfTest() {
    cv::Mat aFocusBlur;
    cv::GaussianBlur(aFocusTexture,aFocusBlur,
       cv::Size(31,31),8.0);
-   auto const aBlurred=
+   auto const aBlurredFocusMetrics=
       deckkernel::camera::TablePlaneFocus::Measure(aFocusBlur);
    if(!aSharp.boUsable ||
-      aSharp.flSharpness<=aBlurred.flSharpness)
+      aSharp.flSharpness<=aBlurredFocusMetrics.flSharpness)
       throw std::runtime_error("table focus optical-score regression");
 #endif
    // REGRESSION: a printed collector strip just OUTSIDE the detected
