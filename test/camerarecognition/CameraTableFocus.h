@@ -50,6 +50,7 @@ namespace deckkernel::camera {
       State m_eState{State::Continuous};
       std::optional<int> m_optManualPosition;
       bool m_boTableMode{};
+      bool m_boManualFocusUnsupported{};
       clock_ty::time_point m_started{};
       cv::Mat m_previous;
       double m_flBestSharpness{};
@@ -70,7 +71,10 @@ namespace deckkernel::camera {
       void Fallback(cv::VideoCapture& aCapture,char const* szReason) {
          bool const boRestored=aCapture.set(cv::CAP_PROP_AUTOFOCUS,1.0);
          m_eState=State::Fallback;
-         m_strStatus="Table focus unavailable - continuous autofocus";
+         // A camera that already rejected manual locking is not repeatedly
+         // calibrated for several seconds on every new scan.
+         m_boManualFocusUnsupported=true;
+         m_strStatus="Manual focus unavailable - continuous autofocus";
          deckkernel::camera::Trace("[CAM-TABLE-FOCUS] fallback={} autofocus-restored={} "
             "autofocus={} focus={}",szReason,boRestored,
             aCapture.get(cv::CAP_PROP_AUTOFOCUS),
@@ -178,6 +182,11 @@ namespace deckkernel::camera {
          m_uStableSamples=0;
          m_uVerifySamples=0;
          m_started=clock_ty::now();
+         if(m_boManualFocusUnsupported) {
+            m_eState=State::Fallback;
+            m_strStatus="Manual focus unavailable - continuous autofocus";
+            return;
+         }
          if(m_optManualPosition) {
             double const flPosition=static_cast<double>(
                *m_optManualPosition);
