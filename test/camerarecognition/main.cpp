@@ -1292,7 +1292,11 @@ public:
    */
    [[nodiscard]] bool ConfirmCandidate() {
       if(!m_capture.Frozen() || !m_recognitionReady ||
-         !m_identity.Selected() || !m_identity.Confirm())return false;
+         !m_identity.Selected() || !m_identity.Confirm()) {
+         if(m_capture.Frozen())
+            m_strStatus="NO PRINTING SELECTED - wait or discard this scan";
+         return false;
+      }
       ApplySelectedPrinting();
       auto const& aSelected=*m_identity.Selected();
       m_vecCollected.push_back(deckkernel::camera::CollectedCard{
@@ -1315,7 +1319,6 @@ public:
    \throw None.
    */
    [[nodiscard]] bool DiscardScan() {
-      if(!m_cardLocked)return false;
       std::println("[CAM-COLLECT] discarded event={} collected={}",
          m_ocrCard.value_or(0),m_vecCollected.size());
       ResetScan();
