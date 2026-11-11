@@ -1171,3 +1171,73 @@ checked. BCC64X compilation and real-time camera/database acceptance
 tests are not performed in this environment. Use the same cards to
 compare: card acquisition count, non-card false locks, artwork-first
 top-k hits, wrong fallback identities and latencies.
+
+## 2026-11-11: quiet fast live scanning and real last-resort OCR
+
+A real test with `--camera=4 --fps=30 --fourcc=mjpg` produced a large
+unconditional diagnostic stream even without `--verbose`. It showed
+that a **discarded** image job continued executing SQL, ORB and a global
+full-card fallback while the next camera scan was already underway.
+One unrecognized card spent approximately 12.45 seconds in the worker.
+On the same camera, manual focus locking repeatedly failed through
+DirectShow (`focus lock not supported/read back`).
+
+The ordinary live scan now uses these rules:
+
+1. Console diagnostics and their formatting are disabled by default.
+   Errors still go to stderr; the dashboard continues to show all user
+   states. `--verbose` explicitly enables detailed output, but does
+   **not** select a different recognition algorithm.
+2. Source-image saving, intermediate crops and evidence files remain
+   off unless `--save-events` is specified. No image-index cache,
+   persistent PostgreSQL features or downloaded artwork are deleted.
+3. A strong artwork match (at least 25 unique ORB correspondences and
+   dHash distance no more than 20) stops the remaining art orientation
+   and crop queries; printing lookup is then limited to the linked
+   illustration and its actual printing variants.
+4. Without a reliable artwork hit, the default path no longer performs
+   the expensive, unreliable global full-card top-100 dHash/ORB fallback.
+   For a controlled comparison, `--deep-search` explicitly enables
+   that legacy fallback. `--verbose` remains independent.
+5. Escape/right-click invalidates the active matcher event and drops
+   pending tasks/results immediately. An in-progress PostgreSQL
+   statement may complete, but subsequent SQL and ORB phases are
+   skipped and obsolete results cannot update a newer card.
+6. A camera that rejects manual focus locking is remembered for the
+   current application session. Subsequent scans use continuous
+   autofocus immediately instead of repeating several seconds of
+   ineffective tabletop calibration.
+
+**The previously missing OCR fallback is now connected.** After the
+complete visual artwork search fails, and only then, a separate OCR
+task reads the *title band* of the immutable frozen card in both 0 and
+180 degree orientation. A result below 65 OCR confidence or shorter
+than three characters remains unresolved. Otherwise the existing
+PostgreSQL worker makes an **exact, case-insensitive card-face name**
+query, using the stored Scryfall records. Matching names yield up to
+32 unverified printing choices. The operator must still select the
+correct printing with arrows or mouse wheel and explicitly confirm;
+OCR text does not certify the card's set, printing, or identity.
+If visual artwork recognition succeeds but several printings remain,
+the separate lower-margin OCR still assists that narrower choice.
+Asynchronous OCR results carry the original event ID and cannot
+overwrite a later scan.
+
+Suggested ordinary test:
+
+~~~bat
+apps\Release\deckkernel_camera_recognition_test.exe --camera=4 --fps=30 --fourcc=mjpg
+~~~
+
+For explicit analysis:
+
+~~~bat
+apps\Release\deckkernel_camera_recognition_test.exe --camera=4 --fps=30 --fourcc=mjpg --verbose --save-events --deep-search
+~~~
+
+**Verification pending:** source/branch consistency has been checked,
+but Windows BCC64X compilation and real camera/database timing have
+not yet been executed here. Benchmark separately: physical-card
+acquisition, strong artwork response, no-visual-match OCR escalation,
+exact-name DB result, acceptance/escape latency and printer candidate
+loading. No new measured throughput or accuracy figure is claimed.
