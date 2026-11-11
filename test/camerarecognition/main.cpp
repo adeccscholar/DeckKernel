@@ -971,6 +971,29 @@ public:
    validation. A low-confidence response must not identify a printing.
    \throw cv::Exception If image preprocessing fails.
    */
+   /**
+   \brief Recognize the frozen card title as last visual-search fallback.
+   \details Evaluates both 180-degree orientations, without rescanning.
+   \param aFrozen The immutable frozen card image.
+   \returns Best OCR name and confidence.
+   \throw cv::Exception If OCR preprocessing fails.
+   */
+   [[nodiscard]] std::pair<std::string,int> ReadFrozenTitle(
+      cv::Mat const& aFrozen) {
+      if(aFrozen.empty())return {{},0};
+      auto const ReadTitle=[this](cv::Mat const& aCard)->OcrResult {
+         auto const aZones=deckkernel_camera::ocr::Detect(aCard);
+         return ReadRegion(aCard,aZones.name,tesseract::PSM_SINGLE_LINE);
+      };
+      OcrResult aBest=ReadTitle(aFrozen);
+      cv::Mat aReversed;
+      cv::rotate(aFrozen,aReversed,cv::ROTATE_180);
+      OcrResult const aReverse=ReadTitle(aReversed);
+      if(aReverse.confidence>aBest.confidence &&
+         !aReverse.text.empty())aBest=aReverse;
+      return {aBest.text,aBest.confidence};
+   }
+
    [[nodiscard]] std::pair<std::string,int> ReadPrintingMargin(
       cv::Mat const& aBottom) {
       if(aBottom.empty())return {{},0};
@@ -1184,6 +1207,10 @@ class Processor {
    std::string m_strPrintingOcrData;
    std::future<std::pair<std::string,int>> m_printingOcr;
    unsigned m_uPrintingOcrEvent{};
+   std::future<std::pair<std::string,int>> m_nameOcr;
+   unsigned m_uNameOcrEvent{};
+   bool m_boNameOcrStarted{};
+   bool m_boOcrNameRecognized{};
 #endif
    std::string m_strEdition{"Edition not verified"};
    bool m_recognitionReady{};
@@ -1299,6 +1326,9 @@ public:
    void ResetScan() {
       m_detector.Reset();
       m_tracker.Reset();
+#if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
+      if(m_artwork)m_artwork->Cancel();
+#endif
       m_capture.Clear();
       m_identity.Clear();
       m_ocrCard.reset();
@@ -1314,6 +1344,9 @@ public:
       m_boCapturedRotate180=false;m_iReferenceOrientation=0;
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
       m_uPrintingOcrEvent=0;
+         m_uNameOcrEvent=0;
+         m_boNameOcrStarted=false;
+         m_boOcrNameRecognized=false;
 #endif
       m_strName="--";m_strType="--";m_strRules="--";
       m_strMana="No mana evidence";
@@ -1337,7 +1370,7 @@ public:
    */
    [[nodiscard]] bool ConfirmCandidate() {
       if(!m_capture.Frozen() || !m_recognitionReady ||
-         !m_boArtworkRecognized ||
+         !(m_boArtworkRecognized || m_boOcrNameRecognized) ||
          !m_identity.Selected() || !m_identity.Confirm()) {
          if(m_capture.Frozen())
             m_strStatus="ARTWORK/PRINTING NOT READY - wait or discard";
@@ -1382,7 +1415,7 @@ public:
          "Move card closer or adjust focus; physical card remains locked":
          "Autofocus settling; selecting the sharpest frame";
       if(m_identity.Count()>0 && m_recognitionReady &&
-         m_boArtworkRecognized)
+         (m_boArtworkRecognized || m_boOcrNameRecognized))
          return std::format(
             "Left/right or wheel: printing {}/{} | Enter/click: add | Esc/right-click: discard",
             m_identity.Index()+1,m_identity.Count());
@@ -1407,6 +1440,74 @@ public:
             strResult.push_back(static_cast<char>(ch));
       }
       return strResult;
+   }
+
+   /**
+   \brief Start one-shot frozen title OCR after failed visual matching.
+   \details The camera loop is not involved and the full card is unchanged.
+   \returns Nothing.
+   \throw std::system_error If worker startup fails.
+   */
+   void StartNameOcr() {
+#if defined(DECKKERNEL_CAMERA_HAS_OCR)
+      if(m_boNameOcrStarted || m_nameOcr.valid() ||
+         m_strPrintingOcrData.empty() || !m_capture.Frozen() ||
+         !m_ocrCard)return;
+      m_boNameOcrStarted=true;
+      m_uNameOcrEvent=*m_ocrCard;
+      cv::Mat const aFrozen=m_capture.Image().clone();
+      std::string const strData=m_strPrintingOcrData;
+      SetPhase(deckkernel::camera::RecognitionPhase::PrintingOcr);
+      m_strStatus="VISUAL MATCH FAILED - reading frozen title";
+      m_nameOcr=std::async(std::launch::async,
+         [aFrozen,strData]() -> std::pair<std::string,int> {
+            CardOcr aOcr(strData);
+            return aOcr.ReadFrozenTitle(aFrozen);
+         });
+#endif
+   }
+
+   /**
+   \brief Poll asynchronous title OCR and resolve exact names in PostgreSQL.
+   \details OCR results from discarded events cannot affect newer scans.
+   \returns Nothing.
+   \throw None.
+   */
+   void PollNameOcr() {
+#if defined(DECKKERNEL_CAMERA_HAS_OCR)
+      if(!m_nameOcr.valid())return;
+      if(m_nameOcr.wait_for(std::chrono::seconds(0))!=
+         std::future_status::ready)return;
+      unsigned const uFinished=m_uNameOcrEvent;
+      std::pair<std::string,int> aName;
+      try {aName=m_nameOcr.get();}
+      catch(std::exception const& aException) {
+         if(m_ocrCard && *m_ocrCard==uFinished) {
+            m_strStatus=std::format("TITLE OCR ERROR: {}",aException.what());
+            SetPhase(deckkernel::camera::RecognitionPhase::Unresolved);
+         }
+         return;
+      }
+      if(!m_ocrCard || *m_ocrCard!=uFinished) {
+         if(m_ocrCard && !m_boNameOcrStarted &&
+            m_recognitionReady && m_identity.Count()==0)
+            StartNameOcr();
+         return;
+      }
+      deckkernel::camera::Trace("[CAM-NAME-OCR] card={} text='{}' confidence={}",
+         uFinished,aName.first,aName.second);
+      if(aName.second<65 || aName.first.size()<3) {
+         m_strStatus="OCR TITLE INCONCLUSIVE - discard or retry";
+         SetPhase(deckkernel::camera::RecognitionPhase::Unresolved);
+         return;
+      }
+#if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
+      if(m_artwork) {
+         m_strStatus="OCR TITLE FOUND - checking Scryfall name";
+         m_artwork->SearchName(aName.first,uFinished);
+      }
+#endif
+#endif
    }
 
    /**
@@ -1567,6 +1668,8 @@ public:
       }
       if(!result->boCandidateSelection && result->boArtworkRecognized)
          m_boArtworkRecognized=true;
+      if(!result->boCandidateSelection && result->boOcrNameRecognized)
+         m_boOcrNameRecognized=true;
       m_strStatus=result->strStatus;
       m_strEdition=result->strEdition;
       if(!result->boCandidateSelection)
@@ -1584,8 +1687,12 @@ public:
          SetPhase(result->strStatus.find("ARTWORK")!=std::string::npos?
             deckkernel::camera::RecognitionPhase::Artwork:
             deckkernel::camera::RecognitionPhase::Printing);
-      else if(m_identity.Count()==0 && !result->boCandidateSelection)
+      else if(m_identity.Count()==0 && !result->boCandidateSelection) {
          SetPhase(deckkernel::camera::RecognitionPhase::Unresolved);
+         if(!m_boNameOcrStarted &&
+            !result->strStatus.starts_with("OCR NAME"))
+            StartNameOcr();
+      }
       if(!result->strName.empty())m_strName=result->strName;
       if(!result->strTypeLine.empty())m_strType=result->strTypeLine;
       if(!result->strManaCost.empty())m_strManaCost=result->strManaCost;
@@ -1894,6 +2001,9 @@ public:
          m_iReferenceOrientation=0;
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
          m_uPrintingOcrEvent=0;
+         m_uNameOcrEvent=0;
+         m_boNameOcrStarted=false;
+         m_boOcrNameRecognized=false;
 #endif
          SetPhase(deckkernel::camera::RecognitionPhase::Searching);
          m_strName="--";m_strType="--";m_strRules="--";
@@ -2917,6 +3027,7 @@ int main(int argc,char** argv) {
          else if(arg.starts_with("--camera="))camera=CameraIndex(arg.substr(9));
          else throw std::runtime_error("unknown argument (use --help)");
       }
+      deckkernel::camera::SetTraceEnabled(verbose);
       if(selfTest){SelfTest();return 0;}
       if(probeCamera) {
 #if defined(DECKKERNEL_CAMERA_HAS_VIDEOIO)
@@ -3149,6 +3260,7 @@ int main(int argc,char** argv) {
          // the physical camera detector is paused on its frozen snapshot.
          processor.PollRecognition();
          processor.PollPrintingOcr();
+         processor.PollNameOcr();
          // PHASE 09: only the selected DB reference changes. A mouse wheel
          // or arrow cannot start a second physical capture.
          int const iBrowse=preview.ConsumeNavigation();
