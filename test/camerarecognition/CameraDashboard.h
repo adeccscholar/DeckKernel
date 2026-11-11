@@ -161,10 +161,7 @@ public:
       while(SDL_PollEvent(&aEvent)) {
          if(aEvent.type==SDL_QUIT)m_bRunning=false;
          if(aEvent.type==SDL_KEYDOWN) {
-            if(aEvent.key.keysym.sym==SDLK_ESCAPE) {
-               if(m_bCardLocked)m_boReject=true;
-               else m_bRunning=false;
-            }
+            if(aEvent.key.keysym.sym==SDLK_ESCAPE)m_boReject=true;
             if(aEvent.key.keysym.sym==SDLK_r)m_bFlip=!m_bFlip;
             if(aEvent.key.keysym.sym==SDLK_f)m_boFocusReset=true;
             if(aEvent.key.keysym.sym==SDLK_LEFT)--m_iNavigation;
@@ -182,8 +179,9 @@ public:
          if(aEvent.type==SDL_MOUSEWHEEL && m_bCardLocked &&
             aEvent.wheel.y!=0)
             m_iNavigation-=aEvent.wheel.y;
-         if(aEvent.type==SDL_MOUSEBUTTONDOWN && m_bCardLocked) {
-            if(aEvent.button.button==SDL_BUTTON_LEFT)m_boConfirm=true;
+         if(aEvent.type==SDL_MOUSEBUTTONDOWN) {
+            if(aEvent.button.button==SDL_BUTTON_LEFT && m_bCardLocked)
+               m_boConfirm=true;
             if(aEvent.button.button==SDL_BUTTON_RIGHT)m_boReject=true;
          }
       }
