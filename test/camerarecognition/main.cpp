@@ -2152,6 +2152,31 @@ public:
 #endif
 
 void SelfTest() {
+   // PHASE 10 regression: an explicit scan reset must free the physical
+   // lock without reusing its event number. A delayed result from scan 1
+   // must never become a result for scan 2.
+   StableCardTrigger aScanTrigger;
+   FoundCard aTestCard;
+   aTestCard.rectified=cv::Mat(700,500,CV_8UC3,
+      cv::Scalar(160,165,170));
+   aTestCard.corners={cv::Point(100,100),cv::Point(600,100),
+      cv::Point(600,800),cv::Point(100,800)};
+   aTestCard.fingerprint=0x12345678;
+   std::optional<StableCardTrigger::Event> optFirst;
+   for(int iFrame=0;iFrame<4;++iFrame)
+      optFirst=aScanTrigger.Accept(
+         std::optional<FoundCard>{aTestCard});
+   if(!optFirst || optFirst->number!=1 || !aScanTrigger.Active())
+      throw std::runtime_error("initial explicit scan regression");
+   aScanTrigger.Reset();
+   if(aScanTrigger.Active() || aScanTrigger.StableCount()!=0)
+      throw std::runtime_error("explicit scan reset retained old card");
+   std::optional<StableCardTrigger::Event> optSecond;
+   for(int iFrame=0;iFrame<4;++iFrame)
+      optSecond=aScanTrigger.Accept(
+         std::optional<FoundCard>{aTestCard});
+   if(!optSecond || optSecond->number!=2)
+      throw std::runtime_error("scan reset reused an asynchronous event ID");
 #if defined(DECKKERNEL_CAMERA_HAS_VIDEOIO)
    // PHASE 00: calibrated focus measurements never require a card contour.
    cv::Mat aFocusTexture(720,1280,CV_8UC3,cv::Scalar(105,110,120));
