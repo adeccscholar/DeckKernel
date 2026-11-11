@@ -19,6 +19,7 @@ both orientations. Results are suggestions until physically validated.
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include "CameraTrace.h"
 #include <chrono>
 #include <filesystem>
 #include <condition_variable>
@@ -133,6 +134,7 @@ namespace deckkernel::camera {
       std::optional<Task> m_pending;
       std::optional<CardImageMatchResult> m_result;
       bool m_stopping{};
+      std::atomic<unsigned> m_uActiveEvent{0};
       unsigned m_uCandidates{};
       std::thread m_worker;
 
@@ -1068,6 +1070,10 @@ namespace deckkernel::camera {
          return aResult;
       }
 
+      [[nodiscard]] bool Cancelled(unsigned uEvent) const noexcept {
+         return m_uActiveEvent.load(std::memory_order_relaxed)!=uEvent;
+      }
+
       CardImageMatchResult Match(PGconn* pConnection, Task const& aTask) {
          // PHASE 06: compare BOTH orientations and two card-art windows.
          // Never stop at the first barely acceptable visual match: it may
@@ -1079,10 +1085,17 @@ namespace deckkernel::camera {
          };
          std::optional<ArtworkChoice> optArtworkChoice;
          for(int iOrientation : {0,180}) {
+            if(Cancelled(aTask.uEvent))return CardImageMatchResult{aTask.uEvent};
             cv::Mat aOriented=aTask.aCard;
             if(iOrientation==180)
                cv::rotate(aTask.aCard,aOriented,cv::ROTATE_180);
             for(int iVariant=0;iVariant<2;++iVariant) {
+               if(Cancelled(aTask.uEvent))return CardImageMatchResult{aTask.uEvent};
+               // Normal mode evaluates the measured crop first. A strong
+               // illustration match need not pay for three other SQL scans.
+               if(optArtworkChoice && !deckkernel::camera::TraceEnabled() &&
+                  optArtworkChoice->aRanked.iOrb>=25 &&
+                  optArtworkChoice->aRanked.iHash<=20)break;
                ArtworkRegion const aRegion=Artwork(aOriented,iVariant);
                if(aRegion.aImage.empty())continue;
                if(!aTask.aEvidenceDirectory.empty()) {
@@ -1110,6 +1123,8 @@ namespace deckkernel::camera {
                   "Comparing indexed illustrations",false});
                std::optional<Ranked> optCandidate=FindArtwork(
                   pConnection,aRegion.aImage);
+               if(Cancelled(aTask.uEvent))
+                  return CardImageMatchResult{aTask.uEvent};
                bool const boAccepted=optCandidate &&
                   AcceptArtwork(*optCandidate);
                std::println("[CAM-ART] card={} orientation={} window={} "
@@ -1125,6 +1140,7 @@ namespace deckkernel::camera {
                }
             }
          }
+         if(Cancelled(aTask.uEvent))return CardImageMatchResult{aTask.uEvent};
          if(optArtworkChoice) {
             int const iOrientation=optArtworkChoice->iOrientation;
             Ranked const& aArt=optArtworkChoice->aRanked;
@@ -1144,6 +1160,7 @@ namespace deckkernel::camera {
             Publish(aArtworkResult);
             std::vector<Ranked> vecPrintings=FindPrintings(
                pConnection,aOriented,std::optional<Ranked>{aArt});
+            if(Cancelled(aTask.uEvent))return CardImageMatchResult{aTask.uEvent};
             RefinePrintingImages(pConnection,aOriented,vecPrintings);
             CardImageMatchResult aResult=SummarizePrintings(
                vecPrintings,true,aTask.uEvent,iOrientation);
@@ -1159,17 +1176,26 @@ namespace deckkernel::camera {
             LoadReference(pConnection,aResult);
             return aResult;
          }
+         // In normal live scanning, a global full-card search over millions
+         // of images is expensive and produces frame/text false positives.
+         // Return quickly and let frozen-image OCR be the last resort.
+         // --verbose retains the legacy global fallback for diagnosis.
+         if(!deckkernel::camera::TraceEnabled())
+            return CardImageMatchResult{aTask.uEvent,
+               "ARTWORK NOT FOUND - OCR fallback", "Visual evidence insufficient"};
          // Both artwork orientations failed: the full card becomes the fallback.
          cv::Mat aCard=aTask.aCard;
          std::optional<CardImageMatchResult> optBest;
          int iBestOrb = -1, iBestHash = 65;
          aCard = aTask.aCard;
          for(int iOrientation : {0, 180}) {
+            if(Cancelled(aTask.uEvent))return CardImageMatchResult{aTask.uEvent};
             Publish(CardImageMatchResult{
                aTask.uEvent,std::format("ARTWORK NOT FOUND - full card {} deg",iOrientation),
                "Searching complete-card index",false});
             std::vector<Ranked> vecMatches =
                FindPrintings(pConnection, aCard, std::nullopt);
+            if(Cancelled(aTask.uEvent))return CardImageMatchResult{aTask.uEvent};
             RefinePrintingImages(pConnection,aCard,vecMatches);
             CardImageMatchResult aResult = SummarizePrintings(
                vecMatches, false, aTask.uEvent, iOrientation);
@@ -1190,7 +1216,9 @@ namespace deckkernel::camera {
             LoadReference(pConnection,*optBest);
             return std::move(*optBest);
          }
-         return CardImageMatchResult{aTask.uEvent,DiagnoseIndex(pConnection),
+         return CardImageMatchResult{aTask.uEvent,
+            deckkernel::camera::TraceEnabled()?DiagnoseIndex(pConnection):
+               "NO VISUAL MATCH - OCR fallback",
             "Edition not verified"};
       }
 
@@ -1202,6 +1230,8 @@ namespace deckkernel::camera {
       */
       void Publish(CardImageMatchResult aResult) {
          std::lock_guard const aLock(m_mutex);
+         if(aResult.uEvent!=m_uActiveEvent.load(
+            std::memory_order_relaxed))return;
          m_result = std::move(aResult);
       }
 
@@ -1223,6 +1253,7 @@ namespace deckkernel::camera {
                aTask=std::move(*m_pending);
                m_pending.reset();
             }
+            if(Cancelled(aTask.uEvent))continue;
             try {
                auto const aStart=std::chrono::steady_clock::now();
                std::println("[CAM-MATCH] card #{} worker started selection={}",
@@ -1235,6 +1266,7 @@ namespace deckkernel::camera {
                }
                std::println("[CAM-MATCH] card #{} database ready",
                   aTask.uEvent);
+               if(Cancelled(aTask.uEvent))continue;
                if(aTask.optSelection)
                   Publish(DisplaySelection(aConnection.get(),aTask));
                else
@@ -1293,6 +1325,7 @@ namespace deckkernel::camera {
          std::filesystem::path const& aEvidenceDirectory={}) {
          {
             std::lock_guard const aLock(m_mutex);
+            m_uActiveEvent.store(uEvent,std::memory_order_relaxed);
             m_pending=Task{uEvent,aCard.clone(),{},0,aEvidenceDirectory};
          }
          m_signal.notify_one();
@@ -1312,9 +1345,25 @@ namespace deckkernel::camera {
          unsigned uSelectionSerial) {
          {
             std::lock_guard const aLock(m_mutex);
+            if(m_uActiveEvent.load(std::memory_order_relaxed)!=uEvent)return;
             m_pending=Task{uEvent,{},aCandidate,uSelectionSerial};
          }
          m_signal.notify_one();
+      }
+
+      /**
+      \brief Invalidate a discarded physical-card event.
+      \details Discards pending work and stops the running worker between
+         database and ORB phases. An SQL statement already executing may
+         complete first; stale results are not published.
+      \returns Nothing.
+      \throw None.
+      */
+      void Cancel() noexcept {
+         std::lock_guard const aLock(m_mutex);
+         m_uActiveEvent.store(0,std::memory_order_relaxed);
+         m_pending.reset();
+         m_result.reset();
       }
 
       /** \brief Receive the latest completed asynchronous result.
