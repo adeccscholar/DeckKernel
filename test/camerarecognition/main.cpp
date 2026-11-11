@@ -2020,6 +2020,32 @@ public:
 #endif
 
 void SelfTest() {
+#if defined(DECKKERNEL_CAMERA_HAS_VIDEOIO)
+   // PHASE 00: calibrated focus measurements never require a card contour.
+   cv::Mat aFocusTexture(720,1280,CV_8UC3,cv::Scalar(105,110,120));
+   cv::Rect const aFocusArea=
+      deckkernel::camera::TablePlaneFocus::FocusRegion(
+         aFocusTexture.size());
+   if(aFocusArea.width!=384 || aFocusArea.height!=432 ||
+      aFocusArea.x!=448 || aFocusArea.y!=144)
+      throw std::runtime_error("table focus ROI regression");
+   for(int iGrid=0;iGrid<18;++iGrid) {
+      cv::line(aFocusTexture,
+         cv::Point(aFocusArea.x+12+iGrid*18,aFocusArea.y+10),
+         cv::Point(aFocusArea.x+12+iGrid*18,aFocusArea.y+400),
+         cv::Scalar(20,25,30),2);
+   }
+   auto const aSharp=
+      deckkernel::camera::TablePlaneFocus::Measure(aFocusTexture);
+   cv::Mat aFocusBlur;
+   cv::GaussianBlur(aFocusTexture,aFocusBlur,
+      cv::Size(31,31),8.0);
+   auto const aBlurred=
+      deckkernel::camera::TablePlaneFocus::Measure(aFocusBlur);
+   if(!aSharp.boUsable ||
+      aSharp.flSharpness<=aBlurred.flSharpness)
+      throw std::runtime_error("table focus optical-score regression");
+#endif
    // REGRESSION: a printed collector strip just OUTSIDE the detected
    // inner frame must be visible in the source-pixel overscan, while the
    // canonical artwork/full-card image remains geometrically unchanged.
