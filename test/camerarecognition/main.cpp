@@ -689,10 +689,19 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
                unsigned uStrongSides{};
                for(double const flCoverage:arrEdgeCoverage)
                   uStrongSides+=flCoverage>=0.72;
+               // Borderless cards may have neither printed separator.
+               // Permit a convincingly supported physical silhouette,
+               // but do not accept isolated artwork with no exterior
+               // foreground/background distinction.
                bool const boStrongPhysicalOutline=
+                  uStrongSides>=3 && ratio>=1.28 && ratio<=1.55 &&
+                  area>=imageArea*0.006 && boundaryContrast>=12.0;
+               bool const boFullPerimeter=
                   uStrongSides>=4 && ratio>=1.28 && ratio<=1.55 &&
-                  (area>=imageArea*0.004);
-               if(!boStrongPhysicalOutline) {
+                  area>=imageArea*0.004;
+               bool const boOuterBoundary=
+                  boStrongPhysicalOutline || boFullPerimeter;
+               if(!boOuterBoundary) {
                   ++stats.rejectedPartialFrame;
                   continue;
                }
