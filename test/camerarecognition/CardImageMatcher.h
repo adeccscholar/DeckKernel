@@ -105,6 +105,7 @@ namespace deckkernel::camera {
          int iHash{65};
          int iOrb{};
          int iRegionDistance{128};
+         int iArtworkMatches{-1};
       };
 
       struct PgRelease final {
@@ -729,6 +730,51 @@ namespace deckkernel::camera {
           \throw None.
       */
       /**
+      \brief Independently corroborate the illustration of a full-card match.
+      \details Text and similar MTG frame borders can create false global
+      ORB matches. Here only isolated artwork pixels are compared.
+      \param aCamera Frozen camera card.
+      \param aReference Decoded DB printing image.
+      \returns Unique ratio-tested ORB artwork correspondences.
+      \throw cv::Exception If ORB matching fails.
+      \note Failure is inconclusive, not evidence for another identity.
+      */
+      [[nodiscard]] static int FullCardArtworkMatches(
+         cv::Mat const& aCamera,cv::Mat const& aReference) {
+         if(aCamera.empty() || aReference.empty())return 0;
+         ArtworkRegion const aCameraArt=Artwork(aCamera,0);
+         ArtworkRegion const aReferenceArt=Artwork(aReference,0);
+         if(aCameraArt.aImage.empty() || aReferenceArt.aImage.empty())
+            return 0;
+         cv::Mat const aQuery=Descriptors(aCameraArt.aImage);
+         cv::Mat const aRef=Descriptors(aReferenceArt.aImage);
+         if(aQuery.rows<2 || aRef.rows<2)return 0;
+         cv::BFMatcher aMatcher(cv::NORM_HAMMING,false);
+         std::vector<std::vector<cv::DMatch>> vecPairs;
+         aMatcher.knnMatch(aQuery,aRef,vecPairs,2);
+         std::vector<cv::DMatch> vecAccepted;
+         for(auto const& vecPair:vecPairs) {
+            if(vecPair.size()==2 &&
+               vecPair[0].distance<0.75f*vecPair[1].distance)
+               vecAccepted.push_back(vecPair[0]);
+         }
+         std::sort(vecAccepted.begin(),vecAccepted.end(),
+            [](cv::DMatch const& aLeft,cv::DMatch const& aRight) {
+               return aLeft.distance<aRight.distance;
+            });
+         std::vector<bool> vecUsed(static_cast<std::size_t>(aRef.rows),false);
+         int iMatches{};
+         for(cv::DMatch const& aMatch:vecAccepted) {
+            std::size_t const uIndex=
+               static_cast<std::size_t>(aMatch.trainIdx);
+            if(uIndex>=vecUsed.size()||vecUsed[uIndex])continue;
+            vecUsed[uIndex]=true;
+            ++iMatches;
+         }
+         return iMatches;
+      }
+
+      /**
       \brief Compare the frozen card's printed margin and set-symbol region.
       \details Two local 64-bit hashes supply evidence not found in pure
       artwork similarity. They cannot prove a unique physical printing.
@@ -785,6 +831,12 @@ namespace deckkernel::camera {
             if(aReference.aReferenceImage.empty())continue;
             aMatch.iRegionDistance=PrintingRegionDistance(
                aCard,aReference.aReferenceImage);
+            aMatch.iArtworkMatches=FullCardArtworkMatches(
+               aCard,aReference.aReferenceImage);
+            std::println("[CAM-FULL-ART] asset={} name={} "
+               "full-orb={} art-orb={} hash={}",
+               aMatch.strAssetId,aMatch.strName,aMatch.iOrb,
+               aMatch.iArtworkMatches,aMatch.iHash);
          }
          std::stable_sort(vecMatches.begin(),vecMatches.end(),
             [](Ranked const& aLeft,Ranked const& aRight) {
@@ -808,8 +860,16 @@ namespace deckkernel::camera {
          }
          Ranked const& aBest=vecMatches.front();
          bool const boVisualPrintingMatch=AcceptFull(aBest);
-         if(!boArtwork && !boVisualPrintingMatch) {
-            aResult.strStatus="FULL-CARD MATCH INSUFFICIENT";
+         if(!boArtwork &&
+            (!boVisualPrintingMatch || aBest.iArtworkMatches<12)) {
+            // Without a separately matching illustration, similarities
+            // between frames and printed text are not a card identity.
+            aResult.strStatus=
+               "FULL-CARD UNRESOLVED - artwork uncorroborated";
+            std::println("[CAM-FULL-REJECT] card={} asset={} "
+               "full-orb={} art-orb={} required-art-orb=12",
+               uEvent,aBest.strAssetId,aBest.iOrb,
+               aBest.iArtworkMatches);
             return aResult;
          }
          // An accepted artwork already identifies the illustration and
@@ -1107,6 +1167,7 @@ namespace deckkernel::camera {
             CardImageMatchResult aResult = SummarizePrintings(
                vecMatches, false, aTask.uEvent, iOrientation);
             if(!vecMatches.empty() && AcceptFull(vecMatches.front()) &&
+               vecMatches.front().iArtworkMatches>=12 &&
                (vecMatches.front().iOrb > iBestOrb ||
                (vecMatches.front().iOrb == iBestOrb &&
                   vecMatches.front().iHash < iBestHash))) {
