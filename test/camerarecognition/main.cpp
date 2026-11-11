@@ -121,6 +121,7 @@ struct CardDetectionDiagnostics {
    bool selectedLayoutRecognized{};
    unsigned rejectedShape{};
    unsigned rejectedAspect{};
+   unsigned rejectedOrientation{};
    unsigned selectedInnerPanels{};
    double selectedRatio{};
    bool inferredOuterFrame{};
@@ -256,6 +257,23 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
          double const longSide=std::max(
             rectangle.size.width,rectangle.size.height);
          if(shortSide<22.0)continue;
+         // Only nearly upright cards are presented on this table.
+         // The long-axis angle is invariant under a 180-degree turn;
+         // it is not evidence for the card's top/bottom orientation.
+         cv::Point2f arrAxisCorners[4];
+         rectangle.points(arrAxisCorners);
+         cv::Point2f const aFirstAxis=arrAxisCorners[1]-arrAxisCorners[0];
+         cv::Point2f const aSecondAxis=arrAxisCorners[2]-arrAxisCorners[1];
+         cv::Point2f const aLongAxis=
+            cv::norm(aFirstAxis)>=cv::norm(aSecondAxis)?
+               aFirstAxis:aSecondAxis;
+         double const flTilt=std::atan2(
+            std::abs(static_cast<double>(aLongAxis.x)),
+            std::abs(static_cast<double>(aLongAxis.y)))*180.0/CV_PI;
+         if(!std::isfinite(flTilt) || flTilt>15.0) {
+            ++stats.rejectedOrientation;
+            continue;
+         }
          double const rectangleArea=
             static_cast<double>(rectangle.size.width)*rectangle.size.height;
          if(rectangleArea<=0)continue;
@@ -2703,21 +2721,29 @@ void SelfTest() {
       cv::Rect(100,130,280,370)))[0]<175.0) {
       throw std::runtime_error("perspective warp failed to preserve card pixels");
    }
-      // A rotated print with a broken border must still yield a card target.
-   cv::Mat rotatedScene(900,1600,CV_8UC3,cv::Scalar(38,38,38));
-   cv::RotatedRect testRect(cv::Point2f(800.f,450.f),
-      cv::Size2f(178.f,250.f),24.f);
-   cv::Point2f testPoints[4];
-   testRect.points(testPoints);
-   std::vector<cv::Point> polygon;
-   for(auto const& p:testPoints)
-      polygon.emplace_back(cvRound(p.x),cvRound(p.y));
-   cv::fillConvexPoly(rotatedScene,polygon,cv::Scalar(224,224,224));
-   cv::polylines(rotatedScene,polygon,true,cv::Scalar(24,24,24),3);
-   CardDetectionDiagnostics rotatedStats;
-   auto const rotatedCard=FindCard(rotatedScene,&rotatedStats);
-   if(!rotatedCard || rotatedStats.aspectCandidates==0)
-      throw std::runtime_error("rotated printed card not detected");
+   // Validate portrait-only acquisition independently of any artwork.
+   // A rotated 180-degree card has the same geometric long-axis angle.
+   for(double const flAngle:{0.0,12.0,24.0,90.0}) {
+      cv::Mat aTiltScene(900,1600,CV_8UC3,cv::Scalar(38,38,38));
+      cv::RotatedRect const aTiltRectangle(cv::Point2f(800.f,450.f),
+         cv::Size2f(178.f,250.f),static_cast<float>(flAngle));
+      cv::Point2f arrTiltCorners[4];
+      aTiltRectangle.points(arrTiltCorners);
+      std::vector<cv::Point> vecTiltPolygon;
+      for(auto const& aPoint:arrTiltCorners)
+         vecTiltPolygon.emplace_back(cvRound(aPoint.x),cvRound(aPoint.y));
+      cv::fillConvexPoly(aTiltScene,vecTiltPolygon,
+         cv::Scalar(224,224,224));
+      cv::polylines(aTiltScene,vecTiltPolygon,true,
+         cv::Scalar(24,24,24),3);
+      CardDetectionDiagnostics aTiltStats;
+      auto const optTiltCard=FindCard(aTiltScene,&aTiltStats);
+      if((flAngle<=15.0 && !optTiltCard) ||
+         (flAngle>15.0 && (optTiltCard ||
+            aTiltStats.rejectedOrientation==0)))
+         throw std::runtime_error(std::format(
+            "portrait orientation filter failed at {} degrees",flAngle));
+   }
    // Out-of-frame and border-adjacent corners are valid contour estimates
    // but illegal cornerSubPix starting points. They must survive unchanged.
    cv::Mat cornerGray(100,120,CV_8UC1,cv::Scalar(96));
@@ -3355,13 +3381,14 @@ int main(int argc,char** argv) {
                if(!processor.CardLocked())
                   deckkernel::camera::Trace("[CAM-DETECT] contours={} candidates={} "
                      "quadrilaterals={} rotated={} plausible={} "
-                     "shape-rejected={} aspect-rejected={} full-frame-rejected={} "
+                     "shape-rejected={} aspect-rejected={} orientation-rejected={} full-frame-rejected={} "
                      "broken-outline={} physical-outline={} "
                      "layout={}/{} chosen-ratio={:.3f} nested-panels={} area={:.2f}%",
                      detection.contours,detection.areaCandidates,
                      detection.quadrilaterals,detection.rotatedCandidates,
                      detection.aspectCandidates,detection.rejectedShape,
-                     detection.rejectedAspect,detection.rejectedPartialFrame,
+                     detection.rejectedAspect,detection.rejectedOrientation,
+                     detection.rejectedPartialFrame,
                      detection.incompleteOutlineCandidates,
                      detection.outerFrameFallbackCandidates,
                      detection.layoutRecognized,
