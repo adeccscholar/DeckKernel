@@ -951,8 +951,10 @@ the same camera image and exact same four physical corners:
    while sampling real pixels from outside the detected contour.
    Used for the large left display and the lower-margin OCR.
 
-The extended OCR margin is cut from the lower 20 percent of overscan;
-it includes the additional bottom pixels. The original canonical
+The extended OCR margin is isolated from 86 to 99 percent of the
+overscan image height; this concentrates the final OCR pass on the
+collector/set strip rather than the larger rules text field or table
+background. The image remains unscaled original source evidence. The original canonical
 image is still saved as `event-NNNNNN-frozen-search-input.png`;
 `--save-events` now also saves
 `event-NNNNNN-frozen-overscan.png`.
