@@ -34,6 +34,7 @@ namespace deckkernel::camera {
    class TablePlaneFocus final {
    public:
       enum class State {
+         External,
          Continuous,
          Settling,
          Verifying,
@@ -50,6 +51,7 @@ namespace deckkernel::camera {
       State m_eState{State::Continuous};
       std::optional<int> m_optManualPosition;
       bool m_boTableMode{};
+      bool m_boPreserveExisting{};
       bool m_boManualFocusUnsupported{};
       clock_ty::time_point m_started{};
       cv::Mat m_previous;
@@ -106,16 +108,19 @@ namespace deckkernel::camera {
    public:
       /**
       \brief Construct a calibration controller.
-      \details Table mode prefocuses before acquisition; an explicit focus
-         value overrides any autofocus calibration.
-      \param boTableMode Enable fixed table-plane pre-focus.
+      \details PreserveExisting never writes any camera focus property;
+         explicit manual focus and legacy autofocus remain available.
+      \param boTableMode Enable legacy fixed table-plane pre-focus.
       \param optManualPosition Optional user-provided device focus value.
+      \param boPreserveExisting Keep driver focus settings untouched.
       \throw None.
       */
       explicit TablePlaneFocus(bool boTableMode,
-         std::optional<int> optManualPosition={})
+         std::optional<int> optManualPosition={},
+         bool boPreserveExisting=false)
          : m_optManualPosition(optManualPosition),
-           m_boTableMode(boTableMode) {}
+           m_boTableMode(boTableMode),
+           m_boPreserveExisting(boPreserveExisting) {}
 
       /**
       \brief Central tabletop area evaluated independently of any card contour.
@@ -182,6 +187,15 @@ namespace deckkernel::camera {
          m_uStableSamples=0;
          m_uVerifySamples=0;
          m_started=clock_ty::now();
+         if(m_boPreserveExisting) {
+            m_eState=State::External;
+            m_strStatus="Fixed focus (external camera settings preserved)";
+            deckkernel::camera::Trace("[CAM-TABLE-FOCUS] mode=external "
+               "focus-properties-unchanged=true autofocus={} focus={}",
+               aCapture.get(cv::CAP_PROP_AUTOFOCUS),
+               aCapture.get(cv::CAP_PROP_FOCUS));
+            return;
+         }
          if(m_boManualFocusUnsupported) {
             m_eState=State::Fallback;
             m_strStatus="Manual focus unavailable - continuous autofocus";
