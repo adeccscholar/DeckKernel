@@ -1047,3 +1047,60 @@ table-card detection only when the camera's manual focus control is
 functional and the surface provides enough features for calibration.
 Neither camera minimum focus distance nor numerical focus range is
 established by the existing logs.
+
+## 2026-11-11: explicit scan workflow and persistent collection list
+
+The scanner now uses explicit user decisions rather than requiring
+physical card removal before recognizing the next card.
+
+**Scan lifecycle**
+
+1. TABLE FOCUS runs before each new scan, using the configured hardware
+   focus procedure or its documented continuous-AF fallback.
+2. SEARCHING/ACQUIRING/TRACKING/FOCUSING identifies a complete physical
+   card and selects a source image.
+3. Once FROZEN, the physical detector and optical tracker are **paused**.
+   The video device may remain open for the preview/UI, but no further
+   card contours or alternative artworks are searched from new frames.
+   The immutable frozen snapshot is the only input to the image matcher.
+4. ARTWORK and PRINTING use the existing PostgreSQL index; OCR of the
+   lower overscan band is a last resort for ambiguous printings.
+5. If one or more printing candidates are available, the operator selects
+   with **Left/Right** or the **mouse wheel**, and accepts using
+   **Enter** or the **left mouse button**. A printing must be present;
+   accepting before recognition finishes does not add an invented item.
+6. An accepted card is appended once to the third, right-hand
+   **COLLECTED CARDS** list using `Name (Set)`; the structured record
+   also retains the printing ID, collector number and Oracle ID.
+   Confirmation is an explicit operator selection, not stronger
+   image-identification evidence. The list remains across scans.
+7. **Escape** or the **right mouse button** discards the current scan
+   without appending anything. Either operator decision resets the
+   physical tracker, captured images, Oracle/printing candidates and
+   diagnostics and begins TABLE FOCUS for the next scan.
+   A reject during SEARCHING can also restart tabletop focus.
+8. Closing the application uses the normal window close control. Escape
+   is now reserved for scan discard and does not close the program.
+
+The asynchronous matcher results are separated by monotonically
+increasing physical card event numbers; explicit reset does not
+restart numbering. A late DB selection response from a discarded
+scan must not overwrite the next scan. Regression checks cover
+the trigger reset and unique event numbering.
+
+**Layout**: live/frozen camera on the left, selected Scryfall DB image
+and printing details in the middle, accepted-card list on the right.
+The list is in acceptance order and displays its most recent entries
+when the available screen height is insufficient.
+
+**No changes** are made to the PostgreSQL index schema, ORB feature
+data, or Printing/Artwork acceptance thresholds in this interface
+update. The BCC64X compilation failure from a duplicate local
+`aBlurred` in the focus self-test is also corrected by giving the
+table-focus metrics a unique variable name.
+
+**Verification pending**: BCC64X compilation and the SDL/Win32 live
+event loop must be exercised with keyboard, wheel and mouse. Verify
+both one-candidate and ambiguous-printing cases, discard during
+active asynchronous matching, successive cards added to the list and
+the table-focus restart on each decision.
