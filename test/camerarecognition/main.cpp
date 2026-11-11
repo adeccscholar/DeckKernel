@@ -223,7 +223,7 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
          cv::Rect aBox;
          cv::Point2f aCenter;
          double flArea{};
-         double flAngle{};
+         cv::Point2f aLongAxis;
       };
       // Precompute nested rectangular shapes once per Canny pass. Iterating
       // approxPolyDP over every contour for every card candidate would make
@@ -244,16 +244,14 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
          if(vecCorners.size()!=4 || !cv::isContourConvex(vecCorners))
             continue;
          cv::RotatedRect const aPanel=cv::minAreaRect(aCandidate);
-         cv::Point2f const aAxis=aPanel.size.width>=aPanel.size.height?
-            cv::Point2f(std::cos(aPanel.angle*CV_PI/180.0),
-               std::sin(aPanel.angle*CV_PI/180.0)):
-            cv::Point2f(-std::sin(aPanel.angle*CV_PI/180.0),
-               std::cos(aPanel.angle*CV_PI/180.0));
-         double const flAngle=std::atan2(
-            std::abs(static_cast<double>(aAxis.x)),
-            std::abs(static_cast<double>(aAxis.y)))*180.0/CV_PI;
+         cv::Point2f arrPanelCorners[4];
+         aPanel.points(arrPanelCorners);
+         cv::Point2f const aFirst=arrPanelCorners[1]-arrPanelCorners[0];
+         cv::Point2f const aSecond=arrPanelCorners[2]-arrPanelCorners[1];
+         cv::Point2f const aPanelAxis=
+            cv::norm(aFirst)>=cv::norm(aSecond)?aFirst:aSecond;
          vecPossiblePanels.push_back(InnerOutline{
-            aBox,aPanel.center,flArea,flAngle});
+            aBox,aPanel.center,flArea,aPanelAxis});
       }
       for(auto const& contour:contours) {
          double const area=std::abs(cv::contourArea(contour));
@@ -491,9 +489,24 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
                }
             }
             if(boDuplicate)continue;
+            // Compare the panel's long axis to the OUTER card's long
+            // axis. The only admissible relationships are 0 and 90 degrees,
+            // each with 5 degrees tolerance. This is invariant under
+            // 180-degree direction reversal of either axis.
+            double const flInnerLength=cv::norm(aInner.aLongAxis);
+            double const flOuterLength=cv::norm(aLongAxis);
+            if(flInnerLength<=0.0 || flOuterLength<=0.0)continue;
+            double const flCosine=std::clamp(
+               std::abs(static_cast<double>(
+                  aInner.aLongAxis.dot(aLongAxis)))/
+                  (flInnerLength*flOuterLength),0.0,1.0);
+            double const flRelativeAngle=std::acos(flCosine)*180.0/CV_PI;
+            bool const boParallel=flRelativeAngle<=5.0;
+            bool const boPerpendicular=flRelativeAngle>=85.0;
+            if(!boParallel && !boPerpendicular)continue;
             arrPanels[uInnerPanels]=aInner.aBox;
             arrPanelCenters[uInnerPanels]=aInner.aCenter;
-            uRotatedPanels+=aInner.flAngle>15.0;
+            uRotatedPanels+=boPerpendicular;
             if(++uInnerPanels==arrPanels.size())break;
          }
          // Two distinct inner panels spread across the physical face
