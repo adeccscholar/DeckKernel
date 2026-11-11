@@ -990,8 +990,9 @@ The original 15-degree outer-card orientation constraint is unchanged.
 The recovered corners, rather than the inner printed frame, feed subsequent
 high-resolution OCR rectification and artwork feature matching. The
 `outer-corrected` CAM-DETECT field indicates when an expanded boundary
-was accepted. Synthetic regression checks both an outer border with a
-right-side extension and the absence of unsupported expansion.
+was accepted. Synthetic regression checks an outer border with a
+right-side extension, modestly convex left/right edges, and the absence
+of unsupported expansion.
 
 This is an evidence-based local recovery, not an unconditional percentage
 crop. It must still be validated against real 4K Brio acquisitions and
