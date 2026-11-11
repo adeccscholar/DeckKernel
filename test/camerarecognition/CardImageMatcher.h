@@ -840,6 +840,13 @@ namespace deckkernel::camera {
          }
          std::stable_sort(vecMatches.begin(),vecMatches.end(),
             [](Ranked const& aLeft,Ranked const& aRight) {
+               // A decoded full-card reference with artwork corroboration
+               // ranks above a candidate based only on common text/frame.
+               // Unknown artwork scores (-1) remain unverified.
+               bool const boLeftVerified=aLeft.iArtworkMatches>=12;
+               bool const boRightVerified=aRight.iArtworkMatches>=12;
+               if(boLeftVerified!=boRightVerified)
+                  return boLeftVerified;
                int const iLeft=4*aLeft.iOrb-aLeft.iHash-
                   (aLeft.iRegionDistance==128?64:aLeft.iRegionDistance);
                int const iRight=4*aRight.iOrb-aRight.iHash-
