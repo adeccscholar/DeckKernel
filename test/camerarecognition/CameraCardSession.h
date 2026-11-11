@@ -233,6 +233,20 @@ namespace deckkernel::camera {
    };
 
    /**
+   \brief One explicitly accepted printing in the current scanning session.
+   \details The collected list is independent of the next camera capture,
+      Oracle identity search and physical-card tracker.
+   */
+   struct CollectedCard {
+      std::string strName;
+      std::string strSet;
+      std::string strSetName;
+      std::string strCollector;
+      std::string strPrintingId;
+      std::string strOracleId;
+   };
+
+   /**
    \brief Oracle identity and the ordered candidate printing set.
    \details Selection is provisional until Confirm(). A manual confirmation
    records a user's selection, not additional optical evidence.
