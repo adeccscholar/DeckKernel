@@ -115,6 +115,8 @@ struct CardDetectionDiagnostics {
    unsigned layoutChecked{};
    unsigned layoutRecognized{};
    unsigned rejectedPartialFrame{};
+   unsigned incompleteOutlineCandidates{};
+   unsigned outerFrameFallbackCandidates{};
    bool selectedLayoutRecognized{};
    unsigned rejectedShape{};
    unsigned rejectedAspect{};
@@ -276,12 +278,12 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
             // Recover the quadrilateral from the rotated minimum-area box.
             // Only accept contours filling most of that box, not arbitrary
             // elongated edges, hands or a tabletop boundary.
-            // A mouse/oval fills about 78% of its bounding rectangle.
-            // Card corners are nearly straight, including rounded corners.
-            if(fill<0.86) {
-               ++stats.rejectedShape;
-               continue;
-            }
+            // Real cards on the tabletop can generate an OPEN or broken
+            // Canny outline. Its contourArea may be only 17-73% of the
+            // minimum-area box even when three/four straight card sides
+            // are visible. Do not classify it as a mouse by fill alone:
+            // check independent edge-line support below.
+            if(fill<0.86)++stats.incompleteOutlineCandidates;
             cv::Point2f points[4];
             rectangle.points(points);
             corners.clear();
@@ -347,6 +349,18 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
          if(uSupportedSides<3) {
             ++stats.rejectedShape;
             continue;
+         }
+         // A genuinely broken contour requires STRONG support from at
+         // least three straight sides. A rounded mouse has tangential
+         // touches to a minAreaRect, not long, straight supported edges.
+         if(recovered && fill<0.86) {
+            unsigned uStrongSides{};
+            for(double const flCoverage:arrEdgeCoverage)
+               uStrongSides+=flCoverage>=0.60;
+            if(uStrongSides<3) {
+               ++stats.rejectedShape;
+               continue;
+            }
          }
          // PHASE 01: compare the contour to the 63 x 88 mm physical
          // card. The original code only rewarded the ratio weakly, so an
@@ -501,19 +515,39 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
             auto const aWholeFrame=
                deckkernel::camera::InspectWholeCardFrame(aCandidateImage);
             if(!aWholeFrame.boWholeCard) {
-               ++stats.rejectedPartialFrame;
-               continue;
+               // PHASE 01 fallback: when the low-resolution interior is
+               // washed out, accept a physical outline ONLY if its four
+               // straight sides are independently supported by the
+               // observed edge map. This is not a general layout bypass:
+               // it excludes unsupported minAreaRect boxes and art-only
+               // contours without external border evidence.
+               unsigned uStrongSides{};
+               for(double const flCoverage:arrEdgeCoverage)
+                  uStrongSides+=flCoverage>=0.72;
+               bool const boStrongPhysicalOutline=
+                  uStrongSides>=4 && ratio>=1.28 && ratio<=1.55 &&
+                  (area>=imageArea*0.004);
+               if(!boStrongPhysicalOutline) {
+                  ++stats.rejectedPartialFrame;
+                  continue;
+               }
+               ++stats.outerFrameFallbackCandidates;
+               // With no reliable title/text separators, do not invent
+               // orientation; the artwork matcher still tests both.
             }
             ++stats.layoutChecked;
             auto const aLayout=
                deckkernel::camera::InspectStandardCard(aCandidateImage);
-            boLayoutRecognized=true;
-            ++stats.layoutRecognized;
-            flLayoutEvidence=25.0*aWholeFrame.flScore;
-            if(aWholeFrame.boOrientationReliable)
-               boRotate180=aWholeFrame.boRotate180;
-            else if(aLayout.boRecognized)
+            boLayoutRecognized=aWholeFrame.boWholeCard;
+            if(boLayoutRecognized)++stats.layoutRecognized;
+            flLayoutEvidence=boLayoutRecognized?
+               25.0*aWholeFrame.flScore:0.0;
+            // A typed card-frame signal is more discriminating than two
+            // isolated horizontal edges for determining uprightness.
+            if(aLayout.boRecognized)
                boRotate180=aLayout.boRotate180;
+            else if(aWholeFrame.boOrientationReliable)
+               boRotate180=aWholeFrame.boRotate180;
             // Do not turn uncertain 0/180 orientation into a 90-degree
             // landscape-to-portrait reinterpretation of the card's artwork.
             // If layout is inconclusive, retain the geometrically valid
@@ -542,6 +576,14 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
       auto clahe=cv::createCLAHE(2.0,cv::Size(8,8));
       clahe->apply(blur,enhanced);
       cv::Canny(enhanced,edges,25,75);
+      searchContours(edges);
+   }
+   if(best.empty()) {
+      // PHASE 01: low-contrast tabletop cards may have no closed outline
+      // at the normal 45/125 or enhanced 25/75 thresholds. Attempt a
+      // low-threshold contour search only when both standard passes fail.
+      // The stronger side-support and structure gates above remain in use.
+      cv::Canny(blur,edges,15,40);
       searchContours(edges);
    }
    stats.selectedAreaPercent=bestArea*100.0/imageArea;
