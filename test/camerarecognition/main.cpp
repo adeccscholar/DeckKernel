@@ -1844,6 +1844,7 @@ public:
          m_capture.Clear();
          m_identity.Clear();
          m_boUserNavigated=false;
+         m_boArtworkRecognized=false;
          m_uSelectionSerial=0;
          m_tracker.Reset();
          m_boCapturedRotate180=false;
