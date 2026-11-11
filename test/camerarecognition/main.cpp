@@ -1522,8 +1522,7 @@ public:
          }
          return;
       }
-      if(!result->boCandidateSelection &&
-         result->strStatus.starts_with("ARTWORK FOUND"))
+      if(!result->boCandidateSelection && result->boArtworkRecognized)
          m_boArtworkRecognized=true;
       m_strStatus=result->strStatus;
       m_strEdition=result->strEdition;
