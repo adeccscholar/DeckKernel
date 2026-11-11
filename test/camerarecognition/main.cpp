@@ -174,6 +174,102 @@ struct CardDetectionDiagnostics {
    return result;
 }
 
+/**
+\brief Look for a larger physical outline immediately outside a detected frame.
+\details Each candidate side is searched outward by at most ten percent of
+   the corresponding card dimension. Only supported, parallel edge segments
+   are accepted. Without at least two independent sides, the input is kept.
+\param aEdges Binary Canny edge map in detection-image coordinates.
+\param arrCorners Detected quadrilateral in the same coordinates.
+\returns An optional enlarged outer quadrilateral.
+\throw None.
+\note This does not fabricate a fixed margin or require a printed card frame.
+*/
+[[nodiscard]] std::optional<std::array<cv::Point,4>> FindNearbyOuterFrame(
+   cv::Mat const& aEdges,std::array<cv::Point,4> const& arrCorners) {
+   if(aEdges.empty() || aEdges.type()!=CV_8UC1)return std::nullopt;
+   cv::Point2f aCenter{};
+   std::array<cv::Point2f,4> arrPoints{};
+   for(unsigned uIndex=0;uIndex<4;++uIndex) {
+      arrPoints[uIndex]=cv::Point2f(
+         static_cast<float>(arrCorners[uIndex].x),
+         static_cast<float>(arrCorners[uIndex].y));
+      aCenter+=arrPoints[uIndex];
+   }
+   aCenter*=0.25f;
+   std::array<cv::Point2f,4> arrNormals{};
+   std::array<float,4> arrOffsets{};
+   unsigned uSupported{};
+   for(unsigned uSide=0;uSide<4;++uSide) {
+      cv::Point2f const aStart=arrPoints[uSide];
+      cv::Point2f const aEnd=arrPoints[(uSide+1)%4];
+      cv::Point2f const aDirection=aEnd-aStart;
+      double const flSideLength=cv::norm(aDirection);
+      if(flSideLength<30.0)continue;
+      cv::Point2f aNormal(-aDirection.y/static_cast<float>(flSideLength),
+         aDirection.x/static_cast<float>(flSideLength));
+      cv::Point2f const aMidpoint=(aStart+aEnd)*0.5f;
+      if(aNormal.dot(aMidpoint-aCenter)<0.0f)aNormal=-aNormal;
+      arrNormals[uSide]=aNormal;
+      // A margin is measured normal to its side: ten percent of the
+      // corresponding short or long card dimension, not of the image.
+      double const flAcross=0.5*(cv::norm(
+         arrPoints[uSide]-arrPoints[(uSide+3)%4])+
+         cv::norm(arrPoints[(uSide+1)%4]-
+            arrPoints[(uSide+2)%4]));
+      int const iLimit=std::min(40,
+         static_cast<int>(std::floor(flAcross*0.10)));
+      double flBestCoverage=0.0;
+      int iBestOffset=0;
+      for(int iOffset=2;iOffset<=iLimit;++iOffset) {
+         unsigned uHits{},uSamples{};
+         for(int iSample=2;iSample<=38;++iSample) {
+            float const flT=static_cast<float>(iSample)/40.0f;
+            cv::Point2f const aSample=
+               aStart+(aEnd-aStart)*flT+
+               aNormal*static_cast<float>(iOffset);
+            int const iX=cvRound(aSample.x);
+            int const iY=cvRound(aSample.y);
+            if(iX<2||iY<2||iX>=aEdges.cols-2||
+               iY>=aEdges.rows-2)continue;
+            ++uSamples;
+            bool boHit=false;
+            for(int iDY=-1;iDY<=1 && !boHit;++iDY)
+               for(int iDX=-1;iDX<=1;++iDX)
+                  if(aEdges.at<unsigned char>(iY+iDY,iX+iDX)) {
+                     boHit=true;
+                     break;
+                  }
+            uHits+=boHit;
+         }
+         double const flCoverage=uSamples>=32?
+            static_cast<double>(uHits)/uSamples:0.0;
+         if(flCoverage>flBestCoverage) {
+            flBestCoverage=flCoverage;
+            iBestOffset=iOffset;
+         }
+      }
+      if(flBestCoverage>=0.70 && iBestOffset>=3) {
+         arrOffsets[uSide]=static_cast<float>(iBestOffset);
+         ++uSupported;
+      }
+   }
+   if(uSupported<2)return std::nullopt;
+   std::array<cv::Point,4> arrOuter{};
+   for(unsigned uIndex=0;uIndex<4;++uIndex) {
+      unsigned const uPrevious=(uIndex+3)%4;
+      cv::Point2f const aCorrected=arrPoints[uIndex]+
+         arrNormals[uPrevious]*arrOffsets[uPrevious]+
+         arrNormals[uIndex]*arrOffsets[uIndex];
+      if(aCorrected.x<0.0f||aCorrected.y<0.0f||
+         aCorrected.x>=aEdges.cols||aCorrected.y>=aEdges.rows)
+         return std::nullopt;
+      arrOuter[uIndex]=cv::Point(cvRound(aCorrected.x),
+         cvRound(aCorrected.y));
+   }
+   return arrOuter;
+}
+
 std::optional<FoundCard> FindCard(cv::Mat const& frame,
    CardDetectionDiagnostics* diagnostics=nullptr,
    bool boRequireStandardLayout=false) {
@@ -654,6 +750,18 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
       // The stronger side-support and structure gates above remain in use.
       cv::Canny(blur,edges,15,40);
       searchContours(edges);
+   }
+   // Prefer a nearby supported physical outline over an inner printed
+   // frame. The Canny map is from the same pass that selected 'best'.
+   // A missing outer line is never replaced by a guessed ten-percent crop.
+   if(best.size()==4) {
+      std::array<cv::Point,4> arrCandidate{};
+      std::copy(best.begin(),best.end(),arrCandidate.begin());
+      if(auto const optOuter=FindNearbyOuterFrame(edges,arrCandidate)) {
+         best.assign(optOuter->begin(),optOuter->end());
+         stats.inferredOuterFrame=true;
+         bestArea=std::abs(cv::contourArea(best));
+      }
    }
    stats.selectedAreaPercent=bestArea*100.0/imageArea;
    stats.recoveredRectangle=recoveredBest;
@@ -2647,6 +2755,29 @@ void SelfTest() {
          stats.selectedAreaPercent<=0.0)
          throw std::runtime_error("small 4K printed card detection failed");
    }
+   // Regression: the first contour can be a print-area frame with the
+   // physical card's right side outside it. Recover the larger outline
+   // without moving any edge for which evidence is missing.
+   cv::Mat aBorderEdges(640,640,CV_8UC1,cv::Scalar(0));
+   cv::Rect const aPrintRect(180,100,240,336);
+   cv::rectangle(aBorderEdges,aPrintRect,cv::Scalar(255),1);
+   cv::rectangle(aBorderEdges,
+      cv::Rect(169,88,262,360),cv::Scalar(255),1);
+   std::array<cv::Point,4> const arrInnerCorners{{
+      {180,100},{419,100},{419,435},{180,435}
+   }};
+   auto const optRecovered=FindNearbyOuterFrame(
+      aBorderEdges,arrInnerCorners);
+   if(!optRecovered || (*optRecovered)[1].x<=419 ||
+      (*optRecovered)[2].x<=419 ||
+      (*optRecovered)[0].x>=180)
+      throw std::runtime_error(
+         "nearby physical outline was not recovered outside inner frame");
+   cv::Mat aWithoutOuter(640,640,CV_8UC1,cv::Scalar(0));
+   cv::rectangle(aWithoutOuter,aPrintRect,cv::Scalar(255),1);
+   if(FindNearbyOuterFrame(aWithoutOuter,arrInnerCorners))
+      throw std::runtime_error(
+         "outer frame was inferred without independently supported edges");
    // DEMO TEST 01: a genuine standard card contains artwork, title, a
    // type separator and printed text. Its artwork is not a physical card.
    cv::Mat aFramedScene(960,1500,CV_8UC3,cv::Scalar(26,31,39));
@@ -3475,7 +3606,7 @@ int main(int argc,char** argv) {
                      "shape-rejected={} aspect-rejected={} orientation-rejected={} full-frame-rejected={} "
                      "broken-outline={} physical-outline={} "
                      "layout={}/{} nested-layouts={} chosen-ratio={:.3f} "
-                     "nested-panels={} rotated-panels={} area={:.2f}%",
+                     "nested-panels={} rotated-panels={} outer-corrected={} area={:.2f}%",
                      detection.contours,detection.areaCandidates,
                      detection.quadrilaterals,detection.rotatedCandidates,
                      detection.aspectCandidates,detection.rejectedShape,
@@ -3487,6 +3618,7 @@ int main(int argc,char** argv) {
                      detection.layoutChecked,detection.acceptedNestedLayouts,
                      detection.selectedRatio,detection.selectedInnerPanels,
                      detection.selectedRotatedPanels,
+                     detection.inferredOuterFrame,
                      detection.selectedAreaPercent);
             }
             count=0;interval=now;
