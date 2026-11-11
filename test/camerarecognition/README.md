@@ -977,6 +977,28 @@ module evaluation is unchanged.
 PostgreSQL printing-query duration, preview of `frozen-overscan.png`,
 and OCR success on known printed collector/set fields.
 
+## 2026-11-11: externally configured fixed focus is the default
+
+Live camera acquisition now preserves the focus settings established outside
+DeckKernel, such as a manually selected fixed tabletop focus in Logi Tune.
+Neither camera startup, the F hotkey, nor the next-card transition writes
+`CAP_PROP_AUTOFOCUS` or `CAP_PROP_FOCUS` in the default mode. This avoids
+restarting autofocus and camera-level table calibration on every card.
+
+- Default: fixed/external focus; camera focus controls are not modified.
+- `--auto-focus`: opt into the previous table-plane autofocus calibration
+  and its continuous-autofocus fallback. `--table-focus` remains an alias.
+- `--continuous-autofocus`: request ordinary continuous hardware autofocus.
+- `--focus-position=N`: request an explicit driver-specific manual value;
+  requires camera support and verification, and may fall back to autofocus.
+
+Important: preserving an external focus setting does not prove that Windows
+or the camera firmware retained it across device opening. Verify the actual
+image sharpness after startup. The existing per-card best-frame selection and
+image-quality diagnostics remain active. F only requests recalibration when
+an explicit software-focus mode is enabled. Actual device validation with
+the Logitech Brio is still required.
+
 ## 2026-11-11: nested card panels and mixed face orientations
 
 Physical-card acquisition now retains the 15-degree upright requirement for
@@ -1052,8 +1074,10 @@ can produce additional features but **cannot restore optical detail**.
 
 A fixed overhead camera should have its expected *table plane* in focus
 before physical-card contour detection. The camera now enables
-`--table-focus` by default (or explicitly); the former behavior is
-available with `--continuous-autofocus`.
+`--auto-focus` explicitly (legacy table-plane calibration); the default
+now preserves the camera's external fixed-focus setting without writing
+autofocus properties. Continuous autofocus remains available with
+`--continuous-autofocus`.
 
 PHASE 00, `TABLE FOCUS`, precedes the physical-card state machine.
 It first enables camera autofocus and observes the middle 30% by 60%
