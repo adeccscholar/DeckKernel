@@ -977,6 +977,30 @@ module evaluation is unchanged.
 PostgreSQL printing-query duration, preview of `frozen-overscan.png`,
 and OCR success on known printed collector/set fields.
 
+## 2026-11-11: portrait-only tabletop acquisition
+
+The camera's physical-card contour stage now checks the long axis of each
+minimum-area rectangle before expensive edge coverage, nested-panel scoring,
+or perspective rectification. The table workflow accepts cards positioned
+within 15 degrees of the image's vertical axis, with the same rule for
+180-degree upside-down cards. Sideways artwork-like rectangles are discarded
+at this early geometric stage. The diagnostic counter
+`orientation-rejected` records these candidates.
+
+The measured long-axis direction is not the card's printed reading
+direction. Unknown 0/180 orientation therefore stays on the existing
+unrotated capture path, and indexed matching continues to compare both
+orientations. No additional hard gate based on printed layout recognition
+is introduced. The self-test covers 0 and 12 degrees as accepted and 24
+and 90 degrees as rejected. These are synthetic geometry tests; real camera
+validation is still needed, especially under projective distortion.
+
+For a fixed tabletop camera with consistent illumination, a camera that
+supports a verified manual focus position could hold that setting rather
+than recalibrating for each card. The present hardware focus fallback is
+unchanged, because programmable manual focus has not been verified for the
+candidate device.
+
 ## 2026-11-11: adaptive frozen-frame selection
 
 The capture stage now monitors printed-detail sharpness independently of the
