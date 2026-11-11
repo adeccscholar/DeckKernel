@@ -34,6 +34,7 @@ both orientations. Results are suggestions until physically validated.
 #include <stdexcept>
 #include <system_error>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
