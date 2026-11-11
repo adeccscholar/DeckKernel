@@ -2749,7 +2749,7 @@ void SelfTest() {
    if(!aSplitCard ||
       cv::boundingRect(aSplitCard->corners).area()<
          aSplitOuter.area()*0.70 ||
-      aSplitStats.acceptedNestedLayouts==0)
+      aSplitStats.selectedInnerPanels<2)
       throw std::runtime_error(
          "nested split-face card failed outer-card acquisition");
    // DEMO TEST 01: the same physical card, actually upside-down, must
