@@ -560,7 +560,7 @@ namespace deckkernel::camera {
                " FROM deckkernel_test.scryfall_image_assets aa "
                " JOIN deckkernel_test.scryfall_card_image_variants va "
                " ON va.asset_id=aa.id AND va.variant='art_crop' "
-               " WHERE aa.illustration_id=$3::text "
+               " WHERE $3::text<>'' AND aa.illustration_id=$3::text "
                ") ";
          }
          strSql+=
