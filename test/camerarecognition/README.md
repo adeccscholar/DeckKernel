@@ -977,6 +977,27 @@ module evaluation is unchanged.
 PostgreSQL printing-query duration, preview of `frozen-overscan.png`,
 and OCR success on known printed collector/set fields.
 
+## 2026-11-11: nested card panels and mixed face orientations
+
+Physical-card acquisition now retains the 15-degree upright requirement for
+the **outer** card only. During each bounded Canny contour pass, it collects
+rectangular inner panels independently of their rotation. A plausible physical
+outer contour with at least two distinct, spatially separated nested panels
+can supply structural evidence where the usual standard-card title/art/text
+separator classifier fails. The outer card must still pass existing geometric
+and supported-edge tests. The existing 0/180 image-matching fallback remains
+unchanged.
+
+The live CAM-DETECT trace now includes `nested-layouts` (candidate contours
+accepted specifically through nested panels) and `rotated-panels` (nested
+panels not aligned with the upright card axis). A synthetic split-face
+regression checks that the accepted rectangle is the outer physical card,
+not one of its inside panels.
+
+This is an alternative structural cue, not proof of card identity. Nonstandard
+split, borderless and double-face layouts still require real camera sample
+validation; no improvement in recognition accuracy is claimed without it.
+
 ## 2026-11-11: portrait-only tabletop acquisition
 
 The camera's physical-card contour stage now checks the long axis of each
