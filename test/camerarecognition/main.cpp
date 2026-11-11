@@ -1282,9 +1282,10 @@ public:
       // PHASE 08: use the reference-confirmed orientation of the frozen
       // display copy. CardCapture itself remains immutable throughout.
       if(m_displayCard.empty())return;
-      int const iTop=m_displayCard.rows*80/100;
+      int const iTop=m_displayCard.rows*86/100;
+      int const iBottom=m_displayCard.rows*99/100;
       cv::Mat const aMargin=m_displayCard(cv::Rect(
-         0,iTop,m_displayCard.cols,m_displayCard.rows-iTop)).clone();
+         0,iTop,m_displayCard.cols,iBottom-iTop)).clone();
       std::string const strData=m_strPrintingOcrData;
       m_uPrintingOcrEvent=m_ocrCard.value_or(0);
       // PHASE 08: OCR is a last-resort, read-only consumer of frozen evidence.
