@@ -2904,6 +2904,31 @@ void SelfTest() {
    if(aStandard->boRotate180)
       throw std::runtime_error("upright standard card was rotated 180 degrees");
 
+   // Borderless-style: no conventional title/art frame, but a physical
+   // outside edge and one independent rectangular text panel remain.
+   cv::Mat aBorderlessScene(960,1500,CV_8UC3,cv::Scalar(27,29,35));
+   cv::Rect const aBorderlessOuter(550,125,320,448);
+   cv::rectangle(aBorderlessScene,aBorderlessOuter,
+      cv::Scalar(147,175,191),-1);
+   cv::rectangle(aBorderlessScene,aBorderlessOuter,
+      cv::Scalar(13,17,22),4);
+   cv::Rect const aBorderlessText(581,391,257,121);
+   cv::rectangle(aBorderlessScene,aBorderlessText,
+      cv::Scalar(211,215,219),-1);
+   cv::rectangle(aBorderlessScene,aBorderlessText,
+      cv::Scalar(25,29,35),3);
+   for(int iLine=0;iLine<5;++iLine)
+      cv::line(aBorderlessScene,
+         cv::Point(592,408+iLine*17),
+         cv::Point(819-(iLine%2)*30,408+iLine*17),
+         cv::Scalar(48,52,59),2);
+   auto const optBorderless=FindCard(aBorderlessScene,nullptr,true);
+   if(!optBorderless ||
+      cv::boundingRect(optBorderless->corners).area()<
+         aBorderlessOuter.area()*0.70)
+      throw std::runtime_error(
+         "borderless outer card was not retained around its text panel");
+
    // REGRESSION: a split / borderless-style card has no conventional
    // horizontal title/art/type separators, but contains independent
    // differently oriented rectangular face regions inside its outer edge.
