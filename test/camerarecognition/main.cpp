@@ -40,6 +40,7 @@
 #include <opencv2/videoio.hpp>
 #include "CameraTableFocus.h"
 #endif
+#include "CameraTrace.h"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -939,7 +940,7 @@ public:
          !reversedName.text.empty() &&
          reversedName.confidence>=50;
       if(m_verbose)
-         std::println("[CAM-ROT] name={}/{} type-valid={}/{} "
+         deckkernel::camera::Trace("[CAM-ROT] name={}/{} type-valid={}/{} "
             "score={}/{} chosen={}",
             normalName.confidence,reversedName.confidence,
             normalTypeValid,reversedTypeValid,normalScore,reversedScore,
@@ -1030,7 +1031,7 @@ public:
       auto const type=bestTop>=0?bestType:OcrResult{};
       auto const rules=ReadRegion(card,zones.rules,tesseract::PSM_AUTO);
       if(m_verbose)
-         std::println("[CAM-ZONES] card #{} type={} confidence={} "
+         deckkernel::camera::Trace("[CAM-ZONES] card #{} type={} confidence={} "
             "type-y={}..{} rules-y={}..{}",
             eventNumber,bestTop>=0?"detected":"unverified",
             type.confidence,zones.type.y,zones.type.br().y,
@@ -1042,11 +1043,11 @@ public:
       m_typeConfidence=type.confidence;
       m_rulesConfidence=rules.confidence;
       if(m_verbose) {
-         std::println("[CAM-OCR] card #{} attempt={} name=\"{}\" confidence={}",
+         deckkernel::camera::Trace("[CAM-OCR] card #{} attempt={} name=\"{}\" confidence={}",
             eventNumber,attempt,title.text,title.confidence);
-         std::println("[CAM-OCR] card #{} attempt={} type=\"{}\" confidence={}",
+         deckkernel::camera::Trace("[CAM-OCR] card #{} attempt={} type=\"{}\" confidence={}",
             eventNumber,attempt,type.text,type.confidence);
-         std::println("[CAM-OCR] card #{} attempt={} rules=\"{}\" confidence={}",
+         deckkernel::camera::Trace("[CAM-OCR] card #{} attempt={} rules=\"{}\" confidence={}",
             eventNumber,attempt,rules.text,rules.confidence);
       }
       return !title.text.empty();
@@ -1079,7 +1080,7 @@ public:
       if(accepted) {
          m_lastAutoFlipped=true;
          card=std::move(reversed);
-         if(m_verbose)std::println("[CAM-ROT] selected 180 score {}>{}",
+         if(m_verbose)deckkernel::camera::Trace("[CAM-ROT] selected 180 score {}>{}",
             rotated,initial);
          return alternative;
       }
@@ -1089,7 +1090,7 @@ public:
       m_nameConfidence=nameConf;
       m_typeConfidence=typeConf;
       m_rulesConfidence=rulesConf;
-      if(m_verbose)std::println("[CAM-ROT] selected 0 score {} vs {}",
+      if(m_verbose)deckkernel::camera::Trace("[CAM-ROT] selected 0 score {} vs {}",
          initial,rotated);
       return original;
    }
@@ -1126,7 +1127,7 @@ std::string ReportManaColorCandidates(cv::Mat const& card,
    std::sort(unique.begin(),unique.end(),
       [](auto const& a,auto const& b){return a[0]<b[0];});
    if(verbose)
-      std::println("[CAM-MANA] card #{} candidates={} status=UNVERIFIED",
+      deckkernel::camera::Trace("[CAM-MANA] card #{} candidates={} status=UNVERIFIED",
          event,unique.size());
    return std::format("{} circular mana candidates (unverified)",
       unique.size());
@@ -1241,7 +1242,7 @@ public:
    }
    void SetPhase(deckkernel::camera::RecognitionPhase ePhase) {
       if(m_ePhase==ePhase)return;
-      std::println("[CAM-PHASE] {} -> {}",
+      deckkernel::camera::Trace("[CAM-PHASE] {} -> {}",
          deckkernel::camera::PhaseName(m_ePhase),
          deckkernel::camera::PhaseName(ePhase));
       m_ePhase=ePhase;
@@ -1348,7 +1349,7 @@ public:
          aSelected.strName,aSelected.strSet,aSelected.strSetName,
          aSelected.strCollector,aSelected.strPrintingId,
          aSelected.strOracleId});
-      std::println("[CAM-COLLECT] added #{} name={} set={} collector={} "
+      deckkernel::camera::Trace("[CAM-COLLECT] added #{} name={} set={} collector={} "
          "printing={}",m_vecCollected.size(),aSelected.strName,
          aSelected.strSet,aSelected.strCollector,aSelected.strPrintingId);
       std::string const strName=aSelected.strName;
@@ -1364,7 +1365,7 @@ public:
    \throw None.
    */
    [[nodiscard]] bool DiscardScan() {
-      std::println("[CAM-COLLECT] discarded event={} collected={}",
+      deckkernel::camera::Trace("[CAM-COLLECT] discarded event={} collected={}",
          m_ocrCard.value_or(0),m_vecCollected.size());
       ResetScan();
       m_strStatus="SCAN DISCARDED - focus table for next card";
@@ -1516,7 +1517,7 @@ public:
             iConfidence);
       }
       SetPhase(deckkernel::camera::RecognitionPhase::Selecting);
-      std::println("[CAM-PRINT-OCR] card={} confidence={} text='{}' "
+      deckkernel::camera::Trace("[CAM-PRINT-OCR] card={} confidence={} text='{}' "
          "unique_candidate={}",
          *m_ocrCard,iConfidence,strRecognized,
          optMatch && !boMultiple?std::to_string(*optMatch+1):"none");
@@ -1544,7 +1545,7 @@ public:
          m_strOrientation=std::format(
             "Frame: {} deg | reference: {} deg",
             m_boCapturedRotate180?180:0,m_iReferenceOrientation);
-         std::println("[CAM-ORIENTATION] card={} matcher={} deg "
+         deckkernel::camera::Trace("[CAM-ORIENTATION] card={} matcher={} deg "
             "corrected frozen display copy",
             result->uEvent,m_iReferenceOrientation);
       }
@@ -1601,7 +1602,7 @@ public:
          m_strReferenceDiagnostic=result->strReferenceDiagnostic;
       if(!result->aReferenceImage.empty())
          m_referenceCard=std::move(result->aReferenceImage);
-      std::println("[CAM-MATCH] card #{} status={} edition={}",
+      deckkernel::camera::Trace("[CAM-MATCH] card #{} status={} edition={}",
          result->uEvent,m_strStatus,m_strEdition);
 #endif
    }
@@ -1698,7 +1699,7 @@ public:
                "FOCUS INSUFFICIENT - native width {}px; "
                "detail {:.0f}; move card closer or adjust camera focus",
                aQuality.sourceWidth,aQuality.detailSharpness);
-            std::println("[CAM-FOCUS] card={} waiting for sharp image "
+            deckkernel::camera::Trace("[CAM-FOCUS] card={} waiting for sharp image "
                "native={}x{} detail={:.1f} blur={:.1f} clipped={:.1f}%",
                *m_ocrCard,aQuality.sourceWidth,aQuality.sourceHeight,
                aQuality.detailSharpness,aQuality.sharpness,
@@ -1724,7 +1725,7 @@ public:
                "[CAM-EVIDENCE] could not save frozen image {}",
                aPath.string());
          else
-            std::println("[CAM-EVIDENCE] frozen-search-input={}",
+            deckkernel::camera::Trace("[CAM-EVIDENCE] frozen-search-input={}",
                aPath.string());
          auto const aOverscanPath=m_root/std::format(
             "event-{:06}-frozen-overscan.png",*m_ocrCard);
@@ -1733,11 +1734,11 @@ public:
                "[CAM-EVIDENCE] could not save overscan {}",
                aOverscanPath.string());
          else
-            std::println("[CAM-EVIDENCE] frozen-overscan={}",
+            deckkernel::camera::Trace("[CAM-EVIDENCE] frozen-overscan={}",
                aOverscanPath.string());
       }
       auto const& aQuality=m_capture.Quality();
-      std::println("[CAM-QUALITY] card={} source={}x{} rectified={}x{} "
+      deckkernel::camera::Trace("[CAM-QUALITY] card={} source={}x{} rectified={}x{} "
          "sharpness={:.1f} printed-detail={:.1f} brightness={:.1f} "
          "clipped={:.1f}% usable={}",
          *m_ocrCard,aQuality.sourceWidth,aQuality.sourceHeight,
@@ -1748,7 +1749,7 @@ public:
          // PHASE 05: expose low confidence, but do NOT block image matching.
          // Earlier code froze a real, readable card then skipped the entire
          // artwork/printing pipeline because of an uncalibrated threshold.
-         std::println("[CAM-QUALITY] card={} below provisional threshold; "
+         deckkernel::camera::Trace("[CAM-QUALITY] card={} below provisional threshold; "
             "continuing visual search with low-confidence capture",
             *m_ocrCard);
          m_strEdition="Low-quality capture; match results need caution";
@@ -1776,7 +1777,7 @@ public:
       m_strStatus="SHARP FRAME SELECTED - no image matcher compiled";
       m_recognitionReady=true;
 #endif
-      std::println("[CAM-FOCUS] card #{} frames={} seconds={:.2f} "
+      deckkernel::camera::Trace("[CAM-FOCUS] card #{} frames={} seconds={:.2f} "
          "sharpness={:.2f} score={:.2f}",
          *m_ocrCard,m_uFocusFrames,flSeconds,
          m_flCaptureSharpness,m_flCaptureScore);
@@ -1905,12 +1906,12 @@ public:
          m_strSet.clear();m_strSetName.clear();m_strCollector.clear();
          m_strLanguage.clear();m_strRarity.clear();m_strPrintingId.clear();
          m_strOracleId.clear();m_strManaCost.clear();
-         std::println("[CAM] CARD-NO-LONGER-DETECTED #{} fingerprint={:016x}; "
+         deckkernel::camera::Trace("[CAM] CARD-NO-LONGER-DETECTED #{} fingerprint={:016x}; "
             "ready-for-next-card",
             event->number,event->fingerprint);
          return false;
       }
-      std::println("[CAM] NEW-STABLE-CARD #{} fingerprint={:016x}; edition=UNKNOWN",
+      deckkernel::camera::Trace("[CAM] NEW-STABLE-CARD #{} fingerprint={:016x}; edition=UNKNOWN",
          event->number,event->fingerprint);
       m_iReferenceOrientation=0;
       if(found) {
@@ -1919,7 +1920,7 @@ public:
             std::format("Standard frame: auto {} deg",
                m_boCapturedRotate180?180:0):
             "Orientation uncertain - reference search will test both";
-         std::println("[CAM-ORIENTATION] card={} layout={} initial={} deg",
+         deckkernel::camera::Trace("[CAM-ORIENTATION] card={} layout={} initial={} deg",
             event->number,found->boLayoutRecognized?"standard":"uncertain",
             m_boCapturedRotate180?180:0);
       }
@@ -1935,7 +1936,7 @@ public:
                static_cast<float>(found->corners[uIndex].x),
                static_cast<float>(found->corners[uIndex].y));
          if(!m_tracker.Begin(sourceFrame,arrCorners))
-            std::println("[CAM-TRACK] insufficient full-card optical-flow features");
+            deckkernel::camera::Trace("[CAM-TRACK] insufficient full-card optical-flow features");
       }
       m_strStatus="CARD CAPTURED - preparing identification";
       m_strEdition="Edition not verified";
@@ -2076,7 +2077,7 @@ class CameraWindow {
       if(msg==WM_ERASEBKGND)return 1;
       if(msg==WM_KEYDOWN && self && wp==static_cast<WPARAM>('R')) {
          self->m_flip180=!self->m_flip180;
-         std::println("[CAM] manual card orientation={} degrees (R toggles)",
+         deckkernel::camera::Trace("[CAM] manual card orientation={} degrees (R toggles)",
             self->m_flip180?180:0);
          InvalidateRect(hwnd,nullptr,FALSE);
          return 0;
@@ -2169,7 +2170,7 @@ public:
          1450,850,nullptr,nullptr,instance,this);
       if(!m_hwnd)throw std::runtime_error("camera preview creation failed");
       ShowWindow(m_hwnd,SW_SHOW);
-      std::println("[CAM] preview: left=camera, right=actual rectified OCR/artwork "
+      deckkernel::camera::Trace("[CAM] preview: left=camera, right=actual rectified OCR/artwork "
          "input; press R to toggle 0/180 degrees");
    }
    [[nodiscard]] bool Flip180() const noexcept {return m_flip180;}
@@ -2398,7 +2399,7 @@ void SelfTest() {
       aUpscaledLowResolution.sourceWidth!=180)
       throw std::runtime_error(
          "source-resolution/detail-sharpness quality regression");
-   std::println("[CAM-QUALITY-TEST] detail sharp={:.1f} blurred={:.1f} "
+   deckkernel::camera::Trace("[CAM-QUALITY-TEST] detail sharp={:.1f} blurred={:.1f} "
       "native-small={} rejected={}",
       aSharpQuality.detailSharpness,aBlurQuality.detailSharpness,
       aUpscaledLowResolution.sourceWidth,
@@ -2742,14 +2743,14 @@ void ConfigureCapture(cv::VideoCapture& capture,int width,int height,int fps,
    // The requested mode is not necessarily the mode ultimately negotiated.
    if(fourcc!="auto") {
       bool const result=capture.set(cv::CAP_PROP_FOURCC,CameraFourcc(fourcc));
-      std::println("[CAM] FOURCC request={} accepted={}",fourcc,result);
+      deckkernel::camera::Trace("[CAM] FOURCC request={} accepted={}",fourcc,result);
    }
    bool const w=capture.set(cv::CAP_PROP_FRAME_WIDTH,width);
    bool const h=capture.set(cv::CAP_PROP_FRAME_HEIGHT,height);
    bool const f=capture.set(cv::CAP_PROP_FPS,fps);
-   std::println("[CAM] mode request={}x{} @{}fps accepted={}/{}/{}",
+   deckkernel::camera::Trace("[CAM] mode request={}x{} @{}fps accepted={}/{}/{}",
       width,height,fps,w,h,f);
-   std::println("[CAM] negotiated={}x{} @{}fps FOURCC={}",
+   deckkernel::camera::Trace("[CAM] negotiated={}x{} @{}fps FOURCC={}",
       capture.get(cv::CAP_PROP_FRAME_WIDTH),
       capture.get(cv::CAP_PROP_FRAME_HEIGHT),
       capture.get(cv::CAP_PROP_FPS),
@@ -2798,11 +2799,11 @@ bool ProbeCamera(int index) {
    }};
    unsigned successful=0;
    for(auto const& mode:modes) {
-      std::println("[CAM-PROBE] START index={} mode={}",index,mode.name);
+      deckkernel::camera::Trace("[CAM-PROBE] START index={} mode={}",index,mode.name);
       try {
          cv::VideoCapture capture;
          if(!capture.open(index,mode.backend)||!capture.isOpened()) {
-            std::println("[CAM-PROBE] UNAVAILABLE {}",mode.name);
+            deckkernel::camera::Trace("[CAM-PROBE] UNAVAILABLE {}",mode.name);
             continue;
          }
          ConfigureCapture(capture,mode.width,mode.height,mode.fps,mode.fourcc);
@@ -2830,7 +2831,7 @@ bool ProbeCamera(int index) {
          }
          double const seconds=std::chrono::duration<double>(
             std::chrono::steady_clock::now()-beginning).count();
-         std::println("[CAM-PROBE] RESULT {} backend={} frames={} empty={} "
+         deckkernel::camera::Trace("[CAM-PROBE] RESULT {} backend={} frames={} empty={} "
             "nonblack={} black={} changed={} maxPixel={:.0f} elapsed={:.1f}s",
             mode.name,capture.getBackendName(),received,empty,bright,black,
             changed,maximum,seconds);
@@ -2844,7 +2845,7 @@ bool ProbeCamera(int index) {
    std::println("SMOKE|CHECK|camera-pixels|{}|camera={} valid_modes={}/4",
       successful?"PASS":"FAIL",index,successful);
    if(!successful)
-      std::println("[CAM-PROBE] No usable image data. Check the camera in the "
+      deckkernel::camera::Trace("[CAM-PROBE] No usable image data. Check the camera in the "
          "Windows Camera application before changing the card recognition algorithm.");
    return successful>0;
 }
@@ -2963,14 +2964,14 @@ int main(int argc,char** argv) {
          std::filesystem::path const aEvidenceDirectory=save?
             std::filesystem::path(".cache/camera-recognition/replay"):
             std::filesystem::path{};
-         std::println("[CAM-REPLAY] frozen={} dimensions={}x{}",
+         deckkernel::camera::Trace("[CAM-REPLAY] frozen={} dimensions={}x{}",
             frozenImageFile,aFrozen.cols,aFrozen.rows);
          aMatcher.Search(aFrozen,1,aEvidenceDirectory);
          auto const aStart=std::chrono::steady_clock::now();
          while(std::chrono::steady_clock::now()-aStart<
             std::chrono::seconds(100)) {
             if(auto optResult=aMatcher.Poll()) {
-               std::println("[CAM-REPLAY] status={} complete={} "
+               deckkernel::camera::Trace("[CAM-REPLAY] status={} complete={} "
                   "asset={} name={} set={} collector={} candidates={}",
                   optResult->strStatus,optResult->boComplete,
                   optResult->strAssetId,optResult->strName,
@@ -3000,13 +3001,13 @@ int main(int argc,char** argv) {
          cv::Mat const image=cv::imread(imageFile,cv::IMREAD_COLOR);
          if(image.empty())
             throw std::runtime_error("cannot decode original image: "+imageFile);
-         std::println("[CAM] still image={} size={}x{}",imageFile,image.cols,image.rows);
+         deckkernel::camera::Trace("[CAM] still image={} size={}x{}",imageFile,image.cols,image.rows);
          auto found=FindCard(image);
          if(found) {
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
             if(artwork)deckkernel::camera::CardImageMatcher(artworkLimit).Search(found->rectified,1);
 #endif
-            std::println("[CAM] card contour rectified to {}x{}",
+            deckkernel::camera::Trace("[CAM] card contour rectified to {}x{}",
                found->rectified.cols,found->rectified.rows);
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
             if(ocr) {
@@ -3021,7 +3022,7 @@ int main(int argc,char** argv) {
                   throw std::runtime_error("cannot save rectified still image");
             }
          } else {
-            std::println("[CAM] NO CARD CONTOUR: preserving original image for OCR");
+            deckkernel::camera::Trace("[CAM] NO CARD CONTOUR: preserving original image for OCR");
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
             if(ocr) {
                // Original photo may already be tightly cropped to the card.
@@ -3057,21 +3058,21 @@ int main(int argc,char** argv) {
                "cannot read camera frame: "+path.string());
             processor.Process(frame);
          }
-         std::println("[CAM] replay finished; frames={}",frames.size());
+         deckkernel::camera::Trace("[CAM] replay finished; frames={}",frames.size());
          return 0;
       }
 #if defined(DECKKERNEL_CAMERA_HAS_VIDEOIO)
       int api=Api(backend);
-      std::println("[CAM] opening camera={} backend-request={}",*camera,backend);
+      deckkernel::camera::Trace("[CAM] opening camera={} backend-request={}",*camera,backend);
       cv::VideoCapture capture(*camera,api);
       if(!capture.isOpened())
          throw std::runtime_error("cannot open camera: try another index/backend or Windows camera privacy settings");
-      std::println("[CAM] opened camera={} backend={}",*camera,capture.getBackendName());
+      deckkernel::camera::Trace("[CAM] opened camera={} backend={}",*camera,capture.getBackendName());
       ConfigureCapture(capture,width,height,fpsRequested,fourcc);
       // DirectShow exposes these values only when the driver implements
       // the camera properties. Reporting them does not mutate working
       // exposure or HDR configuration.
-      std::println("[CAM-LIGHT] auto-exposure={} exposure={} gain={} "
+      deckkernel::camera::Trace("[CAM-LIGHT] auto-exposure={} exposure={} gain={} "
          "brightness={} contrast={} saturation={} white-balance={}",
          capture.get(cv::CAP_PROP_AUTO_EXPOSURE),
          capture.get(cv::CAP_PROP_EXPOSURE),
@@ -3111,10 +3112,10 @@ int main(int argc,char** argv) {
             // Recalibrate only between physical sessions: never change
             // optical settings while examining a frozen card.
             if(!processor.CardLocked()) {
-               std::println("[CAM-TABLE-FOCUS] recalibration requested by F");
+               deckkernel::camera::Trace("[CAM-TABLE-FOCUS] recalibration requested by F");
                aTableFocus.Begin(capture);
             }
-            else std::println("[CAM-TABLE-FOCUS] F ignored: card locked");
+            else deckkernel::camera::Trace("[CAM-TABLE-FOCUS] F ignored: card locked");
          }
          FrameSignal const signal=MeasureFrame(frame);
          // Pre-focus independently of contours: a blurred table card must
@@ -3166,7 +3167,7 @@ int main(int argc,char** argv) {
          else if(boAccept)
             boRestartFocus=processor.ConfirmCandidate();
          if(boRestartFocus) {
-            std::println("[CAM-SCAN] next scan: pre-focus tabletop");
+            deckkernel::camera::Trace("[CAM-SCAN] next scan: pre-focus tabletop");
             aTableFocus.Begin(capture);
          }
          // Visual diagnostic: mark the four corners that pass card geometry checks.
@@ -3225,12 +3226,12 @@ int main(int argc,char** argv) {
          if(seconds>=2.0){
             fps=count/seconds;
             if(verbose) {
-               std::println("[CAM] backend={} frames={} size={}x{} fps={:.1f} "
+               deckkernel::camera::Trace("[CAM] backend={} frames={} size={}x{} fps={:.1f} "
                   "mean={:.2f} min={:.0f} max={:.0f} black-frames={}",
                   capture.getBackendName(),count,frame.cols,frame.rows,fps,
                   signal.brightness,signal.minimum,signal.maximum,blackFrames);
                if(!processor.CardLocked())
-                  std::println("[CAM-DETECT] contours={} candidates={} "
+                  deckkernel::camera::Trace("[CAM-DETECT] contours={} candidates={} "
                      "quadrilaterals={} rotated={} plausible={} "
                      "shape-rejected={} aspect-rejected={} full-frame-rejected={} "
                      "broken-outline={} physical-outline={} "
@@ -3256,7 +3257,7 @@ int main(int argc,char** argv) {
                "but returned at least five nearly black frames. "
                "Run --probe-camera=N and check the device in Windows Camera.");
       }
-      std::println("[CAM] preview closed");
+      deckkernel::camera::Trace("[CAM] preview closed");
       return 0;
 #else
       throw std::runtime_error("OpenCV videoio not present in installed BuildEngine stack; use --sequence");
