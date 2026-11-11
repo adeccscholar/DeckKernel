@@ -66,6 +66,9 @@ namespace deckkernel::camera {
       std::vector<PrintingCandidate> vecCandidates;
       bool boCandidateSelection{};
       bool boCandidatesTruncated{};
+      // Explicit evidence survives when an intermediate status update is
+      // overwritten by a newer worker result before the next UI poll.
+      bool boArtworkRecognized{};
       unsigned uSelectionSerial{};
    };
 
@@ -1064,6 +1067,7 @@ namespace deckkernel::camera {
             CardImageMatchResult aArtworkResult{
                aTask.uEvent,"ARTWORK FOUND - checking concrete printing",
                "Illustration matched; printing not yet identified",false};
+            aArtworkResult.boArtworkRecognized=true;
             aArtworkResult.strAssetId=aArt.strAssetId;
             aArtworkResult.strName=ArtworkName(
                pConnection,aArt.strAssetId);
@@ -1076,6 +1080,7 @@ namespace deckkernel::camera {
             RefinePrintingImages(pConnection,aOriented,vecPrintings);
             CardImageMatchResult aResult=SummarizePrintings(
                vecPrintings,true,aTask.uEvent,iOrientation);
+            aResult.boArtworkRecognized=true;
             if(aResult.strAssetId.empty()) {
                aArtworkResult.boComplete=true;
                aArtworkResult.strStatus="ARTWORK FOUND - printing unresolved";
