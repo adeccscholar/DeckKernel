@@ -152,9 +152,13 @@ namespace deckkernel::camera {
             m_aFrozenOverscan=m_aFrozen.clone();
          // OCR is based on the extended original-frame field, not the
          // canonical crop which may end above the printed collector number.
-         int const iTop=m_aFrozenOverscan.rows*80/100;
+         // Expected collector/set strip is near the foot of the card,
+         // around 88..98% of this extended frame; exclude artwork/rules
+         // text above and the tabletop beyond the overscan below.
+         int const iTop=m_aFrozenOverscan.rows*86/100;
+         int const iBottom=m_aFrozenOverscan.rows*99/100;
          m_aBottom=m_aFrozenOverscan(cv::Rect(0,iTop,
-            m_aFrozenOverscan.cols,m_aFrozenOverscan.rows-iTop)).clone();
+            m_aFrozenOverscan.cols,iBottom-iTop)).clone();
          m_boFrozen=true;
          return true;
       }
