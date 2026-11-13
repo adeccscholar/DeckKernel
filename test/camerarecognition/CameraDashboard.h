@@ -439,10 +439,8 @@ public:
       Fill(pCanvas,SkRect::MakeXYWH(flListX,flPaneTop,
          flListWidth,iHeight-flPaneTop-14.f),0xff142633);
       Text(pCanvas,25.f,35.f,"DECKKERNEL  /  IMAGE RECOGNITION",23.f,0xfff5f7fa);
-      Text(pCanvas,static_cast<float>(iWidth)-375.f,35.f,
-         m_strPhase,16.f,0xff8ed5ee);
-      if(!m_strSettingsNotice.empty())
-         Text(pCanvas,410.f,35.f,m_strSettingsNotice,12.f,0xff9dddb9);
+      Text(pCanvas,static_cast<float>(iWidth)-465.f,35.f,
+         m_strPhase.substr(0,18),15.f,0xff8ed5ee);
       Fill(pCanvas,SkRect::MakeXYWH(
          static_cast<float>(iWidth)-306.f,9.f,153.f,38.f),
          m_boTableAutoFocus?0xff218a78:0xff344753);
@@ -489,6 +487,11 @@ public:
       Text(pCanvas,flListX+14.f,iHeight-34.f,
          "Enter: accept | Esc: discard | O: options",
          11.f,0xff9dddb9);
+      if(!m_strSettingsNotice.empty())
+         Text(pCanvas,flListX+14.f,iHeight-103.f,
+            Clip(m_strSettingsNotice,
+               static_cast<int>(flListWidth-24.f)),
+            12.f,0xff9dddb9);
       if(m_bCardLocked) {
          Text(pCanvas,30.f,flPaneTop+flPaneHeight-18.f,
             "Captured: locked | "+m_strOrientation,14.f,0xff9dddb9);
