@@ -22,9 +22,17 @@
 #include <stdexcept>
 #include <utility>
 #include <vector>
+#include <fstream>
+#include <regex>
+#include <iterator>
 
 namespace deckkernel::camera {
-   enum class SearchRegion { Full, Top, Bottom, Left, Right };
+   /**
+   \brief Direction toward which the physical card's TOP edge points.
+   \details Automatic preserves legacy portrait-only geometry and 0/180
+      layout matching; all named orientations are absolute image directions.
+   */
+   enum class CardOrientation { Automatic, Top, Bottom, Left, Right };
 
    /** \brief Enumerate named DirectShow video-input devices in native index order. */
    [[nodiscard]] std::vector<std::pair<int,std::wstring>> EnumerateCameraDevices();
@@ -36,33 +44,100 @@ namespace deckkernel::camera {
       int iFps{30};
       bool boSaveEvents{};
       bool boVerbose{};
-      SearchRegion eRegion{SearchRegion::Full};
+      CardOrientation eOrientation{CardOrientation::Automatic};
    };
 
    /**
-   \brief Compute the scan rectangle from the full camera dimensions.
-   \details Directional zones overlap the center by ten percent so objects
-      near a half-frame boundary are not immediately lost.
-   \param aSize Full capture dimensions.
-   \param eRegion Preferred card position.
-   \returns Scan rectangle in native source pixels.
-   \throw None.
+   \brief Local JSON configuration for the graphical camera.
+   \details Only the small fixed settings schema is supported; missing or
+      invalid data is not treated as a valid previous configuration.
    */
-   [[nodiscard]] inline cv::Rect CameraSearchRect(
-      cv::Size const& aSize,SearchRegion eRegion) {
-      int const iW=aSize.width,iH=aSize.height;
-      switch(eRegion) {
-         case SearchRegion::Top:
-            return {0,0,iW,iH*60/100};
-         case SearchRegion::Bottom:
-            return {0,iH*40/100,iW,iH-iH*40/100};
-         case SearchRegion::Left:
-            return {0,0,iW*60/100,iH};
-         case SearchRegion::Right:
-            return {iW*40/100,0,iW-iW*40/100,iH};
-         default: return {0,0,iW,iH};
+   class CameraSettingsFile final {
+      [[nodiscard]] static std::filesystem::path Path() {
+         return std::filesystem::absolute(
+            ".cache/camera-recognition/camera-settings.json");
       }
-   }
+      [[nodiscard]] static std::optional<int> Integer(
+         std::string const& strContents,char const* szKey) {
+         std::regex const aExpression(
+            std::string{"\""}+szKey+"\"\\s*:\\s*(-?[0-9]+)");
+         std::smatch aMatch;
+         if(!std::regex_search(strContents,aMatch,aExpression))
+            return std::nullopt;
+         try { return std::stoi(aMatch[1].str()); }
+         catch(std::exception const&) { return std::nullopt; }
+      }
+      [[nodiscard]] static std::optional<bool> Boolean(
+         std::string const& strContents,char const* szKey) {
+         std::regex const aExpression(
+            std::string{"\""}+szKey+"\"\\s*:\\s*(true|false)");
+         std::smatch aMatch;
+         if(!std::regex_search(strContents,aMatch,aExpression))
+            return std::nullopt;
+         return aMatch[1].str()=="true";
+      }
+   public:
+      /**
+      \brief Load existing JSON settings.
+      \details No file or invalid schema returns false, requesting the dialog.
+      \param aSettings Receives validated configuration.
+      \returns True for a complete valid configuration.
+      \throw None.
+      */
+      [[nodiscard]] static bool Load(CameraLaunchSettings& aSettings) {
+         std::ifstream aStream(Path(),std::ios::binary);
+         if(!aStream)return false;
+         std::string const strContents(
+            std::istreambuf_iterator<char>{aStream},
+            std::istreambuf_iterator<char>{});
+         auto const iVersion=Integer(strContents,"version");
+         auto const iCamera=Integer(strContents,"camera");
+         auto const iWidth=Integer(strContents,"width");
+         auto const iHeight=Integer(strContents,"height");
+         auto const iFps=Integer(strContents,"fps");
+         auto const iOrientation=Integer(strContents,"orientation");
+         auto const boSave=Boolean(strContents,"saveEvents");
+         auto const boVerbose=Boolean(strContents,"verbose");
+         if(!iVersion || *iVersion!=1 || !iCamera || !iWidth ||
+            !iHeight || !iFps || !iOrientation || !boSave ||
+            !boVerbose || *iCamera<0 || *iCamera>15 ||
+            *iWidth<160 || *iWidth>3840 || *iHeight<120 ||
+            *iHeight>2160 || *iFps<1 || *iFps>120 ||
+            *iOrientation<0 || *iOrientation>4)
+            return false;
+         aSettings=CameraLaunchSettings{
+            *iCamera,*iWidth,*iHeight,*iFps,*boSave,*boVerbose,
+            static_cast<CardOrientation>(*iOrientation)};
+         return true;
+      }
+      /**
+      \brief Persist confirmed camera options as JSON.
+      \param aSettings Values to write.
+      \returns Nothing.
+      \throw std::runtime_error On file creation or write failure.
+      */
+      static void Save(CameraLaunchSettings const& aSettings) {
+         std::filesystem::create_directories(Path().parent_path());
+         std::ofstream aStream(Path(),std::ios::binary|std::ios::trunc);
+         if(!aStream)throw std::runtime_error(
+            "cannot create camera-settings.json");
+         aStream<<"{\n"
+            "  \"version\": 1,\n"
+            "  \"camera\": "<<aSettings.iCamera<<",\n"
+            "  \"width\": "<<aSettings.iWidth<<",\n"
+            "  \"height\": "<<aSettings.iHeight<<",\n"
+            "  \"fps\": "<<aSettings.iFps<<",\n"
+            "  \"orientation\": "<<static_cast<int>(
+               aSettings.eOrientation)<<",\n"
+            "  \"saveEvents\": "<<(aSettings.boSaveEvents?
+               "true":"false")<<",\n"
+            "  \"verbose\": "<<(aSettings.boVerbose?
+               "true":"false")<<"\n}\n";
+         aStream.flush();
+         if(!aStream)throw std::runtime_error(
+            "cannot write camera-settings.json");
+      }
+   };
 
    /**
    \brief Modeless-control host used as a blocking startup dialog.
@@ -80,21 +155,6 @@ namespace deckkernel::camera {
       bool m_boAccepted{};
       bool m_boFinished{};
 
-      [[nodiscard]] static std::filesystem::path SettingsPath() {
-         return std::filesystem::absolute(
-            ".cache/camera-recognition/camera-settings.ini");
-      }
-      [[nodiscard]] static int ReadInt(wchar_t const* szKey,int iDefault) {
-         auto const aPath=SettingsPath();
-         return static_cast<int>(GetPrivateProfileIntW(
-            L"Camera",szKey,iDefault,aPath.c_str()));
-      }
-      static void WriteInt(wchar_t const* szKey,int iValue) {
-         std::wstring const strValue=std::to_wstring(iValue);
-         auto const aPath=SettingsPath();
-         WritePrivateProfileStringW(L"Camera",szKey,
-            strValue.c_str(),aPath.c_str());
-      }
       static void AddLabel(HWND hWindow,wchar_t const* szText,int iY) {
          CreateWindowExW(0,L"STATIC",szText,
             WS_CHILD|WS_VISIBLE,18,iY,155,23,hWindow,
@@ -164,13 +224,13 @@ namespace deckkernel::camera {
             AddItem(m_hFps,szFps);
          Select(m_hFps,m_aSettings.iFps==25?1:
             m_aSettings.iFps==20?2:m_aSettings.iFps==15?3:0);
-         AddLabel(m_hWindow,L"Card position",148);
+         AddLabel(m_hWindow,L"Card top edge",148);
          m_hRegion=AddCombo(m_hWindow,Region,144);
          for(wchar_t const* szRegion:{
-            L"Full image",L"Top",L"Bottom",L"Left",L"Right"})
+            L"Automatic",L"Top",L"Bottom",L"Left",L"Right"})
             AddItem(m_hRegion,szRegion);
          Select(m_hRegion,std::clamp(
-            static_cast<int>(m_aSettings.eRegion),0,4));
+            static_cast<int>(m_aSettings.eOrientation),0,4));
          m_hSave=CreateWindowExW(0,L"BUTTON",L"Save event images",
             WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
             18,195,220,25,m_hWindow,
@@ -211,20 +271,13 @@ namespace deckkernel::camera {
          m_aSettings.iHeight=arrRes[iResolution].second;
          std::array<int,4> const arrFps{{30,25,20,15}};
          m_aSettings.iFps=arrFps[std::clamp(Selection(m_hFps),0,3)];
-         m_aSettings.eRegion=static_cast<SearchRegion>(
+         m_aSettings.eOrientation=static_cast<CardOrientation>(
             std::clamp(Selection(m_hRegion),0,4));
          m_aSettings.boSaveEvents=SendMessageW(
             m_hSave,BM_GETCHECK,0,0)==BST_CHECKED;
          m_aSettings.boVerbose=SendMessageW(
             m_hVerbose,BM_GETCHECK,0,0)==BST_CHECKED;
-         std::filesystem::create_directories(SettingsPath().parent_path());
-         WriteInt(L"Index",m_aSettings.iCamera);
-         WriteInt(L"Width",m_aSettings.iWidth);
-         WriteInt(L"Height",m_aSettings.iHeight);
-         WriteInt(L"Fps",m_aSettings.iFps);
-         WriteInt(L"Region",static_cast<int>(m_aSettings.eRegion));
-         WriteInt(L"SaveEvents",m_aSettings.boSaveEvents);
-         WriteInt(L"Verbose",m_aSettings.boVerbose);
+         CameraSettingsFile::Save(m_aSettings);
          m_boAccepted=true;
          m_boFinished=true;
          DestroyWindow(m_hWindow);
@@ -265,14 +318,7 @@ namespace deckkernel::camera {
       }
    public:
       CameraSettingsDialog() {
-         m_aSettings.iCamera=ReadInt(L"Index",0);
-         m_aSettings.iWidth=ReadInt(L"Width",3840);
-         m_aSettings.iHeight=ReadInt(L"Height",2160);
-         m_aSettings.iFps=ReadInt(L"Fps",30);
-         m_aSettings.eRegion=static_cast<SearchRegion>(
-            std::clamp(ReadInt(L"Region",0),0,4));
-         m_aSettings.boSaveEvents=ReadInt(L"SaveEvents",0)!=0;
-         m_aSettings.boVerbose=ReadInt(L"Verbose",0)!=0;
+         CameraSettingsFile::Load(m_aSettings);
       }
       /**
       \brief Display editable startup settings and wait for user confirmation.
