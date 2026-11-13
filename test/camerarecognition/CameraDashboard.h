@@ -64,6 +64,8 @@ class CameraDashboard {
    std::string m_strSettingsNotice;
    std::vector<deckkernel::camera::CollectedCard> m_vecCollected;
    bool m_boFocusReset{};
+   bool m_boFocusToggle{};
+   bool m_boTableAutoFocus{};
    std::string m_strPhase{"01 SEARCHING"};
    std::size_t m_uCandidateIndex{};
    std::size_t m_uCandidateCount{};
@@ -169,6 +171,8 @@ public:
                aEvent.key.repeat==0)m_boReject=true;
             if(aEvent.key.keysym.sym==SDLK_r)m_bFlip=!m_bFlip;
             if(aEvent.key.keysym.sym==SDLK_f)m_boFocusReset=true;
+            if(aEvent.key.keysym.sym==SDLK_g &&
+               aEvent.key.repeat==0)m_boFocusToggle=true;
             if(aEvent.key.keysym.sym==SDLK_o &&
                aEvent.key.repeat==0)m_boOptions=true;
             if(aEvent.key.keysym.sym==SDLK_p && m_bCardLocked)
@@ -199,9 +203,12 @@ public:
                   std::max(1,iWindowWidth);
                int const iY=aEvent.button.y*std::max(1,iHeight)/
                   std::max(1,iWindowHeight);
-               if(iY>=9 && iY<47 &&
-                  iX>=iWidth-145 && iX<iWidth-17)
-                  m_boOptions=true;
+               if(iY>=9 && iY<47) {
+                  if(iX>=iWidth-145 && iX<iWidth-17)
+                     m_boOptions=true;
+                  else if(iX>=iWidth-306 && iX<iWidth-153)
+                     m_boFocusToggle=true;
+               }
                float const flPaneWidth=(iWidth-32.f-36.f-
                   std::max(230.f,iWidth*0.23f))/2.f;
                float const flRight=16.f+flPaneWidth+18.f;
@@ -274,6 +281,14 @@ public:
       // on every one of the camera's ~20 video frames per second.
       if(m_vecCollected.size()!=vecCards.size())
          m_vecCollected=vecCards;
+   }
+   void SetTableAutoFocus(bool boEnabled) noexcept {
+      m_boTableAutoFocus=boEnabled;
+   }
+   [[nodiscard]] bool ConsumeFocusToggle() noexcept {
+      bool const boToggle=m_boFocusToggle;
+      m_boFocusToggle=false;
+      return boToggle;
    }
    [[nodiscard]] bool ConsumeFocusReset() noexcept {
       bool const boReset=m_boFocusReset;
@@ -428,6 +443,12 @@ public:
          m_strPhase,16.f,0xff8ed5ee);
       if(!m_strSettingsNotice.empty())
          Text(pCanvas,410.f,35.f,m_strSettingsNotice,12.f,0xff9dddb9);
+      Fill(pCanvas,SkRect::MakeXYWH(
+         static_cast<float>(iWidth)-306.f,9.f,153.f,38.f),
+         m_boTableAutoFocus?0xff218a78:0xff344753);
+      Text(pCanvas,static_cast<float>(iWidth)-296.f,35.f,
+         m_boTableAutoFocus?"Table AF: ON":"Table AF: OFF",
+         14.f,0xfff5f7fa);
       Fill(pCanvas,SkRect::MakeXYWH(
          static_cast<float>(iWidth)-145.f,9.f,128.f,38.f),
          0xff244454);
