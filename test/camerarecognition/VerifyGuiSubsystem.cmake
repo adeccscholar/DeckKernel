@@ -1,0 +1,27 @@
+# Verify the actual installed-target PE header, not merely a CMake property.
+# PE optional header Subsystem: Windows GUI = 2, Windows Console = 3.
+if(NOT DEFINED PE_PATH OR NOT EXISTS "${PE_PATH}")
+   message(FATAL_ERROR "Cannot verify GUI executable: ${PE_PATH}")
+endif()
+file(READ "${PE_PATH}" magic OFFSET 0 LIMIT 2 HEX)
+if(NOT magic STREQUAL "4d5a")
+   message(FATAL_ERROR "Not an MZ executable: ${PE_PATH}")
+endif()
+file(READ "${PE_PATH}" pe_offset_bytes OFFSET 60 LIMIT 4 HEX)
+string(SUBSTRING "${pe_offset_bytes}" 0 2 b0)
+string(SUBSTRING "${pe_offset_bytes}" 2 2 b1)
+string(SUBSTRING "${pe_offset_bytes}" 4 2 b2)
+string(SUBSTRING "${pe_offset_bytes}" 6 2 b3)
+math(EXPR pe_offset "0x${b3}${b2}${b1}${b0}")
+file(READ "${PE_PATH}" pe_signature OFFSET ${pe_offset} LIMIT 4 HEX)
+if(NOT pe_signature STREQUAL "50450000")
+   message(FATAL_ERROR "Invalid PE signature in ${PE_PATH}")
+endif()
+math(EXPR subsystem_offset "${pe_offset}+92")
+file(READ "${PE_PATH}" pe_subsystem OFFSET ${subsystem_offset} LIMIT 2 HEX)
+if(NOT pe_subsystem STREQUAL "0200")
+   message(FATAL_ERROR
+      "Camera executable is NOT a Windows GUI application (PE subsystem bytes=${pe_subsystem})."
+      " Check BCC64X linker flags. Expected 0200 (Windows GUI).")
+endif()
+message(STATUS "Verified PE subsystem: Windows GUI (no console allocation)")
