@@ -33,6 +33,13 @@ target_link_libraries(deckkernel_camera_recognition_test PRIVATE user32 shell32 
 set_target_properties(deckkernel_camera_recognition_test PROPERTIES
    WIN32_EXECUTABLE TRUE)
 target_link_options(deckkernel_camera_recognition_test PRIVATE -mwindows)
+# Guard against a compiler-driver default silently producing a console PE.
+add_custom_command(TARGET deckkernel_camera_recognition_test POST_BUILD
+   COMMAND "${CMAKE_COMMAND}"
+      "-DPE_PATH=$<TARGET_FILE:deckkernel_camera_recognition_test>"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/VerifyGuiSubsystem.cmake"
+   VERBATIM)
+
 if(TARGET SDL2::SDL2 AND TARGET Skia::skia)
    target_link_libraries(deckkernel_camera_recognition_test PRIVATE SDL2::SDL2 Skia::skia)
    target_compile_definitions(deckkernel_camera_recognition_test PRIVATE
