@@ -66,6 +66,7 @@ namespace deckkernel::camera {
       int iOrientation{};
       std::vector<PrintingCandidate> vecCandidates;
       bool boCandidateSelection{};
+      bool boAllPrintings{};
       bool boCandidatesTruncated{};
       // Explicit evidence survives when an intermediate status update is
       // overwritten by a newer worker result before the next UI poll.
@@ -88,6 +89,7 @@ namespace deckkernel::camera {
          unsigned uSelectionSerial{};
          std::filesystem::path aEvidenceDirectory;
          std::optional<std::string> optOcrName;
+         std::optional<std::string> optAllOracleId;
       };
 
       struct Ranked final {
@@ -1059,6 +1061,74 @@ namespace deckkernel::camera {
       \returns Candidate metadata and reference image.
       \throw std::runtime_error If a database read fails.
       */
+      /**
+      \brief Retrieve available printings for the recognized Oracle identity.
+      \details Uses a relational query without any additional image search.
+         The number of results is bounded to protect GUI responsiveness.
+      \param pConnection Worker's PostgreSQL connection.
+      \param aTask Active session's Oracle ID request.
+      \returns Candidate list, or an empty list when none are stored.
+      \throw std::runtime_error If the database query fails.
+      */
+      CardImageMatchResult AllPrintings(PGconn* pConnection,
+         Task const& aTask) {
+         CardImageMatchResult aResult{aTask.uEvent};
+         aResult.boAllPrintings=true;
+         aResult.uSelectionSerial=aTask.uSelectionSerial;
+         aResult.strStatus="ALL PRINTINGS - choosing a stored printing";
+         if(!aTask.optAllOracleId || aTask.optAllOracleId->empty())
+            return aResult;
+         char const* arrParams[]{aTask.optAllOracleId->c_str()};
+         result_ty aRows(PQexecParams(pConnection,
+            "SELECT DISTINCT ON (c.scryfall_id,cf.face_id) "
+            "a.id::text,c.scryfall_id,cf.face_id::text,cf.name,"
+            "s.code,c.collector_number,c.lang,v.variant,"
+            "cf.type_line,cf.mana_cost,s.name,r.code,"
+            "COALESCE(c.oracle_id,'') "
+            "FROM deckkernel_test.scryfall_cards c "
+            "JOIN deckkernel_test.scryfall_sets s ON s.id=c.set_id "
+            "JOIN deckkernel_test.dom_rarities r ON r.id=c.rarity_id "
+            "JOIN deckkernel_test.scryfall_card_faces cf "
+            "ON cf.card_id=c.id "
+            "JOIN deckkernel_test.scryfall_card_image_variants v "
+            "ON v.card_id=c.id AND v.face_id=cf.face_id "
+            "AND v.variant IN ('normal','large','border_crop') "
+            "JOIN deckkernel_test.scryfall_image_assets a "
+            "ON a.id=v.asset_id AND a.image_data IS NOT NULL "
+            "WHERE c.oracle_id=$1::text "
+            "ORDER BY c.scryfall_id,cf.face_id,"
+            "CASE v.variant WHEN 'normal' THEN 0 "
+            "WHEN 'large' THEN 1 ELSE 2 END LIMIT 1001",
+            1,nullptr,arrParams,nullptr,nullptr,0));
+         if(!aRows || PQresultStatus(aRows.get())!=PGRES_TUPLES_OK)
+            throw std::runtime_error(std::format(
+               "all printings query failed: {}",PQerrorMessage(pConnection)));
+         aResult.boCandidatesTruncated=PQntuples(aRows.get())>1000;
+         int const iCount=std::min(PQntuples(aRows.get()),1000);
+         aResult.vecCandidates.reserve(static_cast<std::size_t>(iCount));
+         for(int iRow=0;iRow<iCount;++iRow) {
+            PrintingCandidate aCandidate;
+            aCandidate.strAssetId=PQgetvalue(aRows.get(),iRow,0);
+            aCandidate.strPrintingId=PQgetvalue(aRows.get(),iRow,1);
+            aCandidate.iFace=std::stoi(PQgetvalue(aRows.get(),iRow,2));
+            aCandidate.strName=PQgetvalue(aRows.get(),iRow,3);
+            aCandidate.strSet=PQgetvalue(aRows.get(),iRow,4);
+            aCandidate.strCollector=PQgetvalue(aRows.get(),iRow,5);
+            aCandidate.strLanguage=PQgetvalue(aRows.get(),iRow,6);
+            aCandidate.strVariant=PQgetvalue(aRows.get(),iRow,7);
+            aCandidate.strTypeLine=PQgetvalue(aRows.get(),iRow,8);
+            aCandidate.strManaCost=PQgetvalue(aRows.get(),iRow,9);
+            aCandidate.strSetName=PQgetvalue(aRows.get(),iRow,10);
+            aCandidate.strRarity=PQgetvalue(aRows.get(),iRow,11);
+            aCandidate.strOracleId=PQgetvalue(aRows.get(),iRow,12);
+            aResult.vecCandidates.push_back(std::move(aCandidate));
+         }
+         aResult.strStatus=std::format("ALL PRINTINGS - {}{}",
+            aResult.vecCandidates.size(),
+            aResult.boCandidatesTruncated?" (first 1000)":"");
+         return aResult;
+      }
+
       CardImageMatchResult DisplaySelection(PGconn* pConnection,
          Task const& aTask) {
          CardImageMatchResult aResult{aTask.uEvent};
@@ -1338,6 +1408,8 @@ namespace deckkernel::camera {
                if(Cancelled(aTask.uEvent))continue;
                if(aTask.optSelection)
                   Publish(DisplaySelection(aConnection.get(),aTask));
+               else if(aTask.optAllOracleId)
+                  Publish(AllPrintings(aConnection.get(),aTask));
                else if(aTask.optOcrName)
                   Publish(MatchOcrName(aConnection.get(),aTask));
                else
@@ -1418,6 +1490,28 @@ namespace deckkernel::camera {
             std::lock_guard const aLock(m_mutex);
             if(m_uActiveEvent.load(std::memory_order_relaxed)!=uEvent)return;
             m_pending=Task{uEvent,{},aCandidate,uSelectionSerial};
+         }
+         m_signal.notify_one();
+      }
+
+      /**
+      \brief Queue a database listing of every stored printing for one Oracle ID.
+      \param strOracleId Identified oracle identity.
+      \param uEvent Active camera presentation number.
+      \param uSelectionSerial Selection generation used to reject stale results.
+      \returns Nothing.
+      \throw std::bad_alloc When queue allocation fails.
+      */
+      void RequestAllPrintings(std::string const& strOracleId,
+         unsigned uEvent,unsigned uSelectionSerial) {
+         {
+            std::lock_guard const aLock(m_mutex);
+            if(m_uActiveEvent.load(std::memory_order_relaxed)!=uEvent)return;
+            Task aTask;
+            aTask.uEvent=uEvent;
+            aTask.uSelectionSerial=uSelectionSerial;
+            aTask.optAllOracleId=strOracleId;
+            m_pending=std::move(aTask);
          }
          m_signal.notify_one();
       }
