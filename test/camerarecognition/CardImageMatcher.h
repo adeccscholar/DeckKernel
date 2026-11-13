@@ -90,6 +90,7 @@ namespace deckkernel::camera {
          std::filesystem::path aEvidenceDirectory;
          std::optional<std::string> optOcrName;
          std::optional<std::string> optAllOracleId;
+         bool boKnownUpright{};
       };
 
       struct Ranked final {
@@ -1224,6 +1225,7 @@ namespace deckkernel::camera {
          };
          std::optional<ArtworkChoice> optArtworkChoice;
          for(int iOrientation : {0,180}) {
+            if(aTask.boKnownUpright && iOrientation==180)break;
             if(Cancelled(aTask.uEvent))return CardImageMatchResult{aTask.uEvent};
             cv::Mat aOriented=aTask.aCard;
             if(iOrientation==180)
@@ -1328,6 +1330,7 @@ namespace deckkernel::camera {
          int iBestOrb = -1, iBestHash = 65;
          aCard = aTask.aCard;
          for(int iOrientation : {0, 180}) {
+            if(aTask.boKnownUpright && iOrientation==180)break;
             if(Cancelled(aTask.uEvent))return CardImageMatchResult{aTask.uEvent};
             Publish(CardImageMatchResult{
                aTask.uEvent,std::format("ARTWORK NOT FOUND - full card {} deg",iOrientation),
@@ -1465,15 +1468,19 @@ namespace deckkernel::camera {
           \throw std::bad_alloc If image cloning fails.
       */
       void Search(cv::Mat const& aCard,unsigned uEvent,
-         std::filesystem::path const& aEvidenceDirectory={}) {
+         std::filesystem::path const& aEvidenceDirectory={},
+         bool boKnownUpright=false) {
          {
             std::lock_guard const aLock(m_mutex);
             m_uActiveEvent.store(uEvent,std::memory_order_relaxed);
-            m_pending=Task{uEvent,aCard.clone(),{},0,aEvidenceDirectory};
+            m_pending=Task{uEvent,aCard.clone(),{},0,aEvidenceDirectory,
+               {},{},boKnownUpright};
          }
          m_signal.notify_one();
-         deckkernel::camera::Trace("[CAM-MATCH] card #{} queued: art 0/180, then full card; "
-            "capture={}x{}",uEvent,aCard.cols,aCard.rows);
+         deckkernel::camera::Trace(
+            "[CAM-MATCH] card #{} queued: {} orientation; capture={}x{}",
+            uEvent,boKnownUpright?"known upright (0 only)":"0/180",
+            aCard.cols,aCard.rows);
       }
 
       /**
