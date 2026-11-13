@@ -491,7 +491,8 @@ public:
          Clip("Reference: "+m_strReferenceDiagnostic,
             static_cast<int>(flDetailsWidth-30.f)),
          13.f,0xff9dddb9);
-      Text(pCanvas,flLeftX,flBottom+195.f,
+      Text(pCanvas,flLeftX,std::min(flBottom+195.f,
+         static_cast<float>(iHeight)-100.f),
          Clip("Next: "+m_strGuidance,
             static_cast<int>(flDetailsWidth-30.f)),
          13.f,0xff8ed5ee);
