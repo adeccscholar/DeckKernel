@@ -977,6 +977,56 @@ module evaluation is unchanged.
 PostgreSQL printing-query duration, preview of `frozen-overscan.png`,
 and OCR success on known printed collector/set fields.
 
+## 2026-11-13: runtime tabletop autofocus, measured frame geometry and OCR-supported printing
+
+Table-plane autofocus is now **explicitly optional**. A new `tableAutoFocus`
+boolean is stored in the existing `.cache/camera-recognition/camera-settings.json`
+schema (missing values default to false for backward compatibility). The
+SDL2/Skia startup/options dialog contains a **Table autofocus** setting.
+The live dashboard also displays a **Table AF: ON/OFF** switch; press **G**
+to toggle between the existing table-plane calibration and preserving the
+camera's current focus state. A focus change is applied only between
+physical-card captures. A captured/locked card must be accepted or discarded
+first. The existing **F** command still repeats calibration when the
+calibration mode is enabled. This keeps manual-focus document cameras
+untouched by default while supporting BRIO calibration on demand.
+
+`CameraFrameGeometry.h` introduces a conservative secondary structural
+detector: Canny contours are screened for wide, enclosed title and type
+bars, with contour coverage and convexity/concavity evidence; a dark
+lower printing strip is detected independently by horizontal pixel runs.
+The printed band coordinates come from the detected shapes, **not from
+fixed-percentage crops**. Search bounds and legacy fallback zones are
+retained when shape evidence is absent or contradictory. The OCR zone
+detector uses those measured bands, prevents rules OCR from running into
+the printing strip, and the type OCR search is restricted to an identified
+type-bar rectangle. Event evidence now includes a `printing` OCR crop.
+The existing artwork matcher still isolates art using measured image
+separators, with its stable fallback window unchanged.
+
+The frozen lower-printing OCR now works from the complete frozen display
+and locates the actual dark set strip before recognizing text. Exact
+case-normalized alphanumeric tokens are compared against candidate
+set codes, collector numbers and language, rejecting substring collisions.
+For a nontruncated set of candidates, a unique Oracle/set/language
+combination can identify the presented printing even when the collector
+number is unreadable; otherwise a matching collector token is required.
+A selected printing still needs explicit **Accept** to enter the collection.
+Ambiguous, insufficient-confidence or truncated candidate sets retain
+manual printing selection.
+
+When the standard layout reliably establishes the top edge, or the user
+explicitly configured the card orientation, the frozen artwork/full-card
+worker searches only the known upright direction. Uncertain layouts
+still evaluate both 0 and 180 degrees. This does not modify global
+image-match thresholds or the validated normal-card candidate ranking.
+The separate synthetic self-test checks detected title/type contours,
+the dark print strip and nonoverlapping OCR areas.
+
+**Verification limitation:** commits are source-level changes. A BCC64X
+compile, physical BRIO/manual-document-camera test and benchmark of
+standard-card identification latency must be carried out on Windows.
+
 ## 2026-11-13: GUI startup aligned with tested PDFium SDL2 viewer
 
 The console problem was traced to an inconsistent application startup:
