@@ -977,6 +977,27 @@ module evaluation is unchanged.
 PostgreSQL printing-query duration, preview of `frozen-overscan.png`,
 and OCR success on known printed collector/set fields.
 
+## 2026-11-13: dashboard action-bar clearance and Options button
+
+The SDL2/Skia camera dashboard now reserves a fixed lower area for
+recognition/printing details and the action bar. The prior 62%-height image
+panels left too little room at standard 1440x900 resolution: status and
+guidance labels occupied the action area above Accept/Discard. The new
+panel height is capped by the minimum footer requirement, avoiding the
+overlap at 1440x900 and the enforced minimum 1200x760 size.
+
+A permanent **Options** button is displayed in the upper-right title
+bar; pressing **O** opens the same SDL2/Skia settings dialog. Settings
+are stored in the existing version-1 JSON file. Capture-device and
+resolution changes are applied on the next launch; opening Options
+does not reset the current frozen card, accepted-card collection, or
+printing selection. The toolbar displays a restart-required notice
+after a settings change. Printing navigation buttons also fit within
+the right image column rather than extending into the collected-card
+list. Mouse hit-testing follows the same renderer-coordinate layout.
+
+These UI changes have not been built or visually verified on BCC64X.
+
 ## 2026-11-13: permanently visible controls and BCC64X GUI mode
 
 The primary camera dashboard always renders Accept, Discard, Previous, Next,
