@@ -1495,6 +1495,29 @@ public:
       if(!pCandidate->strName.empty())m_strName=pCandidate->strName;
       if(!pCandidate->strTypeLine.empty())m_strType=pCandidate->strTypeLine;
    }
+   /**
+   \brief Request the full stored printing list for the frozen Oracle card.
+   \details Leaves physical tracking and reference-matching thresholds alone.
+      The worker returns only images actually present in the database.
+   \returns Nothing.
+   \throw std::bad_alloc If queuing the lookup fails.
+   */
+   void RequestAllPrintings() {
+#if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
+      if(!m_capture.Frozen() || !m_ocrCard ||
+         !m_artwork || m_identity.Count()==0)return;
+      std::string const strOracleId=m_identity.OracleId();
+      if(strOracleId.empty()) {
+         m_strStatus="ALL PRINTINGS - Oracle identity unavailable";
+         return;
+      }
+      ++m_uSelectionSerial;
+      m_artwork->RequestAllPrintings(strOracleId,
+         *m_ocrCard,m_uSelectionSerial);
+      m_strStatus="ALL PRINTINGS - loading available editions";
+      SetPhase(deckkernel::camera::RecognitionPhase::Selecting);
+#endif
+   }
    void NavigateCandidate(int iDelta) {
       // PHASE 09: switch database candidates, never reopen the physical search.
       if(!m_ocrCard || !m_identity.Navigate(iDelta))return;
@@ -1833,6 +1856,28 @@ public:
       // Discard late DB-image responses from an older arrow-key position.
       if(result->boCandidateSelection &&
          result->uSelectionSerial!=m_uSelectionSerial)return;
+      if(result->boAllPrintings) {
+         if(result->uSelectionSerial!=m_uSelectionSerial)return;
+         if(result->vecCandidates.empty()) {
+            m_strStatus="ALL PRINTINGS - no stored images for this Oracle ID";
+            return;
+         }
+         m_identity.SetCandidates(std::move(result->vecCandidates),
+            result->boCandidatesTruncated);
+         m_boUserNavigated=true;
+         ApplySelectedPrinting();
+         m_referenceCard.release();
+         m_strReferenceLabel="Loading selected printing...";
+         m_strReferenceDiagnostic.clear();
+         ++m_uSelectionSerial;
+         if(m_identity.Selected())
+            m_artwork->Select(*m_identity.Selected(),*m_ocrCard,
+               m_uSelectionSerial);
+         m_strStatus=std::format("ALL PRINTINGS - {}/{}",
+            m_identity.Index()+1,m_identity.Count());
+         SetPhase(deckkernel::camera::RecognitionPhase::Selecting);
+         return;
+      }
       // PHASE 06: the image matcher may contradict the frame-layout
       // orientation. Correct only the presentation copy, preserving
       // CardCapture's immutable pixel evidence and its tracking geometry.
@@ -3707,6 +3752,9 @@ int main(int argc,char** argv) {
          processor.PollNameOcr();
          // PHASE 09: only the selected DB reference changes. A mouse wheel
          // or arrow cannot start a second physical capture.
+         if(preview.ConsumeAllPrintings() &&
+            processor.RecognitionPaused())
+            processor.RequestAllPrintings();
          int const iBrowse=preview.ConsumeNavigation();
          if(iBrowse!=0 && processor.RecognitionPaused()) {
             int const iStep=iBrowse<0?-1:1;
