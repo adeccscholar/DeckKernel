@@ -1378,6 +1378,7 @@ class Processor {
    bool m_autoFlipped{};
    bool m_manualOrientation{};
    bool m_boCapturedRotate180{};
+   bool m_boKnownUpright{};
    int m_iReferenceOrientation{};
    int m_bestNameConfidence{},m_bestTypeConfidence{},m_bestRulesConfidence{};
    std::string m_strName{"--"};
@@ -1566,6 +1567,7 @@ public:
       m_liveFrames=0;m_ocrAttempts=0;m_ocrAccepted=false;
       m_bestSharpness=0.0;m_autoFlipped=false;
       m_boCapturedRotate180=false;m_iReferenceOrientation=0;
+      m_boKnownUpright=false;
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
       m_uPrintingOcrEvent=0;
          m_uNameOcrEvent=0;
@@ -2121,7 +2123,7 @@ public:
          // artwork isolation and, when --save-events is active, exports
          // both measured and fallback artwork crops for debugging.
          m_artwork->Search(m_capture.Image(),*m_ocrCard,
-            m_save?m_root:std::filesystem::path{});
+            m_save?m_root:std::filesystem::path{},m_boKnownUpright);
       }
       else {
          m_strStatus="SHARP FRAME SELECTED - image matcher disabled";
@@ -2287,6 +2289,7 @@ public:
          m_uSelectionSerial=0;
          m_tracker.Reset();
          m_boCapturedRotate180=false;
+         m_boKnownUpright=false;
          m_iReferenceOrientation=0;
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
          m_uPrintingOcrEvent=0;
@@ -2312,6 +2315,10 @@ public:
          event->number,event->fingerprint);
       m_iReferenceOrientation=0;
       if(found) {
+         // Only a structurally resolved standard layout, or a user-provided
+         // top-edge orientation, can eliminate the reverse image search.
+         m_boKnownUpright=found->boLayoutRecognized ||
+            m_eCardOrientation!=deckkernel::camera::CardOrientation::Automatic;
          m_boCapturedRotate180=found->boRotate180;
          m_strOrientation=found->boLayoutRecognized?
             std::format("Standard frame: auto {} deg",
@@ -2367,8 +2374,9 @@ public:
       if(m_ocr) {
          m_ocrAttempts=1;
          m_ocrAccepted=m_ocr->ReadBest(event->card,event->number,
-            m_ocrAttempts,!m_manualOrientation);
+            m_ocrAttempts,!m_manualOrientation && !m_boKnownUpright);
          m_autoFlipped=m_ocr->LastAutoFlipped();
+         if(m_autoFlipped)m_boKnownUpright=false;
          m_strOrientation=m_manualOrientation?"Manual orientation":
             (m_autoFlipped?"Auto 180 deg (both tested)":"Auto 0 deg (both tested)");
          MergeOcr();
