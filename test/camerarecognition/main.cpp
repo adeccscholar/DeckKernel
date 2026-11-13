@@ -1417,8 +1417,8 @@ class Processor {
    std::unique_ptr<CardOcr> m_ocr;
 #endif
    std::filesystem::path m_root;
-   deckkernel::camera::SearchRegion m_eSearchRegion{
-      deckkernel::camera::SearchRegion::Full};
+   deckkernel::camera::CardOrientation m_eCardOrientation{
+      deckkernel::camera::CardOrientation::Automatic};
 public:
    explicit Processor(bool save,bool verbose=false):m_save(save),m_verbose(verbose),
       m_root(std::getenv("DECKKERNEL_CAMERA_EVIDENCE_ROOT")?
@@ -1433,8 +1433,9 @@ public:
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
    void EnableArtwork(unsigned limit){m_artwork=std::make_unique<deckkernel::camera::CardImageMatcher>(limit);}
 #endif
-   void SetSearchRegion(deckkernel::camera::SearchRegion eRegion) noexcept {
-      m_eSearchRegion=eRegion;
+   void SetCardOrientation(
+      deckkernel::camera::CardOrientation eOrientation) noexcept {
+      m_eCardOrientation=eOrientation;
    }
    [[nodiscard]] unsigned RemovedEvents() const noexcept {return m_removedEvents;}
    [[nodiscard]] unsigned StableFrames() const noexcept{return m_detector.StableCount();}
@@ -2109,12 +2110,43 @@ public:
       CardDetectionDiagnostics* pDiagnostics=nullptr) {
       if(pDiagnostics)*pDiagnostics={};
       if(!m_tracker.Active()) {
-         cv::Rect const aRegion=deckkernel::camera::CameraSearchRect(
-            aFrame.size(),m_eSearchRegion);
-         auto optCard=FindCard(aFrame(aRegion),pDiagnostics,true);
+         // Restrict card ORIENTATION, not camera image position.
+         // The unchanged portrait detector is reused for horizontal cards.
+         // Rotating the capture normalizes the long axis and avoids
+         // weakening the existing strict 15-degree geometric gate.
+         cv::Mat aAligned;
+         bool const boLeft=m_eCardOrientation==
+            deckkernel::camera::CardOrientation::Left;
+         bool const boRight=m_eCardOrientation==
+            deckkernel::camera::CardOrientation::Right;
+         if(boLeft)
+            cv::rotate(aFrame,aAligned,cv::ROTATE_90_CLOCKWISE);
+         else if(boRight)
+            cv::rotate(aFrame,aAligned,cv::ROTATE_90_COUNTERCLOCKWISE);
+         else aAligned=aFrame;
+         auto optCard=FindCard(aAligned,pDiagnostics,true);
          if(optCard) {
-            for(cv::Point& aCorner:optCard->corners)
-               aCorner+=aRegion.tl();
+            // Restore canonical top-edge direction before tracking.
+            // Automatic preserves the previous layout-based 0/180 policy.
+            bool const boReversed=m_eCardOrientation==
+               deckkernel::camera::CardOrientation::Bottom;
+            if(m_eCardOrientation!=
+               deckkernel::camera::CardOrientation::Automatic) {
+               if(optCard->boRotate180!=boReversed)
+                  cv::rotate(optCard->rectified,optCard->rectified,
+                     cv::ROTATE_180);
+               optCard->boRotate180=boReversed;
+            }
+            if(boLeft || boRight) {
+               for(cv::Point& aCorner:optCard->corners) {
+                  int const iX=aCorner.x;
+                  int const iY=aCorner.y;
+                  if(boLeft)
+                     aCorner=cv::Point(iY,aFrame.rows-1-iX);
+                  else
+                     aCorner=cv::Point(aFrame.cols-1-iY,iX);
+               }
+            }
          }
          // Layout is only advisory; acquire a geometrically credible card
          // even when the internal frame is blurred or nonstandard.
@@ -2824,37 +2856,7 @@ void SelfTest() {
       (*optBowed)[0].x>=180)
       throw std::runtime_error(
          "slightly convex physical card sides were not recovered");
-   // The directional ROI must select the requested part of the camera
-   // image and preserve native coordinates after translating corners.
-   cv::Size const aRoiSize(1600,900);
-   cv::Rect const aFullSearch=deckkernel::camera::CameraSearchRect(
-      aRoiSize,deckkernel::camera::SearchRegion::Full);
-   cv::Rect const aTopSearch=deckkernel::camera::CameraSearchRect(
-      aRoiSize,deckkernel::camera::SearchRegion::Top);
-   cv::Rect const aBottomSearch=deckkernel::camera::CameraSearchRect(
-      aRoiSize,deckkernel::camera::SearchRegion::Bottom);
-   cv::Rect const aLeftSearch=deckkernel::camera::CameraSearchRect(
-      aRoiSize,deckkernel::camera::SearchRegion::Left);
-   cv::Rect const aRightSearch=deckkernel::camera::CameraSearchRect(
-      aRoiSize,deckkernel::camera::SearchRegion::Right);
-   if(aFullSearch!=cv::Rect(0,0,1600,900) ||
-      aTopSearch!=cv::Rect(0,0,1600,540) ||
-      aBottomSearch!=cv::Rect(0,360,1600,540) ||
-      aLeftSearch!=cv::Rect(0,0,960,900) ||
-      aRightSearch!=cv::Rect(640,0,960,900))
-      throw std::runtime_error(
-         "camera search-region coordinates are incorrect");
-   cv::Mat aRightScene(900,1600,CV_8UC3,cv::Scalar(31,34,38));
-   cv::rectangle(aRightScene,cv::Rect(1110,220,230,322),
-      cv::Scalar(220,225,230),-1);
-   auto optRightCard=FindCard(aRightScene(aRightSearch));
-   if(!optRightCard)
-      throw std::runtime_error("right-zone card was not detected");
-   for(cv::Point& aCorner:optRightCard->corners)
-      aCorner+=aRightSearch.tl();
-   if(cv::boundingRect(optRightCard->corners).x<1000)
-      throw std::runtime_error(
-         "right-zone card coordinates were not restored to camera space");
+   // Orientation preferences do not impose any camera position ROI.
    // DEMO TEST 01: a genuine standard card contains artwork, title, a
    // type separator and printed text. Its artwork is not a physical card.
    cv::Mat aFramedScene(960,1500,CV_8UC3,cv::Scalar(26,31,39));
@@ -3324,16 +3326,16 @@ void Usage() {
    std::println("   camera focus: fixed/external (default), --auto-focus (legacy table calibration), --continuous-autofocus or --focus-position=N");
    std::println("   press F to re-calibrate only in --auto-focus / --continuous-autofocus mode");
    std::println("   optional: --verbose (log in .cache/camera-recognition), --deep-search");
-   std::println("   optional: --region=full|top|bottom|left|right, --settings");
-   std::println("   no arguments: open graphical camera settings dialog");
+   std::println("   optional: --orientation=auto|top|bottom|left|right, --settings");
+   std::println("   no arguments: use saved JSON settings; open dialog on first launch");
 }
 }
 int main(int argc,char** argv) {
    try{
       bool selfTest=false,save=false,verbose=false,deepSearch=false;
-      bool boSettingsDialog=argc==1;
-      deckkernel::camera::SearchRegion eSearchRegion=
-         deckkernel::camera::SearchRegion::Full;
+      bool boSettingsDialog=false;
+      deckkernel::camera::CardOrientation eCardOrientation=
+         deckkernel::camera::CardOrientation::Automatic;
       bool ocr=false,artwork=false,noArtwork=false;
       bool tableFocus=false;
       bool autoFocus=false;
@@ -3354,14 +3356,19 @@ int main(int argc,char** argv) {
          if(arg=="--self-test")selfTest=true;
          else if(arg=="--verbose")verbose=true;
          else if(arg=="--settings")boSettingsDialog=true;
-         else if(arg.starts_with("--region=")) {
-            std::string_view const svRegion=arg.substr(9);
-            if(svRegion=="full")eSearchRegion=deckkernel::camera::SearchRegion::Full;
-            else if(svRegion=="top")eSearchRegion=deckkernel::camera::SearchRegion::Top;
-            else if(svRegion=="bottom")eSearchRegion=deckkernel::camera::SearchRegion::Bottom;
-            else if(svRegion=="left")eSearchRegion=deckkernel::camera::SearchRegion::Left;
-            else if(svRegion=="right")eSearchRegion=deckkernel::camera::SearchRegion::Right;
-            else throw std::runtime_error("invalid --region value");
+         else if(arg.starts_with("--orientation=")) {
+            std::string_view const svOrientation=arg.substr(14);
+            if(svOrientation=="auto")eCardOrientation=
+               deckkernel::camera::CardOrientation::Automatic;
+            else if(svOrientation=="top")eCardOrientation=
+               deckkernel::camera::CardOrientation::Top;
+            else if(svOrientation=="bottom")eCardOrientation=
+               deckkernel::camera::CardOrientation::Bottom;
+            else if(svOrientation=="left")eCardOrientation=
+               deckkernel::camera::CardOrientation::Left;
+            else if(svOrientation=="right")eCardOrientation=
+               deckkernel::camera::CardOrientation::Right;
+            else throw std::runtime_error("invalid --orientation value");
          }
          else if(arg=="--deep-search")deepSearch=true;
          else if(arg=="--save-events")save=true;
@@ -3393,19 +3400,24 @@ int main(int argc,char** argv) {
          else if(arg.starts_with("--camera="))camera=CameraIndex(arg.substr(9));
          else throw std::runtime_error("unknown argument (use --help)");
       }
-      if(boSettingsDialog) {
+      // A GUI launch with no arguments reads JSON directly. Only first
+      // launch (missing or invalid settings) opens the settings dialog.
+      if(argc==1 || boSettingsDialog) {
          deckkernel::camera::CameraLaunchSettings aSettings;
-         deckkernel::camera::CameraSettingsDialog aDialog;
-         if(!aDialog.Show(aSettings))return 0;
+         bool const boLoaded=
+            deckkernel::camera::CameraSettingsFile::Load(aSettings);
+         if(boSettingsDialog || !boLoaded) {
+            deckkernel::camera::CameraSettingsDialog aDialog;
+            if(!aDialog.Show(aSettings))return 0;
+         }
          camera=aSettings.iCamera;
-         // Native device names are enumerated in DirectShow index order.
          backend="dshow";
          width=aSettings.iWidth;
          height=aSettings.iHeight;
          fpsRequested=aSettings.iFps;
          save=aSettings.boSaveEvents;
          verbose=aSettings.boVerbose;
-         eSearchRegion=aSettings.eRegion;
+         eCardOrientation=aSettings.eOrientation;
          artwork=true;
       }
       if(verbose) {
@@ -3541,7 +3553,7 @@ int main(int argc,char** argv) {
          return 0;
       }
       Processor processor(save,verbose);
-      processor.SetSearchRegion(eSearchRegion);
+      processor.SetCardOrientation(eCardOrientation);
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
       if(artwork)processor.EnableArtwork(artworkLimit);
 #else
@@ -3689,13 +3701,7 @@ int main(int argc,char** argv) {
          }
          // Visual diagnostic: mark the four corners that pass card geometry checks.
          cv::Mat annotated=frame.clone();
-         if(eSearchRegion!=deckkernel::camera::SearchRegion::Full) {
-            cv::Rect const aActiveRegion=
-               deckkernel::camera::CameraSearchRect(
-                  frame.size(),eSearchRegion);
-            cv::rectangle(annotated,aActiveRegion,
-               cv::Scalar(255,180,60),3,cv::LINE_AA);
-         }
+         // Full capture area is searched regardless of card orientation.
          if(boFocusCalibrating) {
             cv::rectangle(annotated,
                deckkernel::camera::TablePlaneFocus::FocusRegion(frame.size()),
