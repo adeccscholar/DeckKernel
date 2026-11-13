@@ -18,6 +18,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <Windows.h>
+#include <shellapi.h>
 #if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
 #include "CameraDashboard.h"
 #endif
@@ -3402,7 +3403,7 @@ void Usage() {
    std::println("   no arguments: use saved JSON settings; open dialog on first launch");
 }
 }
-int main(int argc,char** argv) {
+int CameraApplicationMain(int argc,char** argv) {
    try{
       bool selfTest=false,save=false,verbose=false,deepSearch=false;
       bool boSettingsDialog=false;
@@ -3889,4 +3890,49 @@ int main(int argc,char** argv) {
       MessageBoxA(nullptr,e.what(),"DeckKernel camera error",MB_OK|MB_ICONERROR);
       std::println(std::cerr,"[CAM] ERROR: {}",e.what());return 1;
    }
+}
+
+
+/**
+\brief Launch DeckKernel as a native Windows GUI application.
+\details Mirrors the BuildEngine-Tests PDFium/SDL2 viewer: WinMain is
+   the only process entry point. Explicit command-line modes are kept by
+   forwarding UTF-8 arguments to the internal camera application routine.
+\param hInstance Windows instance (unused).
+\param hPreviousInstance Previous instance (unused).
+\param szCommandLine ANSI argument tail (unused; Unicode command line used).
+\param iShowCommand Requested show state (unused).
+\returns The camera application exit code.
+\throw None.
+*/
+int WINAPI WinMain(HINSTANCE hInstance,HINSTANCE hPreviousInstance,
+   LPSTR szCommandLine,int iShowCommand) {
+   int iCount{};
+   LPWSTR* pArguments=CommandLineToArgvW(GetCommandLineW(),&iCount);
+   if(!pArguments)return 1;
+   std::vector<std::string> vecArguments;
+   vecArguments.reserve(static_cast<std::size_t>(iCount));
+   for(int iIndex=0;iIndex<iCount;++iIndex) {
+      int const iBytes=WideCharToMultiByte(
+         CP_UTF8,0,pArguments[iIndex],-1,nullptr,0,nullptr,nullptr);
+      if(iBytes<=0) {
+         LocalFree(pArguments);
+         return 1;
+      }
+      std::string strArg(static_cast<std::size_t>(iBytes),'\0');
+      if(WideCharToMultiByte(CP_UTF8,0,pArguments[iIndex],-1,
+         strArg.data(),iBytes,nullptr,nullptr)!=iBytes) {
+         LocalFree(pArguments);
+         return 1;
+      }
+      strArg.pop_back();
+      vecArguments.push_back(std::move(strArg));
+   }
+   LocalFree(pArguments);
+   std::vector<char*> vecPointers;
+   vecPointers.reserve(vecArguments.size());
+   for(std::string& strArg:vecArguments)
+      vecPointers.push_back(strArg.data());
+   return CameraApplicationMain(
+      static_cast<int>(vecPointers.size()),vecPointers.data());
 }
