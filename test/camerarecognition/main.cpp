@@ -2704,6 +2704,36 @@ void SelfTest() {
       aSharp.flSharpness<=aBlurredFocusMetrics.flSharpness)
       throw std::runtime_error("table focus optical-score regression");
 #endif
+   // Measured inner title/type frames and the dark printing strip are
+   // independent geometric structures, not fixed-percentage OCR crops.
+   cv::Mat aFramedCard(900,640,CV_8UC3,cv::Scalar(165,170,175));
+   cv::rectangle(aFramedCard,cv::Rect(40,48,560,83),
+      cv::Scalar(48,55,61),-1);
+   cv::rectangle(aFramedCard,cv::Rect(38,475,564,77),
+      cv::Scalar(49,59,67),-1);
+   cv::rectangle(aFramedCard,cv::Rect(25,797,590,90),
+      cv::Scalar(14,15,17),-1);
+   cv::putText(aFramedCard,"123 SET EN",cv::Point(74,850),
+      cv::FONT_HERSHEY_SIMPLEX,0.8,
+      cv::Scalar(240,240,240),2,cv::LINE_AA);
+   auto const aGeometry=
+      deckkernel::camera::DetectFrameGeometry(aFramedCard);
+   if(!aGeometry.optTitle || !aGeometry.optType ||
+      !aGeometry.optPrintingStrip ||
+      std::abs(aGeometry.optTitle->y-48)>12 ||
+      std::abs(aGeometry.optType->y-475)>15 ||
+      std::abs(aGeometry.optPrintingStrip->y-797)>20)
+      throw std::runtime_error(
+         "camera frame contour or printing strip detection regression");
+   auto const aMeasuredZones=
+      deckkernel_camera::ocr::Detect(aFramedCard);
+   if(!aMeasuredZones.typeSeparated ||
+      !aMeasuredZones.printingStripDetected ||
+      !deckkernel_camera::ocr::Valid(
+         aMeasuredZones,aFramedCard.size()))
+      throw std::runtime_error(
+         "geometry-derived OCR zones overlap or are incomplete");
+
    // REGRESSION: a printed collector strip just OUTSIDE the detected
    // inner frame must be visible in the source-pixel overscan, while the
    // canonical artwork/full-card image remains geometrically unchanged.
