@@ -1188,10 +1188,13 @@ public:
    }
 
    [[nodiscard]] std::pair<std::string,int> ReadPrintingMargin(
-      cv::Mat const& aBottom) {
-      if(aBottom.empty())return {{},0};
-      auto const aRead=ReadRegion(aBottom,
-         cv::Rect(0,0,aBottom.cols,aBottom.rows),
+      cv::Mat const& aCard) {
+      if(aCard.empty())return {{},0};
+      // The printing stripe is localized by actual dark pixels. Only when
+      // no trustworthy strip exists is the legacy lower band evaluated.
+      auto const aZones=deckkernel_camera::ocr::Detect(aCard);
+      cv::Rect const aRegion=aZones.printing;
+      auto const aRead=ReadRegion(aCard,aRegion,
          tesseract::PSM_SINGLE_LINE);
       return {aRead.text,aRead.confidence};
    }
@@ -1750,10 +1753,7 @@ public:
       // PHASE 08: use the reference-confirmed orientation of the frozen
       // display copy. CardCapture itself remains immutable throughout.
       if(m_displayCard.empty())return;
-      int const iTop=m_displayCard.rows*86/100;
-      int const iBottom=m_displayCard.rows*99/100;
-      cv::Mat const aMargin=m_displayCard(cv::Rect(
-         0,iTop,m_displayCard.cols,iBottom-iTop)).clone();
+      cv::Mat const aMargin=m_displayCard.clone();
       std::string const strData=m_strPrintingOcrData;
       m_uPrintingOcrEvent=m_ocrCard.value_or(0);
       // PHASE 08: OCR is a last-resort, read-only consumer of frozen evidence.
@@ -1806,7 +1806,25 @@ public:
             StartPrintingOcr();
          return;
       }
-      std::string const strNormalized=NormalizePrintingText(strRecognized);
+      // Exact alphanumeric tokens avoid substring collisions such as
+      // set ABC matching XABC, or collector number 12 matching 123.
+      std::vector<std::string> vecTokens;
+      std::string strToken;
+      for(unsigned char const ch:strRecognized) {
+         if((ch>='A'&&ch<='Z')||(ch>='a'&&ch<='z')||
+            (ch>='0'&&ch<='9'))
+            strToken.push_back(static_cast<char>(
+               ch>='a'&&ch<='z'?ch-'a'+'A':ch));
+         else if(!strToken.empty()) {
+            vecTokens.push_back(std::move(strToken));
+            strToken.clear();
+         }
+      }
+      if(!strToken.empty())vecTokens.push_back(std::move(strToken));
+      auto const HasToken=[&](std::string const& strValue)->bool {
+         return std::ranges::find(vecTokens,
+            NormalizePrintingText(strValue))!=vecTokens.end();
+      };
       std::optional<std::size_t> optMatch;
       bool boMultiple{};
       if(iConfidence>=65) {
@@ -1816,9 +1834,22 @@ public:
             std::string const strSet=NormalizePrintingText(aCandidate.strSet);
             std::string const strNumber=NormalizePrintingText(
                aCandidate.strCollector);
-            if(strSet.size()<3||strNumber.empty()||
-               strNormalized.find(strSet)==std::string::npos ||
-               strNormalized.find(strNumber)==std::string::npos)continue;
+            std::string const strLanguage=
+               NormalizePrintingText(aCandidate.strLanguage);
+            if(strSet.size()<2 || strNumber.empty() ||
+               !HasToken(strSet) || !HasToken(strNumber))
+               continue;
+            // An explicit language on the printed strip is independent
+            // evidence. If OCR supplies one, it must agree with the DB.
+            bool const boReadLanguage=std::ranges::any_of(
+               vecTokens,[](std::string const& strValue) {
+                  return strValue=="EN" || strValue=="DE" ||
+                     strValue=="FR" || strValue=="IT" ||
+                     strValue=="ES" || strValue=="PT" ||
+                     strValue=="JA" || strValue=="KO" ||
+                     strValue=="RU" || strValue=="ZH";
+               });
+            if(boReadLanguage && !HasToken(strLanguage))continue;
             if(optMatch)boMultiple=true;
             else optMatch=uIndex;
          }
@@ -1835,7 +1866,7 @@ public:
                ++m_uSelectionSerial);
 #endif
          m_strStatus=std::format(
-            "PRINTING OCR SUPPORTS {}/{} - Enter to confirm",
+            "PRINTING OCR uniquely selects {}/{} - Accept to collect",
             *optMatch+1,m_identity.Count());
       }
       else {
