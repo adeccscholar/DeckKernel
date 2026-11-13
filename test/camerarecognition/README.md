@@ -977,6 +977,37 @@ module evaluation is unchanged.
 PostgreSQL printing-query duration, preview of `frozen-overscan.png`,
 and OCR success on known printed collector/set fields.
 
+## 2026-11-13: explicit scan decisions and printing browser
+
+The SDL2/Skia dashboard now provides clickable **Accept** and **Discard**
+buttons for the current captured scan. The right-hand printing pane has
+**Previous**, **Next** and **All printings** controls. Keyboard equivalents
+are Enter, Escape, Left/Right and P, respectively. Mouse-wheel printing
+navigation remains available. Clicking elsewhere in the preview no longer
+implicitly confirms a card.
+
+The printing selector reuses the existing CardIdentity selection state,
+asynchronous CardImageMatcher::Select() operation and right-hand reference
+preview. **All printings** performs a separate relational query restricted
+to the already identified Oracle ID; it never restarts the physical camera
+capture or adjusts the working standard artwork matcher. The result is
+capped at 1000 available printing/face entries and reports truncation.
+Only database entries with a stored normal, large, or border-cropped
+reference are offered. Selecting a row asynchronously loads that specific
+reference image and its edition metadata on the right. The button requires
+an existing identified Oracle card and frozen scan. Selecting a printing
+is not evidence that a particular physical edition has been verified.
+
+For the true GUI requirement, CMake builds the camera as WIN32 and passes
+`-mwindows` to the BCC64X driver. A post-build PE header verification
+(`VerifyGuiSubsystem.cmake`) checks that the resulting executable's
+subsystem is Windows GUI (2), not Console (3), and fails the build if it
+is not. This does not close an existing terminal from which the executable
+was launched; it prevents the application from allocating its own console.
+
+The Windows build and interactive behavior remain unverified until run
+on the installed RAD Studio toolchain.
+
 ## 2026-11-13: SDL2/Skia settings UI and console-free GUI link
 
 The settings dialog now uses the same SDL2 event loop and Skia raster
