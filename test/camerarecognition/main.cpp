@@ -1210,8 +1210,11 @@ public:
       int bestTop=-1,bestBottom=-1;
       // Segment printed lines first, then evaluate each line as a possible
       // type. Repeated broad sliding windows mixed the type and rules text.
-      cv::Rect const search(card.cols*57/1000,card.rows*44/100,
-         card.cols*78/100,card.rows*32/100);
+      // A real type-bar contour narrows OCR to that physical text line;
+      // only unknown frame layouts use the broad historical search band.
+      cv::Rect const search=zones.typeSeparated?
+         zones.type:cv::Rect(card.cols*57/1000,card.rows*44/100,
+            card.cols*78/100,card.rows*32/100);
       cv::Mat searchGray;
       cv::cvtColor(card(search),searchGray,cv::COLOR_BGR2GRAY);
       m_api.SetPageSegMode(tesseract::PSM_AUTO);
@@ -2449,6 +2452,7 @@ public:
          saveZone("type",zones.type);
          saveZone("set-symbol",zones.setSymbol);
          saveZone("rules",zones.rules);
+         saveZone("printing",zones.printing);
          auto const file=m_root/std::format("event-{:06}-zones.png",event->number);
          cv::imwrite(file.string(),deckkernel_camera::ocr::Diagram(event->card,zones));
       }
