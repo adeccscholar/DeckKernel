@@ -60,6 +60,7 @@ namespace deckkernel::camera {
       bool boSaveEvents{};
       bool boVerbose{};
       CardOrientation eOrientation{CardOrientation::Automatic};
+      bool boTableAutoFocus{};
    };
 
    /**
@@ -113,6 +114,7 @@ namespace deckkernel::camera {
          auto const iOrientation=Integer(strContents,"orientation");
          auto const boSave=Boolean(strContents,"saveEvents");
          auto const boVerbose=Boolean(strContents,"verbose");
+         auto const boTableFocus=Boolean(strContents,"tableAutoFocus");
          if(!iVersion || *iVersion!=1 || !iCamera || !iWidth ||
             !iHeight || !iFps || !iOrientation || !boSave ||
             !boVerbose || *iCamera<0 || *iCamera>15 ||
@@ -122,7 +124,8 @@ namespace deckkernel::camera {
             return false;
          aSettings=CameraLaunchSettings{
             *iCamera,*iWidth,*iHeight,*iFps,*boSave,*boVerbose,
-            static_cast<CardOrientation>(*iOrientation)};
+            static_cast<CardOrientation>(*iOrientation),
+            boTableFocus.value_or(false)};
          return true;
       }
       /**
@@ -147,6 +150,8 @@ namespace deckkernel::camera {
             "  \"saveEvents\": "<<(aSettings.boSaveEvents?
                "true":"false")<<",\n"
             "  \"verbose\": "<<(aSettings.boVerbose?
+               "true":"false")<<",\n"
+            "  \"tableAutoFocus\": "<<(aSettings.boTableAutoFocus?
                "true":"false")<<"\n}\n";
          aStream.flush();
          if(!aStream)throw std::runtime_error(
@@ -171,10 +176,10 @@ namespace deckkernel::camera {
       int m_iCameraSelection{};
       bool m_boAccepted{};
       static constexpr int ciWidth=920;
-      static constexpr int ciHeight=670;
+      static constexpr int ciHeight=740;
       static constexpr int ciTop=157;
       static constexpr int ciRowHeight=65;
-      static constexpr int ciCount=6;
+      static constexpr int ciCount=7;
       static constexpr std::array<std::pair<int,int>,5> carrRes{{
          {3840,2160},{2560,1440},{1920,1080},{1280,720},{640,480}
       }};
@@ -251,6 +256,7 @@ namespace deckkernel::camera {
             }
             case 4:return m_aSettings.boSaveEvents?"Enabled":"Disabled";
             case 5:return m_aSettings.boVerbose?"Enabled":"Disabled";
+            case 6:return m_aSettings.boTableAutoFocus?"Enabled":"Disabled";
             default:return {};
          }
       }
@@ -272,6 +278,8 @@ namespace deckkernel::camera {
                break;
             case 4:m_aSettings.boSaveEvents=!m_aSettings.boSaveEvents;break;
             case 5:m_aSettings.boVerbose=!m_aSettings.boVerbose;break;
+            case 6:m_aSettings.boTableAutoFocus=
+               !m_aSettings.boTableAutoFocus;break;
          }
       }
       void Accept() {
@@ -298,7 +306,8 @@ namespace deckkernel::camera {
             14.f,0xff9cbdcf);
          constexpr std::array<std::string_view,ciCount> arrLabels{{
             "Camera device","Resolution","Frame rate",
-            "Card top edge","Save event images","Verbose diagnostics"
+            "Card top edge","Save event images","Verbose diagnostics",
+            "Table autofocus"
          }};
          for(int iRow=0;iRow<ciCount;++iRow) {
             float const flY=static_cast<float>(ciTop+iRow*ciRowHeight);
@@ -317,12 +326,12 @@ namespace deckkernel::camera {
                22.f,0xff8ed5ee);
          }
          Rectangle(pCanvas,SkRect::MakeXYWH(
-            594.f,569.f,168.f,54.f),0xff218a78);
+            594.f,639.f,168.f,54.f),0xff218a78);
          Rectangle(pCanvas,SkRect::MakeXYWH(
-            772.f,569.f,120.f,54.f),0xff263b48);
-         Text(pCanvas,624.f,602.f,"Start camera",17.f,0xffffffff);
-         Text(pCanvas,797.f,602.f,"Cancel",17.f,0xffd5e5ed);
-         Text(pCanvas,37.f,603.f,
+            772.f,639.f,120.f,54.f),0xff263b48);
+         Text(pCanvas,624.f,672.f,"Start camera",17.f,0xffffffff);
+         Text(pCanvas,797.f,672.f,"Cancel",17.f,0xffd5e5ed);
+         Text(pCanvas,37.f,672.f,
             "Arrow keys: select / change   Enter: start   Esc: cancel",
             12.f,0xff9cbdcf);
          SkPixmap aPixels;
@@ -409,7 +418,7 @@ namespace deckkernel::camera {
                aEvent.button.button==SDL_BUTTON_LEFT) {
                int const iX=aEvent.button.x;
                int const iY=aEvent.button.y;
-               if(iY>=569 && iY<623) {
+               if(iY>=639 && iY<693) {
                   if(iX>=594 && iX<762) {
                      Accept();
                      boFinished=true;
