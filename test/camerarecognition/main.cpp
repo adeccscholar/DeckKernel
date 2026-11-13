@@ -3367,6 +3367,8 @@ int main(int argc,char** argv) {
          deckkernel::camera::CameraSettingsDialog aDialog;
          if(!aDialog.Show(aSettings))return 0;
          camera=aSettings.iCamera;
+         // Native device names are enumerated in DirectShow index order.
+         backend="dshow";
          width=aSettings.iWidth;
          height=aSettings.iHeight;
          fpsRequested=aSettings.iFps;
