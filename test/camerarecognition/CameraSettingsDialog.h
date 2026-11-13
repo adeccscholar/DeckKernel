@@ -14,6 +14,17 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <SDL.h>
+#include "include/core/SkCanvas.h"
+#include "include/core/SkFont.h"
+#include "include/core/SkFontMgr.h"
+#include "include/core/SkFontStyle.h"
+#include "include/core/SkImageInfo.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkRect.h"
+#include "include/core/SkSurface.h"
+#include "include/ports/SkTypeface_win.h"
+#include "CameraTypography.h"
 #include <opencv2/core.hpp>
 #include <filesystem>
 #include <string>
@@ -26,6 +37,9 @@
 #include <regex>
 #include <iterator>
 #include <optional>
+#include <format>
+#include <memory>
+#include <string_view>
 
 namespace deckkernel::camera {
    /**
@@ -140,216 +154,283 @@ namespace deckkernel::camera {
       }
    };
 
+
    /**
-   \brief Modeless-control host used as a blocking startup dialog.
-   \details Selection is saved only when Start is pressed.
+   \brief SDL2/Skia graphical configuration window for the camera application.
+   \details The interface shares its renderer and typography stack with
+      CameraDashboard. Click the left/right arrows to cycle field values;
+      Enter starts, Escape cancels, and keyboard Up/Down selects a field.
+   \note Camera devices are only enumerated, never opened by this dialog.
    */
    class CameraSettingsDialog final {
-      enum ControlId {
-         Camera=1101,Resolution,Fps,Region,SaveEvents,Verbose,Start,Cancel
-      };
       CameraLaunchSettings m_aSettings;
-      HWND m_hWindow{};
-      HWND m_hCamera{},m_hResolution{},m_hFps{},m_hRegion{};
-      HWND m_hSave{},m_hVerbose{};
-      std::vector<int> m_vecCameraIndices;
+      std::vector<std::pair<int,std::wstring>> m_vecDevices;
+      int m_iResolution{};
+      int m_iFps{};
+      int m_iSelected{};
       bool m_boAccepted{};
-      bool m_boFinished{};
+      static constexpr int ciWidth=920;
+      static constexpr int ciHeight=670;
+      static constexpr int ciTop=157;
+      static constexpr int ciRowHeight=65;
+      static constexpr int ciCount=6;
+      static constexpr std::array<std::pair<int,int>,5> carrRes{{
+         {3840,2160},{2560,1440},{1920,1080},{1280,720},{640,480}
+      }};
+      static constexpr std::array<int,4> carrFps{{30,25,20,15}};
 
-      static void AddLabel(HWND hWindow,wchar_t const* szText,int iY) {
-         CreateWindowExW(0,L"STATIC",szText,
-            WS_CHILD|WS_VISIBLE,18,iY,155,23,hWindow,
-            nullptr,GetModuleHandleW(nullptr),nullptr);
+      [[nodiscard]] static std::string Utf8(std::wstring const& strText) {
+         if(strText.empty())return {};
+         int const iLength=WideCharToMultiByte(CP_UTF8,0,
+            strText.data(),static_cast<int>(strText.size()),
+            nullptr,0,nullptr,nullptr);
+         if(iLength<=0)return {};
+         std::string strResult(static_cast<std::size_t>(iLength),'\0');
+         WideCharToMultiByte(CP_UTF8,0,strText.data(),
+            static_cast<int>(strText.size()),strResult.data(),
+            iLength,nullptr,nullptr);
+         return strResult;
       }
-      static HWND AddCombo(HWND hWindow,int iId,int iY) {
-         return CreateWindowExW(0,L"COMBOBOX",L"",
-            WS_CHILD|WS_VISIBLE|WS_TABSTOP|CBS_DROPDOWNLIST|
-               WS_VSCROLL,174,iY,255,220,hWindow,
-            reinterpret_cast<HMENU>(static_cast<INT_PTR>(iId)),
-            GetModuleHandleW(nullptr),nullptr);
+      [[nodiscard]] static sk_sp<SkTypeface>& Typeface() {
+         static sk_sp<SkTypeface> aFace=[] {
+            auto aManager=SkFontMgr_New_DirectWrite();
+            if(aManager)
+               return aManager->matchFamilyStyle(
+                  "Segoe UI",SkFontStyle());
+            return sk_sp<SkTypeface>{};
+         }();
+         return aFace;
       }
-      static void AddItem(HWND hCombo,wchar_t const* szText) {
-         SendMessageW(hCombo,CB_ADDSTRING,0,
-            reinterpret_cast<LPARAM>(szText));
-      }
-      static int Selection(HWND hCombo) {
-         return static_cast<int>(SendMessageW(hCombo,CB_GETCURSEL,0,0));
-      }
-      static void Select(HWND hCombo,int iIndex) {
-         SendMessageW(hCombo,CB_SETCURSEL,
-            static_cast<WPARAM>(iIndex),0);
-      }
-      void CreateControls() {
-         AddLabel(m_hWindow,L"Camera device (index)",22);
-         m_hCamera=AddCombo(m_hWindow,Camera,18);
-         int iSelected=-1;
-         auto const vecDevices=EnumerateCameraDevices();
-         for(auto const& [iIndex,strName]:vecDevices) {
-            m_vecCameraIndices.push_back(iIndex);
-            std::wstring const strLabel=std::to_wstring(iIndex)+
-               L": "+strName;
-            AddItem(m_hCamera,strLabel.c_str());
-            if(iIndex==m_aSettings.iCamera)
-               iSelected=static_cast<int>(m_vecCameraIndices.size())-1;
+      static void Text(SkCanvas* pCanvas,float flX,float flY,
+         std::string const& strText,float flSize,SkColor uColor) {
+         if(strText.empty())return;
+         if(!Typeface()) {
+            deckkernel_camera::typography::Draw(pCanvas,
+               flX,flY,strText,flSize,uColor);
+            return;
          }
-         // The camera name/index mapping follows the DirectShow backend.
-         // If enumeration fails, retain manual index selection.
-         if(m_vecCameraIndices.empty()) {
-            for(int iIndex=0;iIndex<16;++iIndex) {
-               m_vecCameraIndices.push_back(iIndex);
-               std::wstring const strLabel=
-                  L"Camera index "+std::to_wstring(iIndex);
-               AddItem(m_hCamera,strLabel.c_str());
+         SkFont aFont(Typeface(),flSize);
+         aFont.setEdging(SkFont::Edging::kSubpixelAntiAlias);
+         SkPaint aPaint;
+         aPaint.setAntiAlias(true);
+         aPaint.setColor(uColor);
+         pCanvas->drawSimpleText(strText.data(),strText.size(),
+            SkTextEncoding::kUTF8,flX,flY,aFont,aPaint);
+      }
+      static void Rectangle(SkCanvas* pCanvas,SkRect const& aRect,
+         SkColor uColor,float flRadius=12.0f) {
+         SkPaint aPaint;
+         aPaint.setAntiAlias(true);
+         aPaint.setColor(uColor);
+         pCanvas->drawRoundRect(aRect,flRadius,flRadius,aPaint);
+      }
+      [[nodiscard]] std::string Value(int iRow) const {
+         switch(iRow) {
+            case 0: {
+               if(m_vecDevices.empty())return "No camera devices found";
+               int const iIndex=std::clamp(
+                  m_iSelected,0,static_cast<int>(m_vecDevices.size())-1);
+               auto const& [iCamera,strName]=m_vecDevices[iIndex];
+               std::string strResult=std::format(
+                  "{}: {}",iCamera,Utf8(strName));
+               if(strResult.size()>43)
+                  strResult=strResult.substr(0,40)+"...";
+               return strResult;
             }
-            iSelected=std::clamp(m_aSettings.iCamera,0,15);
+            case 1:return std::format("{} x {}",
+               carrRes[m_iResolution].first,
+               carrRes[m_iResolution].second);
+            case 2:return std::format("{} FPS",carrFps[m_iFps]);
+            case 3: {
+               constexpr std::array<std::string_view,5> arrLabels{{
+                  "Automatic","Top","Bottom","Left","Right"
+               }};
+               return std::string(arrLabels[std::clamp(
+                  static_cast<int>(m_aSettings.eOrientation),0,4)]);
+            }
+            case 4:return m_aSettings.boSaveEvents?"Enabled":"Disabled";
+            case 5:return m_aSettings.boVerbose?"Enabled":"Disabled";
+            default:return {};
          }
-         Select(m_hCamera,std::max(0,iSelected));
-         AddLabel(m_hWindow,L"Resolution",64);
-         m_hResolution=AddCombo(m_hWindow,Resolution,60);
-         for(wchar_t const* szResolution:{
-            L"3840 x 2160",L"2560 x 1440",L"1920 x 1080",
-            L"1280 x 720",L"640 x 480"})
-            AddItem(m_hResolution,szResolution);
-         std::array<std::pair<int,int>,5> const arrRes{{
-            {3840,2160},{2560,1440},{1920,1080},
-            {1280,720},{640,480}
-         }};
-         int iResolution=0;
-         for(int i=0;i<static_cast<int>(arrRes.size());++i)
-            if(arrRes[i].first==m_aSettings.iWidth &&
-               arrRes[i].second==m_aSettings.iHeight)iResolution=i;
-         Select(m_hResolution,iResolution);
-         AddLabel(m_hWindow,L"Requested FPS",106);
-         m_hFps=AddCombo(m_hWindow,Fps,102);
-         for(wchar_t const* szFps:{L"30",L"25",L"20",L"15"})
-            AddItem(m_hFps,szFps);
-         Select(m_hFps,m_aSettings.iFps==25?1:
-            m_aSettings.iFps==20?2:m_aSettings.iFps==15?3:0);
-         AddLabel(m_hWindow,L"Card top edge",148);
-         m_hRegion=AddCombo(m_hWindow,Region,144);
-         for(wchar_t const* szRegion:{
-            L"Automatic",L"Top",L"Bottom",L"Left",L"Right"})
-            AddItem(m_hRegion,szRegion);
-         Select(m_hRegion,std::clamp(
-            static_cast<int>(m_aSettings.eOrientation),0,4));
-         m_hSave=CreateWindowExW(0,L"BUTTON",L"Save event images",
-            WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
-            18,195,220,25,m_hWindow,
-            reinterpret_cast<HMENU>(static_cast<INT_PTR>(SaveEvents)),
-            GetModuleHandleW(nullptr),nullptr);
-         m_hVerbose=CreateWindowExW(0,L"BUTTON",
-            L"Verbose log in Cache",
-            WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
-            18,229,220,25,m_hWindow,
-            reinterpret_cast<HMENU>(static_cast<INT_PTR>(Verbose)),
-            GetModuleHandleW(nullptr),nullptr);
-         SendMessageW(m_hSave,BM_SETCHECK,m_aSettings.boSaveEvents?
-            BST_CHECKED:BST_UNCHECKED,0);
-         SendMessageW(m_hVerbose,BM_SETCHECK,m_aSettings.boVerbose?
-            BST_CHECKED:BST_UNCHECKED,0);
-         CreateWindowExW(0,L"BUTTON",L"Start camera",
-            WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON,
-            209,284,124,33,m_hWindow,
-            reinterpret_cast<HMENU>(static_cast<INT_PTR>(Start)),
-            GetModuleHandleW(nullptr),nullptr);
-         CreateWindowExW(0,L"BUTTON",L"Cancel",
-            WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-            344,284,84,33,m_hWindow,
-            reinterpret_cast<HMENU>(static_cast<INT_PTR>(Cancel)),
-            GetModuleHandleW(nullptr),nullptr);
+      }
+      void Cycle(int iRow,int iDelta) {
+         auto const Wrap=[&](int iCurrent,int iCount) {
+            return (iCurrent+iDelta+iCount)%iCount;
+         };
+         switch(iRow) {
+            case 0:
+               if(!m_vecDevices.empty())
+                  m_iSelected=Wrap(m_iSelected,
+                     static_cast<int>(m_vecDevices.size()));
+               break;
+            case 1:m_iResolution=Wrap(m_iResolution,5);break;
+            case 2:m_iFps=Wrap(m_iFps,4);break;
+            case 3:
+               m_aSettings.eOrientation=static_cast<CardOrientation>(
+                  Wrap(static_cast<int>(m_aSettings.eOrientation),5));
+               break;
+            case 4:m_aSettings.boSaveEvents=!m_aSettings.boSaveEvents;break;
+            case 5:m_aSettings.boVerbose=!m_aSettings.boVerbose;break;
+         }
       }
       void Accept() {
-         int const iSelection=Selection(m_hCamera);
-         m_aSettings.iCamera=iSelection>=0 &&
-            iSelection<static_cast<int>(m_vecCameraIndices.size())?
-               m_vecCameraIndices[iSelection]:0;
-         std::array<std::pair<int,int>,5> const arrRes{{
-            {3840,2160},{2560,1440},{1920,1080},
-            {1280,720},{640,480}
-         }};
-         int const iResolution=std::clamp(Selection(m_hResolution),0,4);
-         m_aSettings.iWidth=arrRes[iResolution].first;
-         m_aSettings.iHeight=arrRes[iResolution].second;
-         std::array<int,4> const arrFps{{30,25,20,15}};
-         m_aSettings.iFps=arrFps[std::clamp(Selection(m_hFps),0,3)];
-         m_aSettings.eOrientation=static_cast<CardOrientation>(
-            std::clamp(Selection(m_hRegion),0,4));
-         m_aSettings.boSaveEvents=SendMessageW(
-            m_hSave,BM_GETCHECK,0,0)==BST_CHECKED;
-         m_aSettings.boVerbose=SendMessageW(
-            m_hVerbose,BM_GETCHECK,0,0)==BST_CHECKED;
+         if(!m_vecDevices.empty())
+            m_aSettings.iCamera=m_vecDevices[m_iSelected].first;
+         m_aSettings.iWidth=carrRes[m_iResolution].first;
+         m_aSettings.iHeight=carrRes[m_iResolution].second;
+         m_aSettings.iFps=carrFps[m_iFps];
          CameraSettingsFile::Save(m_aSettings);
          m_boAccepted=true;
-         m_boFinished=true;
-         DestroyWindow(m_hWindow);
       }
-      static LRESULT CALLBACK WindowProcedure(HWND hWindow,UINT uMessage,
-         WPARAM wParam,LPARAM lParam) {
-         auto* pDialog=reinterpret_cast<CameraSettingsDialog*>(
-            GetWindowLongPtrW(hWindow,GWLP_USERDATA));
-         if(uMessage==WM_NCCREATE) {
-            auto const* pCreate=reinterpret_cast<CREATESTRUCTW const*>(lParam);
-            SetWindowLongPtrW(hWindow,GWLP_USERDATA,
-               reinterpret_cast<LONG_PTR>(pCreate->lpCreateParams));
-            return TRUE;
+      void Draw(SDL_Renderer* pRenderer) const {
+         auto const aSurface=SkSurfaces::Raster(
+            SkImageInfo::MakeN32Premul(ciWidth,ciHeight));
+         if(!aSurface)return;
+         SkCanvas* pCanvas=aSurface->getCanvas();
+         pCanvas->clear(0xff0a141d);
+         Rectangle(pCanvas,SkRect::MakeXYWH(
+            28.f,24.f,864.f,106.f),0xff142633);
+         Text(pCanvas,51.f,69.f,
+            "DECKKERNEL  /  CAMERA SETTINGS",25.f,0xfff5f7fa);
+         Text(pCanvas,52.f,102.f,
+            "Configure capture and card orientation before scanning",
+            14.f,0xff9cbdcf);
+         constexpr std::array<std::string_view,ciCount> arrLabels{{
+            "Camera device","Resolution","Frame rate",
+            "Card top edge","Save event images","Verbose diagnostics"
+         }};
+         for(int iRow=0;iRow<ciCount;++iRow) {
+            float const flY=static_cast<float>(ciTop+iRow*ciRowHeight);
+            Rectangle(pCanvas,SkRect::MakeXYWH(
+               28.f,flY,864.f,55.f),
+               iRow==m_iSelected?0xff214758:0xff142633);
+            Text(pCanvas,49.f,flY+35.f,
+               std::string(arrLabels[iRow]),16.f,0xffc9d9e2);
+            Rectangle(pCanvas,SkRect::MakeXYWH(
+               410.f,flY+7.f,448.f,41.f),0xff0b202c,8.f);
+            Text(pCanvas,428.f,flY+33.f,"<",
+               22.f,0xff8ed5ee);
+            Text(pCanvas,472.f,flY+33.f,Value(iRow),
+               16.f,0xfff5f7fa);
+            Text(pCanvas,817.f,flY+33.f,">",
+               22.f,0xff8ed5ee);
          }
-         if(!pDialog)return DefWindowProcW(hWindow,uMessage,wParam,lParam);
-         if(uMessage==WM_CREATE) {
-            pDialog->m_hWindow=hWindow;
-            pDialog->CreateControls();
-            return 0;
-         }
-         if(uMessage==WM_COMMAND && HIWORD(wParam)==BN_CLICKED) {
-            if(LOWORD(wParam)==Start) {
-               pDialog->Accept();
-               return 0;
-            }
-            if(LOWORD(wParam)==Cancel) {
-               pDialog->m_boFinished=true;
-               DestroyWindow(hWindow);
-               return 0;
-            }
-         }
-         if(uMessage==WM_CLOSE) {
-            pDialog->m_boFinished=true;
-            DestroyWindow(hWindow);
-            return 0;
-         }
-         return DefWindowProcW(hWindow,uMessage,wParam,lParam);
+         Rectangle(pCanvas,SkRect::MakeXYWH(
+            594.f,569.f,168.f,54.f),0xff218a78);
+         Rectangle(pCanvas,SkRect::MakeXYWH(
+            772.f,569.f,120.f,54.f),0xff263b48);
+         Text(pCanvas,624.f,602.f,"Start camera",17.f,0xffffffff);
+         Text(pCanvas,797.f,602.f,"Cancel",17.f,0xffd5e5ed);
+         Text(pCanvas,37.f,603.f,
+            "Arrow keys: select / change   Enter: start   Esc: cancel",
+            12.f,0xff9cbdcf);
+         SkPixmap aPixels;
+         if(!aSurface->peekPixels(&aPixels))return;
+         SDL_Texture* pTexture=SDL_CreateTexture(
+            pRenderer,SDL_PIXELFORMAT_BGRA32,
+            SDL_TEXTUREACCESS_STREAMING,ciWidth,ciHeight);
+         if(!pTexture)return;
+         SDL_UpdateTexture(pTexture,nullptr,aPixels.addr(),
+            static_cast<int>(aPixels.rowBytes()));
+         SDL_RenderClear(pRenderer);
+         SDL_RenderCopy(pRenderer,pTexture,nullptr,nullptr);
+         SDL_RenderPresent(pRenderer);
+         SDL_DestroyTexture(pTexture);
       }
    public:
       CameraSettingsDialog() {
          (void)CameraSettingsFile::Load(m_aSettings);
+         m_vecDevices=EnumerateCameraDevices();
+         if(m_vecDevices.empty()) {
+            for(int iIndex=0;iIndex<16;++iIndex)
+               m_vecDevices.emplace_back(iIndex,
+                  L"Camera index "+std::to_wstring(iIndex));
+         }
+         for(int iIndex=0;iIndex<
+            static_cast<int>(m_vecDevices.size());++iIndex)
+            if(m_vecDevices[iIndex].first==m_aSettings.iCamera) {
+               m_iSelected=iIndex;
+               break;
+            }
+         for(int iIndex=0;iIndex<5;++iIndex)
+            if(carrRes[iIndex].first==m_aSettings.iWidth &&
+               carrRes[iIndex].second==m_aSettings.iHeight)
+               m_iResolution=iIndex;
+         for(int iIndex=0;iIndex<4;++iIndex)
+            if(carrFps[iIndex]==m_aSettings.iFps)
+               m_iFps=iIndex;
       }
       /**
-      \brief Display editable startup settings and wait for user confirmation.
-      \details Does not open any camera device before Start is confirmed.
-      \param aSettings Receives the saved settings on confirmation.
-      \returns True if Start was chosen; false on cancellation.
-      \throw std::runtime_error If the Win32 window cannot be created.
+      \brief Show graphical settings and optionally persist accepted values.
+      \details Uses SDL2 for window and interaction and Skia for rendering.
+      \param aSettings Receives the selected settings after acceptance.
+      \returns True after Start camera, false after Cancel or window close.
+      \throw std::runtime_error If SDL cannot initialize the GUI.
       */
       [[nodiscard]] bool Show(CameraLaunchSettings& aSettings) {
-         WNDCLASSW aClass{};
-         aClass.lpfnWndProc=&WindowProcedure;
-         aClass.hInstance=GetModuleHandleW(nullptr);
-         aClass.lpszClassName=L"DeckKernelCameraSettingsWindow";
-         aClass.hCursor=LoadCursorW(nullptr,IDC_ARROW);
-         aClass.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_WINDOW+1);
-         RegisterClassW(&aClass);
-         m_hWindow=CreateWindowExW(WS_EX_DLGMODALFRAME,
-            aClass.lpszClassName,L"DeckKernel - Camera Settings",
-            WS_CAPTION|WS_SYSMENU|WS_VISIBLE,
-            CW_USEDEFAULT,CW_USEDEFAULT,466,372,
-            nullptr,nullptr,aClass.hInstance,this);
-         if(!m_hWindow)
-            throw std::runtime_error("cannot open camera settings dialog");
-         MSG aMessage;
-         while(!m_boFinished && GetMessageW(&aMessage,nullptr,0,0)>0) {
-            if(!IsDialogMessageW(m_hWindow,&aMessage)) {
-               TranslateMessage(&aMessage);
-               DispatchMessageW(&aMessage);
-            }
+         SDL_SetMainReady();
+         if(SDL_InitSubSystem(SDL_INIT_VIDEO|SDL_INIT_EVENTS)!=0)
+            throw std::runtime_error(SDL_GetError());
+         SDL_Window* pWindow=SDL_CreateWindow(
+            "DeckKernel - Camera Settings",SDL_WINDOWPOS_CENTERED,
+            SDL_WINDOWPOS_CENTERED,ciWidth,ciHeight,
+            SDL_WINDOW_ALLOW_HIGHDPI);
+         if(!pWindow) {
+            SDL_QuitSubSystem(SDL_INIT_VIDEO);
+            throw std::runtime_error(SDL_GetError());
          }
+         SDL_Renderer* pRenderer=SDL_CreateRenderer(
+            pWindow,-1,SDL_RENDERER_SOFTWARE);
+         if(!pRenderer) {
+            SDL_DestroyWindow(pWindow);
+            SDL_QuitSubSystem(SDL_INIT_VIDEO);
+            throw std::runtime_error(SDL_GetError());
+         }
+         Draw(pRenderer);
+         bool boFinished{};
+         while(!boFinished) {
+            SDL_Event aEvent;
+            if(!SDL_WaitEvent(&aEvent))break;
+            if(aEvent.type==SDL_QUIT)boFinished=true;
+            else if(aEvent.type==SDL_KEYDOWN) {
+               switch(aEvent.key.keysym.sym) {
+                  case SDLK_ESCAPE:boFinished=true;break;
+                  case SDLK_RETURN:
+                  case SDLK_KP_ENTER:Accept();boFinished=true;break;
+                  case SDLK_UP:m_iSelected=(m_iSelected+ciCount-1)%ciCount;break;
+                  case SDLK_DOWN:m_iSelected=(m_iSelected+1)%ciCount;break;
+                  case SDLK_LEFT:Cycle(m_iSelected,-1);break;
+                  case SDLK_RIGHT:Cycle(m_iSelected,1);break;
+                  default:break;
+               }
+            }
+            else if(aEvent.type==SDL_MOUSEBUTTONDOWN &&
+               aEvent.button.button==SDL_BUTTON_LEFT) {
+               int const iX=aEvent.button.x;
+               int const iY=aEvent.button.y;
+               if(iY>=569 && iY<623) {
+                  if(iX>=594 && iX<762) {
+                     Accept();
+                     boFinished=true;
+                  }
+                  else if(iX>=772 && iX<892)boFinished=true;
+               }
+               else if(iX>=28 && iX<892 && iY>=ciTop &&
+                  iY<ciTop+ciCount*ciRowHeight) {
+                  int const iRow=(iY-ciTop)/ciRowHeight;
+                  if(iRow>=0 && iRow<ciCount &&
+                     iY<ciTop+iRow*ciRowHeight+55) {
+                     m_iSelected=iRow;
+                     if(iX>=410 && iX<858)
+                        Cycle(iRow,iX<460?-1:1);
+                  }
+               }
+            }
+            if(!boFinished)Draw(pRenderer);
+         }
+         SDL_DestroyRenderer(pRenderer);
+         SDL_DestroyWindow(pWindow);
+         SDL_QuitSubSystem(SDL_INIT_VIDEO);
          if(m_boAccepted)aSettings=m_aSettings;
          return m_boAccepted;
       }
