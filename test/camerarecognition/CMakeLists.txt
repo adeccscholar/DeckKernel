@@ -26,15 +26,11 @@ if(NOT DEFINED ADECC_TP_SDL2_ROOT OR NOT DEFINED ADECC_TP_SKIA_ROOT)
 endif()
 find_package(SDL2 CONFIG REQUIRED PATHS "${ADECC_TP_SDL2_ROOT}" NO_DEFAULT_PATH)
 find_package(Skia CONFIG REQUIRED PATHS "${ADECC_TP_SKIA_ROOT}" NO_DEFAULT_PATH)
-add_executable(deckkernel_camera_recognition_test WIN32 main.cpp CameraGuiEntry.cpp CameraSettingsDialog.h CameraCardSession.h CameraCardLayout.h CameraPhysicalTracker.h CardImageMatcher.h CameraDashboard.h CameraOcrZones.h CameraImageQuality.h CameraTypography.h)
+add_executable(deckkernel_camera_recognition_test WIN32 main.cpp CameraDeviceEnumeration.cpp CameraSettingsDialog.h CameraCardSession.h CameraCardLayout.h CameraPhysicalTracker.h CardImageMatcher.h CameraDashboard.h CameraOcrZones.h CameraImageQuality.h CameraTypography.h)
 target_link_libraries(deckkernel_camera_recognition_test PRIVATE user32 shell32 ole32 oleaut32)
-# BCC64X explicitly distinguishes console (-tC) from GUI (-tW)
-# applications. Keep the existing dynamic RTL (-tR), and request the
-# Windows GUI subsystem in the linker as well. WIN32 alone was not enough.
-set_target_properties(deckkernel_camera_recognition_test PROPERTIES
-   WIN32_EXECUTABLE TRUE)
-target_link_options(deckkernel_camera_recognition_test PRIVATE
-   -tW -tR "-Wl,--subsystem,windows")
+# Match the proven BuildEngine-Tests/pdfium/SDL2 target: a WIN32
+# executable with WinMain inside main.cpp; no alternate startup wrapper
+# and no compiler-driver overrides for the PE subsystem.
 # Guard against a compiler-driver default silently producing a console PE.
 add_custom_command(TARGET deckkernel_camera_recognition_test POST_BUILD
    COMMAND "${CMAKE_COMMAND}"
