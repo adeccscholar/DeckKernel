@@ -977,43 +977,49 @@ module evaluation is unchanged.
 PostgreSQL printing-query duration, preview of `frozen-overscan.png`,
 and OCR success on known printed collector/set fields.
 
-## 2026-11-13: Windows GUI launcher, camera settings and directional scan regions
+## 2026-11-13: GUI settings, JSON persistence and physical card orientation
 
-The existing SDL2/Skia camera dashboard is now launched as a Windows GUI
-subsystem executable, without creating a console window. Starting the camera
-recognizer with no arguments (or with `--settings`) opens a native graphical
-settings dialog first. The dialog can select the named DirectShow camera,
-request a resolution and frame rate, enable event-image saving, enable verbose
-logging, and choose the preferred card position.
+DeckKernel uses a Windows GUI-subsystem executable and retains the SDL2/Skia
+scan dashboard. On the first start without command-line arguments, the camera
+settings dialog opens if the JSON settings file is missing or invalid. On
+subsequent starts it opens the configured camera directly. Use `--settings`
+to open the dialog explicitly. The dialog lists named DirectShow devices,
+requested resolution and frame rate, saved event images, verbose logging, and
+the **direction toward which the physical card's upper edge points**.
 
-The dialog saves confirmed settings in
-`.cache/camera-recognition/camera-settings.ini` and reloads them next time.
-If Windows DirectShow device enumeration fails, the camera selector falls back
-to explicit index choices. The configured DirectShow camera is then opened
-with the DSHOW OpenCV backend to retain index consistency. Requested capture
-resolution and frame rate are still subject to the device's negotiated mode.
+Settings are persisted in
+`.cache/camera-recognition/camera-settings.json` (schema version 1). The
+previous INI configuration and regional scan cropping are obsolete. A
+missing/incomplete configuration opens the dialog; canceling does not save
+defaults. Camera mode negotiation is still subject to the selected hardware.
 
-Card-position options are **Full image**, **Top**, **Bottom**, **Left** and
-**Right**. The four directional options restrict the actual initial Canny /
-contour scan to 60% of the relevant image dimension, overlapping the image
-midpoint by 10%. Detected corners are converted back into full-frame pixel
-coordinates before tracker initialization, OCR rectification or artwork
-matching. The tracking phase still uses complete camera frames and the
-standard-card identification pipeline is unchanged. A blue/orange rectangle
-in the live preview indicates the current scan region.
+Orientation choices are **Automatic**, **Top**, **Bottom**, **Left**, and
+**Right**. These are CARD orientations, **not camera-image regions**. Every
+mode searches the full image. Automatic retains the previously validated
+portrait-card and uncertain 0/180 detection logic. Top and Bottom constrain
+upright portrait geometry to ±15 degrees; Bottom explicitly uses 180-degree
+normalization. Left and Right rotate the initial camera observation by 90
+degrees into the same well-tested portrait detector, then transform all
+four corners back into original camera coordinates for the optical-flow
+tracker and the perspective warp. The selected direction supplies the known
+card orientation, rather than inferring it from imperfect printed separator
+lines. No standard-card artwork or printing-matching SQL was modified.
+Horizontal scanning may incur an additional full-frame rotation; no
+performance claim is made before benchmarks.
 
-The `--verbose` option and the graphical checkbox write application
-diagnostics to `.cache/camera-recognition/verbose.log`. This appends across
-runs and includes asynchronous matcher diagnostics. Error dialogs replace
-otherwise invisible console errors. Existing command line modes for
-self-tests, replay, camera probing and `--region=full|top|bottom|left|right`
-remain supported. Note that the GUI-subsystem program does not display
-standard output on a terminal unless verbose logging redirects it to a file.
+The optional `--orientation=auto|top|bottom|left|right` command-line
+argument overrides the direction for explicit camera runs. A no-argument
+start uses the JSON preferences without displaying the dialog. Existing
+non-GUI self-test and offline replay commands still work without opening
+settings.
 
-The regression suite checks directional ROI geometry and source-coordinate
-restoration. This implementation was not compiled on the target BCC64X
-Windows system in this environment; GUI interaction and DirectShow device
-enumeration require a real Windows smoke test.
+When enabled, `--verbose` appends diagnostics (including async matching
+logs) to `.cache/camera-recognition/verbose.log`. Windows message boxes
+report startup errors that would otherwise be invisible in a GUI process.
+
+Synthetic regression cases now cover all four physical card-top directions,
+including source-space corner conversion. A BCC64X build and Windows camera
+smoke test remain pending.
 
 ## 2026-11-11: identification regression and targeted rollback
 
