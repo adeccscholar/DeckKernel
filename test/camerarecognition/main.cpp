@@ -1825,9 +1825,17 @@ public:
          return std::ranges::find(vecTokens,
             NormalizePrintingText(strValue))!=vecTokens.end();
       };
+      bool const boReadLanguage=std::ranges::any_of(
+         vecTokens,[](std::string const& strValue) {
+            return strValue=="EN" || strValue=="DE" ||
+               strValue=="FR" || strValue=="IT" ||
+               strValue=="ES" || strValue=="PT" ||
+               strValue=="JA" || strValue=="KO" ||
+               strValue=="RU" || strValue=="ZH";
+         });
       std::optional<std::size_t> optMatch;
       bool boMultiple{};
-      if(iConfidence>=65) {
+      if(iConfidence>=65 && !m_identity.Truncated()) {
          auto const& vecCandidates=m_identity.Candidates();
          for(std::size_t uIndex=0;uIndex<vecCandidates.size();++uIndex) {
             auto const& aCandidate=vecCandidates[uIndex];
@@ -1836,20 +1844,17 @@ public:
                aCandidate.strCollector);
             std::string const strLanguage=
                NormalizePrintingText(aCandidate.strLanguage);
-            if(strSet.size()<2 || strNumber.empty() ||
-               !HasToken(strSet) || !HasToken(strNumber))
-               continue;
-            // An explicit language on the printed strip is independent
-            // evidence. If OCR supplies one, it must agree with the DB.
-            bool const boReadLanguage=std::ranges::any_of(
-               vecTokens,[](std::string const& strValue) {
-                  return strValue=="EN" || strValue=="DE" ||
-                     strValue=="FR" || strValue=="IT" ||
-                     strValue=="ES" || strValue=="PT" ||
-                     strValue=="JA" || strValue=="KO" ||
-                     strValue=="RU" || strValue=="ZH";
-               });
-            if(boReadLanguage && !HasToken(strLanguage))continue;
+            if(strSet.size()<2 || !HasToken(strSet))continue;
+            bool const boNumber=strNumber.size()>0 &&
+               HasToken(strNumber);
+            bool const boLanguage=boReadLanguage &&
+               HasToken(strLanguage);
+            // A unique (Oracle ID, set, language) can disambiguate
+            // a printing without reading the tiny collector number.
+            // Otherwise the collector number is mandatory. Never decide
+            // from the set code alone or from a truncated candidate list.
+            if(boReadLanguage && !boLanguage)continue;
+            if(!boNumber && (!boLanguage || iConfidence<80))continue;
             if(optMatch)boMultiple=true;
             else optMatch=uIndex;
          }
@@ -1871,8 +1876,8 @@ public:
       }
       else {
          m_strStatus=std::format(
-            "PRINTING OCR inconclusive (confidence {}) - select with arrows",
-            iConfidence);
+            "PRINTING OCR inconclusive (confidence {}, truncated={})",
+            iConfidence,m_identity.Truncated());
       }
       SetPhase(deckkernel::camera::RecognitionPhase::Selecting);
       deckkernel::camera::Trace("[CAM-PRINT-OCR] card={} confidence={} text='{}' "
