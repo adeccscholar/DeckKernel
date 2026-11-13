@@ -2824,6 +2824,37 @@ void SelfTest() {
       (*optBowed)[0].x>=180)
       throw std::runtime_error(
          "slightly convex physical card sides were not recovered");
+   // The directional ROI must select the requested part of the camera
+   // image and preserve native coordinates after translating corners.
+   cv::Size const aRoiSize(1600,900);
+   cv::Rect const aFullSearch=deckkernel::camera::CameraSearchRect(
+      aRoiSize,deckkernel::camera::SearchRegion::Full);
+   cv::Rect const aTopSearch=deckkernel::camera::CameraSearchRect(
+      aRoiSize,deckkernel::camera::SearchRegion::Top);
+   cv::Rect const aBottomSearch=deckkernel::camera::CameraSearchRect(
+      aRoiSize,deckkernel::camera::SearchRegion::Bottom);
+   cv::Rect const aLeftSearch=deckkernel::camera::CameraSearchRect(
+      aRoiSize,deckkernel::camera::SearchRegion::Left);
+   cv::Rect const aRightSearch=deckkernel::camera::CameraSearchRect(
+      aRoiSize,deckkernel::camera::SearchRegion::Right);
+   if(aFullSearch!=cv::Rect(0,0,1600,900) ||
+      aTopSearch!=cv::Rect(0,0,1600,540) ||
+      aBottomSearch!=cv::Rect(0,360,1600,540) ||
+      aLeftSearch!=cv::Rect(0,0,960,900) ||
+      aRightSearch!=cv::Rect(640,0,960,900))
+      throw std::runtime_error(
+         "camera search-region coordinates are incorrect");
+   cv::Mat aRightScene(900,1600,CV_8UC3,cv::Scalar(31,34,38));
+   cv::rectangle(aRightScene,cv::Rect(1110,220,230,322),
+      cv::Scalar(220,225,230),-1);
+   auto optRightCard=FindCard(aRightScene(aRightSearch));
+   if(!optRightCard)
+      throw std::runtime_error("right-zone card was not detected");
+   for(cv::Point& aCorner:optRightCard->corners)
+      aCorner+=aRightSearch.tl();
+   if(cv::boundingRect(optRightCard->corners).x<1000)
+      throw std::runtime_error(
+         "right-zone card coordinates were not restored to camera space");
    // DEMO TEST 01: a genuine standard card contains artwork, title, a
    // type separator and printed text. Its artwork is not a physical card.
    cv::Mat aFramedScene(960,1500,CV_8UC3,cv::Scalar(26,31,39));
@@ -3658,6 +3689,13 @@ int main(int argc,char** argv) {
          }
          // Visual diagnostic: mark the four corners that pass card geometry checks.
          cv::Mat annotated=frame.clone();
+         if(eSearchRegion!=deckkernel::camera::SearchRegion::Full) {
+            cv::Rect const aActiveRegion=
+               deckkernel::camera::CameraSearchRect(
+                  frame.size(),eSearchRegion);
+            cv::rectangle(annotated,aActiveRegion,
+               cv::Scalar(255,180,60),3,cv::LINE_AA);
+         }
          if(boFocusCalibrating) {
             cv::rectangle(annotated,
                deckkernel::camera::TablePlaneFocus::FocusRegion(frame.size()),
