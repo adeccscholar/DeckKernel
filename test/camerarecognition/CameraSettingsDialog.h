@@ -167,7 +167,8 @@ namespace deckkernel::camera {
       std::vector<std::pair<int,std::wstring>> m_vecDevices;
       int m_iResolution{};
       int m_iFps{};
-      int m_iSelected{};
+      int m_iSelectedRow{};
+      int m_iCameraSelection{};
       bool m_boAccepted{};
       static constexpr int ciWidth=920;
       static constexpr int ciHeight=670;
@@ -229,7 +230,7 @@ namespace deckkernel::camera {
             case 0: {
                if(m_vecDevices.empty())return "No camera devices found";
                int const iIndex=std::clamp(
-                  m_iSelected,0,static_cast<int>(m_vecDevices.size())-1);
+                  m_iCameraSelection,0,static_cast<int>(m_vecDevices.size())-1);
                auto const& [iCamera,strName]=m_vecDevices[iIndex];
                std::string strResult=std::format(
                   "{}: {}",iCamera,Utf8(strName));
@@ -260,7 +261,7 @@ namespace deckkernel::camera {
          switch(iRow) {
             case 0:
                if(!m_vecDevices.empty())
-                  m_iSelected=Wrap(m_iSelected,
+                  m_iCameraSelection=Wrap(m_iCameraSelection,
                      static_cast<int>(m_vecDevices.size()));
                break;
             case 1:m_iResolution=Wrap(m_iResolution,5);break;
@@ -275,7 +276,7 @@ namespace deckkernel::camera {
       }
       void Accept() {
          if(!m_vecDevices.empty())
-            m_aSettings.iCamera=m_vecDevices[m_iSelected].first;
+            m_aSettings.iCamera=m_vecDevices[m_iCameraSelection].first;
          m_aSettings.iWidth=carrRes[m_iResolution].first;
          m_aSettings.iHeight=carrRes[m_iResolution].second;
          m_aSettings.iFps=carrFps[m_iFps];
@@ -303,7 +304,7 @@ namespace deckkernel::camera {
             float const flY=static_cast<float>(ciTop+iRow*ciRowHeight);
             Rectangle(pCanvas,SkRect::MakeXYWH(
                28.f,flY,864.f,55.f),
-               iRow==m_iSelected?0xff214758:0xff142633);
+               iRow==m_iSelectedRow?0xff214758:0xff142633);
             Text(pCanvas,49.f,flY+35.f,
                std::string(arrLabels[iRow]),16.f,0xffc9d9e2);
             Rectangle(pCanvas,SkRect::MakeXYWH(
@@ -349,7 +350,7 @@ namespace deckkernel::camera {
          for(int iIndex=0;iIndex<
             static_cast<int>(m_vecDevices.size());++iIndex)
             if(m_vecDevices[iIndex].first==m_aSettings.iCamera) {
-               m_iSelected=iIndex;
+               m_iCameraSelection=iIndex;
                break;
             }
          for(int iIndex=0;iIndex<5;++iIndex)
@@ -397,10 +398,10 @@ namespace deckkernel::camera {
                   case SDLK_ESCAPE:boFinished=true;break;
                   case SDLK_RETURN:
                   case SDLK_KP_ENTER:Accept();boFinished=true;break;
-                  case SDLK_UP:m_iSelected=(m_iSelected+ciCount-1)%ciCount;break;
-                  case SDLK_DOWN:m_iSelected=(m_iSelected+1)%ciCount;break;
-                  case SDLK_LEFT:Cycle(m_iSelected,-1);break;
-                  case SDLK_RIGHT:Cycle(m_iSelected,1);break;
+                  case SDLK_UP:m_iSelectedRow=(m_iSelectedRow+ciCount-1)%ciCount;break;
+                  case SDLK_DOWN:m_iSelectedRow=(m_iSelectedRow+1)%ciCount;break;
+                  case SDLK_LEFT:Cycle(m_iSelectedRow,-1);break;
+                  case SDLK_RIGHT:Cycle(m_iSelectedRow,1);break;
                   default:break;
                }
             }
@@ -420,7 +421,7 @@ namespace deckkernel::camera {
                   int const iRow=(iY-ciTop)/ciRowHeight;
                   if(iRow>=0 && iRow<ciCount &&
                      iY<ciTop+iRow*ciRowHeight+55) {
-                     m_iSelected=iRow;
+                     m_iSelectedRow=iRow;
                      if(iX>=410 && iX<858)
                         Cycle(iRow,iX<460?-1:1);
                   }
