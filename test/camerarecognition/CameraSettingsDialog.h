@@ -14,6 +14,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <opencv2/core.hpp>
 #include <filesystem>
 #include <string>
 #include <array>
