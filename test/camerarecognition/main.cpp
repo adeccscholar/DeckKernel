@@ -41,6 +41,8 @@
 #include "CameraTableFocus.h"
 #endif
 #include "CameraTrace.h"
+#include "CameraSettingsDialog.h"
+#include <cstdio>
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -1415,6 +1417,8 @@ class Processor {
    std::unique_ptr<CardOcr> m_ocr;
 #endif
    std::filesystem::path m_root;
+   deckkernel::camera::SearchRegion m_eSearchRegion{
+      deckkernel::camera::SearchRegion::Full};
 public:
    explicit Processor(bool save,bool verbose=false):m_save(save),m_verbose(verbose),
       m_root(std::getenv("DECKKERNEL_CAMERA_EVIDENCE_ROOT")?
@@ -1429,6 +1433,9 @@ public:
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
    void EnableArtwork(unsigned limit){m_artwork=std::make_unique<deckkernel::camera::CardImageMatcher>(limit);}
 #endif
+   void SetSearchRegion(deckkernel::camera::SearchRegion eRegion) noexcept {
+      m_eSearchRegion=eRegion;
+   }
    [[nodiscard]] unsigned RemovedEvents() const noexcept {return m_removedEvents;}
    [[nodiscard]] unsigned StableFrames() const noexcept{return m_detector.StableCount();}
    [[nodiscard]] unsigned RequiredStableFrames() const noexcept{return m_detector.RequiredFrames();}
@@ -2102,7 +2109,13 @@ public:
       CardDetectionDiagnostics* pDiagnostics=nullptr) {
       if(pDiagnostics)*pDiagnostics={};
       if(!m_tracker.Active()) {
-         auto optCard=FindCard(aFrame,pDiagnostics,true);
+         cv::Rect const aRegion=deckkernel::camera::CameraSearchRect(
+            aFrame.size(),m_eSearchRegion);
+         auto optCard=FindCard(aFrame(aRegion),pDiagnostics,true);
+         if(optCard) {
+            for(cv::Point& aCorner:optCard->corners)
+               aCorner+=aRegion.tl();
+         }
          // Layout is only advisory; acquire a geometrically credible card
          // even when the internal frame is blurred or nonstandard.
          if(!optCard && !m_cardLocked)
@@ -3279,12 +3292,17 @@ void Usage() {
    std::println("   optional: --artwork [--artwork-limit=100] or --no-artwork");
    std::println("   camera focus: fixed/external (default), --auto-focus (legacy table calibration), --continuous-autofocus or --focus-position=N");
    std::println("   press F to re-calibrate only in --auto-focus / --continuous-autofocus mode");
-   std::println("   optional: --verbose (diagnostics only), --deep-search (slow global full-card fallback)");
+   std::println("   optional: --verbose (log in .cache/camera-recognition), --deep-search");
+   std::println("   optional: --region=full|top|bottom|left|right, --settings");
+   std::println("   no arguments: open graphical camera settings dialog");
 }
 }
 int main(int argc,char** argv) {
    try{
       bool selfTest=false,save=false,verbose=false,deepSearch=false;
+      bool boSettingsDialog=argc==1;
+      deckkernel::camera::SearchRegion eSearchRegion=
+         deckkernel::camera::SearchRegion::Full;
       bool ocr=false,artwork=false,noArtwork=false;
       bool tableFocus=false;
       bool autoFocus=false;
@@ -3304,6 +3322,16 @@ int main(int argc,char** argv) {
          if(arg=="--help"){Usage();return 0;}
          if(arg=="--self-test")selfTest=true;
          else if(arg=="--verbose")verbose=true;
+         else if(arg=="--settings")boSettingsDialog=true;
+         else if(arg.starts_with("--region=")) {
+            std::string_view const svRegion=arg.substr(9);
+            if(svRegion=="full")eSearchRegion=deckkernel::camera::SearchRegion::Full;
+            else if(svRegion=="top")eSearchRegion=deckkernel::camera::SearchRegion::Top;
+            else if(svRegion=="bottom")eSearchRegion=deckkernel::camera::SearchRegion::Bottom;
+            else if(svRegion=="left")eSearchRegion=deckkernel::camera::SearchRegion::Left;
+            else if(svRegion=="right")eSearchRegion=deckkernel::camera::SearchRegion::Right;
+            else throw std::runtime_error("invalid --region value");
+         }
          else if(arg=="--deep-search")deepSearch=true;
          else if(arg=="--save-events")save=true;
          else if(arg=="--ocr")ocr=true;
@@ -3333,6 +3361,33 @@ int main(int argc,char** argv) {
             frozenImageFile=arg.substr(15);
          else if(arg.starts_with("--camera="))camera=CameraIndex(arg.substr(9));
          else throw std::runtime_error("unknown argument (use --help)");
+      }
+      if(boSettingsDialog) {
+         deckkernel::camera::CameraLaunchSettings aSettings;
+         deckkernel::camera::CameraSettingsDialog aDialog;
+         if(!aDialog.Show(aSettings))return 0;
+         camera=aSettings.iCamera;
+         width=aSettings.iWidth;
+         height=aSettings.iHeight;
+         fpsRequested=aSettings.iFps;
+         save=aSettings.boSaveEvents;
+         verbose=aSettings.boVerbose;
+         eSearchRegion=aSettings.eRegion;
+         artwork=true;
+      }
+      if(verbose) {
+         std::filesystem::create_directories(
+            ".cache/camera-recognition");
+         // The GUI process has no console. Redirect all existing std::print
+         // diagnostics, including the asynchronous matcher, to one log.
+         if(!std::freopen(".cache/camera-recognition/verbose.log",
+            "a",stdout))
+            throw std::runtime_error("cannot open camera verbose log");
+         if(!std::freopen(".cache/camera-recognition/verbose.log",
+            "a",stderr))
+            throw std::runtime_error("cannot open camera error log");
+         std::setvbuf(stdout,nullptr,_IONBF,0);
+         std::setvbuf(stderr,nullptr,_IONBF,0);
       }
       deckkernel::camera::SetTraceEnabled(verbose);
       deckkernel::camera::SetDeepSearchEnabled(deepSearch);
@@ -3453,6 +3508,7 @@ int main(int argc,char** argv) {
          return 0;
       }
       Processor processor(save,verbose);
+      processor.SetSearchRegion(eSearchRegion);
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
       if(artwork)processor.EnableArtwork(artworkLimit);
 #else
@@ -3696,6 +3752,7 @@ int main(int argc,char** argv) {
 #endif
    }
    catch(std::exception const& e){
+      MessageBoxA(nullptr,e.what(),"DeckKernel camera error",MB_OK|MB_ICONERROR);
       std::println(std::cerr,"[CAM] ERROR: {}",e.what());return 1;
    }
 }
