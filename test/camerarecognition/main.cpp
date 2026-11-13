@@ -2949,6 +2949,33 @@ void SelfTest() {
          "artwork was incorrectly accepted as the physical card");
    if(aStandard->boRotate180)
       throw std::runtime_error("upright standard card was rotated 180 degrees");
+   // Card top-edge orientation is independent of the card's location.
+   // All four directions must restore the physical source-frame geometry.
+   for(auto const eOrientation:{
+      deckkernel::camera::CardOrientation::Top,
+      deckkernel::camera::CardOrientation::Bottom,
+      deckkernel::camera::CardOrientation::Left,
+      deckkernel::camera::CardOrientation::Right}) {
+      cv::Mat aOrientedScene=aFramedScene;
+      if(eOrientation==deckkernel::camera::CardOrientation::Bottom)
+         cv::rotate(aFramedScene,aOrientedScene,cv::ROTATE_180);
+      else if(eOrientation==deckkernel::camera::CardOrientation::Left)
+         cv::rotate(aFramedScene,aOrientedScene,
+            cv::ROTATE_90_COUNTERCLOCKWISE);
+      else if(eOrientation==deckkernel::camera::CardOrientation::Right)
+         cv::rotate(aFramedScene,aOrientedScene,
+            cv::ROTATE_90_CLOCKWISE);
+      Processor aOrientationProcessor(false);
+      aOrientationProcessor.SetCardOrientation(eOrientation);
+      auto const optOriented=aOrientationProcessor.Observe(
+         aOrientedScene);
+      if(!optOriented ||
+         cv::boundingRect(optOriented->corners).area()<
+            aOuter.area()*0.70)
+         throw std::runtime_error(
+            "card top-edge orientation rejected a valid physical card");
+   }
+
 
    // Borderless-style: no conventional title/art frame, but a physical
    // outside edge and one independent rectangular text panel remain.
