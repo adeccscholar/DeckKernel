@@ -206,13 +206,21 @@ struct Separator {
       result.printing=*aFrame.optPrintingStrip;
       result.printingStripDetected=true;
    }
+   // Never let rules OCR include the independently detected printing strip.
+   if(result.printingStripDetected &&
+      result.rules.y<result.printing.y) {
+      result.rules.height=std::min(result.rules.height,
+         std::max(1,result.printing.y-result.rules.y-
+            std::max(3,size.height/200)));
+   }
    if(aFrame.optType) {
       cv::Rect const& aType=*aFrame.optType;
       int const iPad=std::max(3,aType.height/10);
       int const iTop=aType.y+iPad;
       int const iBottom=aType.br().y-iPad;
       int const iRulesTop=aType.br().y+std::max(5,size.height/90);
-      int const iRulesBottom=size.height*89/100;
+      int const iRulesBottom=std::min(size.height*89/100,
+         result.printing.y-std::max(3,size.height/200));
       if(iBottom>iTop+8 && iRulesTop+15<iRulesBottom) {
          result.type.y=iTop;
          result.type.height=iBottom-iTop;
@@ -256,8 +264,10 @@ struct Separator {
    int const typeTop=top.last+margin;
    int const typeBottom=bottom.first-margin;
    int const rulesTop=bottom.last+std::max(8,card.rows/84);
-   int const rulesBottom=std::min(card.rows*89/100,
-      bottom.last+card.rows*39/100);
+   int const rulesBottom=std::min(
+      std::min(card.rows*89/100,
+         bottom.last+card.rows*39/100),
+      result.printing.y-std::max(3,card.rows/200));
    if(typeBottom<=typeTop+8||rulesBottom<=rulesTop+15)
       return result;
    auto band=[&](int x0,int x1,int y0,int y1) {
