@@ -189,8 +189,12 @@ public:
                m_bCardLocked) {
                int iWidth{},iHeight{};
                SDL_GetRendererOutputSize(m_pRenderer,&iWidth,&iHeight);
-               int const iX=aEvent.button.x;
-               int const iY=aEvent.button.y;
+               int iWindowWidth{},iWindowHeight{};
+               SDL_GetWindowSize(m_pWindow,&iWindowWidth,&iWindowHeight);
+               int const iX=aEvent.button.x*std::max(1,iWidth)/
+                  std::max(1,iWindowWidth);
+               int const iY=aEvent.button.y*std::max(1,iHeight)/
+                  std::max(1,iWindowHeight);
                float const flPaneWidth=(iWidth-32.f-36.f-
                   std::max(230.f,iWidth*0.23f))/2.f;
                int const iRight=static_cast<int>(
