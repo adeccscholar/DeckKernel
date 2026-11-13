@@ -3414,32 +3414,6 @@ bool ProbeCamera(int index) {
          double maximum=0;
          auto const beginning=std::chrono::steady_clock::now();
          for(unsigned n=0;n<45;++n) {
-   #if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
-         if(preview.ConsumeFocusToggle()) {
-            if(processor.CardLocked()) {
-               preview.SetSettingsNotice(
-                  "Finish the current card before switching focus");
-            }
-            else {
-               tableFocus=!tableFocus;
-               autoFocus=tableFocus;
-               manualFocusPosition.reset();
-               boPreserveExternalFocus=!tableFocus;
-               upTableFocus=std::make_unique<
-                  deckkernel::camera::TablePlaneFocus>(
-                     tableFocus,std::nullopt,boPreserveExternalFocus);
-               upTableFocus->Begin(capture);
-               deckkernel::camera::CameraLaunchSettings aSaved;
-               if(deckkernel::camera::CameraSettingsFile::Load(aSaved)) {
-                  aSaved.boTableAutoFocus=tableFocus;
-                  deckkernel::camera::CameraSettingsFile::Save(aSaved);
-               }
-               preview.SetSettingsNotice(tableFocus?
-                  "Table autofocus started":"Table autofocus disabled");
-            }
-         }
-         preview.SetTableAutoFocus(tableFocus);
-#endif
          if(!capture.read(frame)||frame.empty()){
                ++empty;
             } else {
@@ -3823,6 +3797,32 @@ int CameraApplicationMain(int argc,char** argv) {
             }
          }
 #endif
+#if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
+         if(preview.ConsumeFocusToggle()) {
+            if(processor.CardLocked()) {
+               preview.SetSettingsNotice(
+                  "Finish the current card before switching focus");
+            }
+            else {
+               tableFocus=!tableFocus;
+               autoFocus=tableFocus;
+               manualFocusPosition.reset();
+               boPreserveExternalFocus=!tableFocus;
+               upTableFocus=std::make_unique<
+                  deckkernel::camera::TablePlaneFocus>(
+                     tableFocus,std::nullopt,boPreserveExternalFocus);
+               upTableFocus->Begin(capture);
+               deckkernel::camera::CameraLaunchSettings aSaved;
+               if(deckkernel::camera::CameraSettingsFile::Load(aSaved)) {
+                  aSaved.boTableAutoFocus=tableFocus;
+                  deckkernel::camera::CameraSettingsFile::Save(aSaved);
+               }
+               preview.SetSettingsNotice(tableFocus?
+                  "Table autofocus started":"Table autofocus disabled");
+            }
+         }
+         preview.SetTableAutoFocus(tableFocus);
+#endif
          if(!capture.read(frame)||frame.empty()){
             if(++failures==1 || failures%30==0)
                std::println(std::cerr,"[CAM] no frame returned, consecutive failures={}",failures);
@@ -3900,7 +3900,7 @@ int CameraApplicationMain(int argc,char** argv) {
             boRestartFocus=processor.ConfirmCandidate();
          if(boRestartFocus && !boPreserveExternalFocus) {
             deckkernel::camera::Trace("[CAM-SCAN] next scan: pre-focus tabletop");
-            aTableFocus.Begin(capture);
+            upTableFocus->Begin(capture);
          }
          // Visual diagnostic: mark the four corners that pass card geometry checks.
          cv::Mat annotated=frame.clone();
@@ -3930,7 +3930,7 @@ int CameraApplicationMain(int argc,char** argv) {
             upTableFocus->Status():processor.CardLocked()?
             "Captured frame retained; no further card search until removal":
             (found?"Card boundary found; stabilizing capture":
-               aTableFocus.Status()+" | Looking for a card boundary");
+               upTableFocus->Status()+" | Looking for a card boundary");
          preview.SetPhase(boFocusCalibrating?
             "00 TABLE FOCUS":deckkernel::camera::PhaseName(processor.Phase()));
          preview.SetCollectedCards(processor.CollectedCards());
