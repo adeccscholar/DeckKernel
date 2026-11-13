@@ -60,6 +60,8 @@ class CameraDashboard {
    bool m_boConfirm{};
    bool m_boReject{};
    bool m_boAllPrintings{};
+   bool m_boOptions{};
+   std::string m_strSettingsNotice;
    std::vector<deckkernel::camera::CollectedCard> m_vecCollected;
    bool m_boFocusReset{};
    std::string m_strPhase{"01 SEARCHING"};
@@ -144,6 +146,7 @@ public:
          SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,1440,900,
          SDL_WINDOW_RESIZABLE|SDL_WINDOW_ALLOW_HIGHDPI);
       if(!m_pWindow)throw std::runtime_error(SDL_GetError());
+      SDL_SetWindowMinimumSize(m_pWindow,1200,760);
       m_pRenderer=SDL_CreateRenderer(m_pWindow,-1,SDL_RENDERER_SOFTWARE);
       if(!m_pRenderer)throw std::runtime_error(SDL_GetError());
    }
@@ -166,6 +169,8 @@ public:
                aEvent.key.repeat==0)m_boReject=true;
             if(aEvent.key.keysym.sym==SDLK_r)m_bFlip=!m_bFlip;
             if(aEvent.key.keysym.sym==SDLK_f)m_boFocusReset=true;
+            if(aEvent.key.keysym.sym==SDLK_o &&
+               aEvent.key.repeat==0)m_boOptions=true;
             if(aEvent.key.keysym.sym==SDLK_p && m_bCardLocked)
                m_boAllPrintings=true;
             if(aEvent.key.keysym.sym==SDLK_LEFT)--m_iNavigation;
@@ -185,8 +190,7 @@ public:
             aEvent.wheel.y!=0)
             m_iNavigation-=aEvent.wheel.y;
          if(aEvent.type==SDL_MOUSEBUTTONDOWN) {
-            if(aEvent.button.button==SDL_BUTTON_LEFT &&
-               m_bCardLocked) {
+            if(aEvent.button.button==SDL_BUTTON_LEFT) {
                int iWidth{},iHeight{};
                SDL_GetRendererOutputSize(m_pRenderer,&iWidth,&iHeight);
                int iWindowWidth{},iWindowHeight{};
@@ -195,19 +199,29 @@ public:
                   std::max(1,iWindowWidth);
                int const iY=aEvent.button.y*std::max(1,iHeight)/
                   std::max(1,iWindowHeight);
+               if(iY>=9 && iY<47 &&
+                  iX>=iWidth-145 && iX<iWidth-17)
+                  m_boOptions=true;
                float const flPaneWidth=(iWidth-32.f-36.f-
                   std::max(230.f,iWidth*0.23f))/2.f;
-               int const iRight=static_cast<int>(
-                  16.f+flPaneWidth+18.f);
+               float const flRight=16.f+flPaneWidth+18.f;
+               int const iButtonWidth=static_cast<int>(
+                  std::min(140.f,(flPaneWidth-44.f)/3.f));
+               int const iFirst=static_cast<int>(flRight+12.f);
                int const iControlY=iHeight-77;
-               if(iY>=iControlY && iY<iControlY+43) {
+               if(m_bCardLocked &&
+                  iY>=iControlY && iY<iControlY+43) {
                   if(iX>=28 && iX<145)m_boConfirm=true;
                   else if(iX>=153 && iX<270)m_boReject=true;
-                  else if(iX>=iRight+12 && iX<iRight+152)
+                  else if(iX>=iFirst &&
+                     iX<iFirst+iButtonWidth && m_uCandidateCount>1)
                      --m_iNavigation;
-                  else if(iX>=iRight+160 && iX<iRight+300)
+                  else if(iX>=iFirst+iButtonWidth+8 &&
+                     iX<iFirst+2*iButtonWidth+8 && m_uCandidateCount>1)
                      ++m_iNavigation;
-                  else if(iX>=iRight+308 && iX<iRight+480)
+                  else if(iX>=iFirst+2*(iButtonWidth+8) &&
+                     iX<iFirst+3*iButtonWidth+16 &&
+                     m_uCandidateCount>0 && !m_strOracleId.empty())
                      m_boAllPrintings=true;
                }
             }
@@ -227,6 +241,14 @@ public:
       bool const boConfirm=m_boConfirm;
       m_boConfirm=false;
       return boConfirm;
+   }
+   [[nodiscard]] bool ConsumeOptions() noexcept {
+      bool const boOptions=m_boOptions;
+      m_boOptions=false;
+      return boOptions;
+   }
+   void SetSettingsNotice(std::string strNotice) {
+      m_strSettingsNotice=std::move(strNotice);
    }
    [[nodiscard]] bool ConsumeAllPrintings() noexcept {
       bool const boRequested=m_boAllPrintings;
@@ -384,7 +406,10 @@ public:
       float const flPaneWidth=
          (iWidth-32.f-2.f*flGap-flListWidth)/2.f;
       float const flPaneTop=58.f;
-      float const flPaneHeight=std::max(190.f,iHeight*0.62f);
+      // Reserve at least 290 pixels for the two-column metadata and
+      // a separate fixed action bar. Status text must never enter buttons.
+      float const flPaneHeight=std::max(190.f,
+         std::min(iHeight*0.56f,iHeight-58.f-16.f-290.f-14.f));
       float const flRight=16.f+flPaneWidth+flGap;
       float const flListX=flRight+flPaneWidth+flGap;
       float const flBottom=flPaneTop+flPaneHeight+16.f;
@@ -399,8 +424,15 @@ public:
       Fill(pCanvas,SkRect::MakeXYWH(flListX,flPaneTop,
          flListWidth,iHeight-flPaneTop-14.f),0xff142633);
       Text(pCanvas,25.f,35.f,"DECKKERNEL  /  IMAGE RECOGNITION",23.f,0xfff5f7fa);
-      Text(pCanvas,static_cast<float>(iWidth)-230.f,35.f,
-         m_strPhase,17.f,0xff8ed5ee);
+      Text(pCanvas,static_cast<float>(iWidth)-375.f,35.f,
+         m_strPhase,16.f,0xff8ed5ee);
+      if(!m_strSettingsNotice.empty())
+         Text(pCanvas,410.f,35.f,m_strSettingsNotice,12.f,0xff9dddb9);
+      Fill(pCanvas,SkRect::MakeXYWH(
+         static_cast<float>(iWidth)-145.f,9.f,128.f,38.f),
+         0xff244454);
+      Text(pCanvas,static_cast<float>(iWidth)-122.f,35.f,
+         "Options",16.f,0xfff5f7fa);
       Text(pCanvas,30.f,84.f,
          m_bCardLocked?"INPUT / CAPTURED CARD":"INPUT / CAMERA",
          16.f,0xff8ed5ee);
@@ -434,7 +466,7 @@ public:
             14.f,0xfff5f7fa);
       }
       Text(pCanvas,flListX+14.f,iHeight-34.f,
-         "Enter: accept | Esc: discard | P: all printings",
+         "Enter: accept | Esc: discard | O: options",
          11.f,0xff9dddb9);
       if(m_bCardLocked) {
          Text(pCanvas,30.f,flPaneTop+flPaneHeight-18.f,
@@ -519,21 +551,24 @@ public:
          m_bCardLocked?0xffffffff:0xff95a8b3);
       Text(pCanvas,166.f,flActionsY+27.f,"Discard",15.f,
          m_bCardLocked?0xffffffff:0xff95a8b3);
+      float const flNavWidth=std::min(140.f,(flPaneWidth-44.f)/3.f);
+      float const flNavX=flRight+12.f;
       Fill(pCanvas,SkRect::MakeXYWH(
-         flRight+12.f,flActionsY,140.f,43.f),
+         flNavX,flActionsY,flNavWidth,43.f),
          boCanBrowse?0xff244454:0xff344753);
       Fill(pCanvas,SkRect::MakeXYWH(
-         flRight+160.f,flActionsY,140.f,43.f),
+         flNavX+flNavWidth+8.f,flActionsY,flNavWidth,43.f),
          boCanBrowse?0xff244454:0xff344753);
       Fill(pCanvas,SkRect::MakeXYWH(
-         flRight+308.f,flActionsY,172.f,43.f),
-         boCanList?0xff218a78:0xff344753);
-      Text(pCanvas,flRight+27.f,flActionsY+27.f,
+         flNavX+2.f*(flNavWidth+8.f),flActionsY,
+         flNavWidth,43.f),boCanList?0xff218a78:0xff344753);
+      Text(pCanvas,flNavX+12.f,flActionsY+27.f,
          "Previous",14.f,boCanBrowse?0xfff5f7fa:0xff95a8b3);
-      Text(pCanvas,flRight+182.f,flActionsY+27.f,
+      Text(pCanvas,flNavX+flNavWidth+20.f,flActionsY+27.f,
          "Next",14.f,boCanBrowse?0xfff5f7fa:0xff95a8b3);
-      Text(pCanvas,flRight+324.f,flActionsY+27.f,
-         "All printings",14.f,boCanList?0xffffffff:0xff95a8b3);
+      Text(pCanvas,flNavX+2.f*(flNavWidth+8.f)+8.f,
+         flActionsY+27.f,
+         "All printings",13.f,boCanList?0xffffffff:0xff95a8b3);
       // Reuse the SDL background raster; actual card textures are rendered above it.
       SkPixmap aPixels;
       if(aSurface->peekPixels(&aPixels)) {
