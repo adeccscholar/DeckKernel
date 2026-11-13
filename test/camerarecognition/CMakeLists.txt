@@ -28,11 +28,13 @@ find_package(SDL2 CONFIG REQUIRED PATHS "${ADECC_TP_SDL2_ROOT}" NO_DEFAULT_PATH)
 find_package(Skia CONFIG REQUIRED PATHS "${ADECC_TP_SKIA_ROOT}" NO_DEFAULT_PATH)
 add_executable(deckkernel_camera_recognition_test WIN32 main.cpp CameraGuiEntry.cpp CameraSettingsDialog.h CameraCardSession.h CameraCardLayout.h CameraPhysicalTracker.h CardImageMatcher.h CameraDashboard.h CameraOcrZones.h CameraImageQuality.h CameraTypography.h)
 target_link_libraries(deckkernel_camera_recognition_test PRIVATE user32 shell32 ole32 oleaut32)
-# The BCC64X GNU-style driver may otherwise link a console-subsystem PE
-# despite WIN32_EXECUTABLE. Make the GUI subsystem explicit at link time.
+# BCC64X explicitly distinguishes console (-tC) from GUI (-tW)
+# applications. Keep the existing dynamic RTL (-tR), and request the
+# Windows GUI subsystem in the linker as well. WIN32 alone was not enough.
 set_target_properties(deckkernel_camera_recognition_test PROPERTIES
    WIN32_EXECUTABLE TRUE)
-target_link_options(deckkernel_camera_recognition_test PRIVATE -mwindows)
+target_link_options(deckkernel_camera_recognition_test PRIVATE
+   -tW -tR "-Wl,--subsystem,windows")
 # Guard against a compiler-driver default silently producing a console PE.
 add_custom_command(TARGET deckkernel_camera_recognition_test POST_BUILD
    COMMAND "${CMAKE_COMMAND}"
