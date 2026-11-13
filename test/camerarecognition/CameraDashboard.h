@@ -59,6 +59,7 @@ class CameraDashboard {
    int m_iNavigation{};
    bool m_boConfirm{};
    bool m_boReject{};
+   bool m_boAllPrintings{};
    std::vector<deckkernel::camera::CollectedCard> m_vecCollected;
    bool m_boFocusReset{};
    std::string m_strPhase{"01 SEARCHING"};
@@ -165,6 +166,8 @@ public:
                aEvent.key.repeat==0)m_boReject=true;
             if(aEvent.key.keysym.sym==SDLK_r)m_bFlip=!m_bFlip;
             if(aEvent.key.keysym.sym==SDLK_f)m_boFocusReset=true;
+            if(aEvent.key.keysym.sym==SDLK_p && m_bCardLocked)
+               m_boAllPrintings=true;
             if(aEvent.key.keysym.sym==SDLK_LEFT)--m_iNavigation;
             if(aEvent.key.keysym.sym==SDLK_RIGHT)++m_iNavigation;
             if((aEvent.key.keysym.sym==SDLK_RETURN ||
@@ -182,9 +185,30 @@ public:
             aEvent.wheel.y!=0)
             m_iNavigation-=aEvent.wheel.y;
          if(aEvent.type==SDL_MOUSEBUTTONDOWN) {
-            if(aEvent.button.button==SDL_BUTTON_LEFT && m_bCardLocked)
-               m_boConfirm=true;
-            if(aEvent.button.button==SDL_BUTTON_RIGHT)m_boReject=true;
+            if(aEvent.button.button==SDL_BUTTON_LEFT &&
+               m_bCardLocked) {
+               int iWidth{},iHeight{};
+               SDL_GetRendererOutputSize(m_pRenderer,&iWidth,&iHeight);
+               int const iX=aEvent.button.x;
+               int const iY=aEvent.button.y;
+               float const flPaneWidth=(iWidth-32.f-36.f-
+                  std::max(230.f,iWidth*0.23f))/2.f;
+               int const iRight=static_cast<int>(
+                  16.f+flPaneWidth+18.f);
+               int const iControlY=iHeight-77;
+               if(iY>=iControlY && iY<iControlY+43) {
+                  if(iX>=28 && iX<145)m_boConfirm=true;
+                  else if(iX>=153 && iX<270)m_boReject=true;
+                  else if(iX>=iRight+12 && iX<iRight+152)
+                     --m_iNavigation;
+                  else if(iX>=iRight+160 && iX<iRight+300)
+                     ++m_iNavigation;
+                  else if(iX>=iRight+308 && iX<iRight+480)
+                     m_boAllPrintings=true;
+               }
+            }
+            if(aEvent.button.button==SDL_BUTTON_RIGHT && m_bCardLocked)
+               m_boReject=true;
          }
       }
       return m_bRunning;
@@ -199,6 +223,11 @@ public:
       bool const boConfirm=m_boConfirm;
       m_boConfirm=false;
       return boConfirm;
+   }
+   [[nodiscard]] bool ConsumeAllPrintings() noexcept {
+      bool const boRequested=m_boAllPrintings;
+      m_boAllPrintings=false;
+      return boRequested;
    }
    [[nodiscard]] bool ConsumeRejection() noexcept {
       bool const boReject=m_boReject;
@@ -401,7 +430,7 @@ public:
             14.f,0xfff5f7fa);
       }
       Text(pCanvas,flListX+14.f,iHeight-34.f,
-         "Enter/click: add | Esc/right-click: reject",
+         "Enter: accept | Esc: discard | P: all printings",
          11.f,0xff9dddb9);
       if(m_bCardLocked) {
          Text(pCanvas,30.f,flPaneTop+flPaneHeight-18.f,
@@ -466,6 +495,30 @@ public:
          Clip("Next: "+m_strGuidance,
             static_cast<int>(flDetailsWidth-30.f)),
          13.f,0xff8ed5ee);
+      // Explicit scan decisions and printing navigation. These controls
+      // act only when a captured card is locked; the main loop validates
+      // whether a candidate is ready before accepting it.
+      if(m_bCardLocked) {
+         float const flActionsY=static_cast<float>(iHeight-77);
+         Fill(pCanvas,SkRect::MakeXYWH(
+            28.f,flActionsY,117.f,43.f),0xff218a78);
+         Fill(pCanvas,SkRect::MakeXYWH(
+            153.f,flActionsY,117.f,43.f),0xff85454a);
+         Text(pCanvas,40.f,flActionsY+27.f,"Accept",15.f,0xffffffff);
+         Text(pCanvas,166.f,flActionsY+27.f,"Discard",15.f,0xffffffff);
+         Fill(pCanvas,SkRect::MakeXYWH(
+            flRight+12.f,flActionsY,140.f,43.f),0xff244454);
+         Fill(pCanvas,SkRect::MakeXYWH(
+            flRight+160.f,flActionsY,140.f,43.f),0xff244454);
+         Fill(pCanvas,SkRect::MakeXYWH(
+            flRight+308.f,flActionsY,172.f,43.f),0xff218a78);
+         Text(pCanvas,flRight+27.f,flActionsY+27.f,
+            "Previous",14.f,0xfff5f7fa);
+         Text(pCanvas,flRight+182.f,flActionsY+27.f,
+            "Next",14.f,0xfff5f7fa);
+         Text(pCanvas,flRight+324.f,flActionsY+27.f,
+            "All printings",14.f,0xffffffff);
+      }
       // Reuse the SDL background raster; actual card textures are rendered above it.
       SkPixmap aPixels;
       if(aSurface->peekPixels(&aPixels)) {
