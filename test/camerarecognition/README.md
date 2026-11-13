@@ -977,6 +977,21 @@ module evaluation is unchanged.
 PostgreSQL printing-query duration, preview of `frozen-overscan.png`,
 and OCR success on known printed collector/set fields.
 
+## 2026-11-13: permanently visible controls and BCC64X GUI mode
+
+The primary camera dashboard always renders Accept, Discard, Previous, Next,
+and All printings in the lower action row, including while scanning. Actions
+which require an acquired card or candidate set appear disabled until
+available. Previously the drawing was conditional on the card being frozen,
+which left the camera screen without any buttons.
+
+For the console issue, the BCC64X link uses its documented `-tW` GUI target
+mode and `-tR` dynamic runtime mode, together with an explicit Windows PE
+subsystem directive. The existing post-link PE header checker remains
+mandatory. A CMake configure, build **and install** are required; running
+the previously installed executable does not pick up GitHub source edits.
+The installed executable and its runtime have not been tested on Windows.
+
 ## 2026-11-13: explicit scan decisions and printing browser
 
 The SDL2/Skia dashboard now provides clickable **Accept** and **Discard**
