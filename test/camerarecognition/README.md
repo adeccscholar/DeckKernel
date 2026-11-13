@@ -977,6 +977,30 @@ module evaluation is unchanged.
 PostgreSQL printing-query duration, preview of `frozen-overscan.png`,
 and OCR success on known printed collector/set fields.
 
+## 2026-11-13: GUI startup aligned with tested PDFium SDL2 viewer
+
+The console problem was traced to an inconsistent application startup:
+the camera executable still contained `int main(int,char**)` and a
+separate `CameraGuiEntry.cpp` forwarding `WinMain` to that console
+entry. The working reference in `adeccscholar/BuildEngine-Tests`,
+`pdfium/SDL2/main.cpp`, instead defines `int WINAPI WinMain(...)`
+directly in its single application translation unit, with
+`add_executable(... WIN32 main.cpp)`.
+
+The camera now follows this demonstrated model. Its sole executable
+entry is `WinMain` in `test/camerarecognition/main.cpp`; the command
+argument parser is an ordinary internal `CameraApplicationMain`
+function. DirectShow camera enumeration was moved into
+`CameraDeviceEnumeration.cpp`, and obsolete `CameraGuiEntry.cpp`
+was deleted. The CMake target is a normal `WIN32` application, without
+the experimental `-tW`, `-tR`, `-mwindows` or
+`-Wl,--subsystem,windows` overrides. The post-build Windows GUI PE
+subsystem verifier remains active.
+
+Run CMake configure, build and install after pulling this change to
+replace the previously installed executable. The target BCC64X build
+and resulting on-screen behavior still require local verification.
+
 ## 2026-11-13: dashboard action-bar clearance and Options button
 
 The SDL2/Skia camera dashboard now reserves a fixed lower area for
