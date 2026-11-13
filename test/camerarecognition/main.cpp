@@ -3695,6 +3695,19 @@ int main(int argc,char** argv) {
       bool appliedFlip=false;
       auto const beginning=interval;
       while(preview.Messages()){
+#if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
+         if(preview.ConsumeOptions()) {
+            // Open the existing SDL2/Skia settings window without changing
+            // a frozen card or the active reference selection.
+            // Camera-device and capture changes apply on next application
+            // start; no implicit camera reopen or lost collection state.
+            deckkernel::camera::CameraLaunchSettings aNewSettings;
+            deckkernel::camera::CameraSettingsDialog aOptions;
+            if(aOptions.Show(aNewSettings))
+               preview.SetSettingsNotice(
+                  "Options saved - restart to apply");
+         }
+#endif
          if(!capture.read(frame)||frame.empty()){
             if(++failures==1 || failures%30==0)
                std::println(std::cerr,"[CAM] no frame returned, consecutive failures={}",failures);
