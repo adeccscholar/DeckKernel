@@ -977,6 +977,30 @@ module evaluation is unchanged.
 PostgreSQL printing-query duration, preview of `frozen-overscan.png`,
 and OCR success on known printed collector/set fields.
 
+## 2026-11-13: SDL2/Skia settings UI and console-free GUI link
+
+The settings dialog now uses the same SDL2 event loop and Skia raster
+renderer as the scanning dashboard. The previous Win32 child-control
+dialog has been removed. The GUI provides a named camera selector,
+capture resolution and frame rate, physical card-top direction,
+event-image saving and verbose diagnostics. Mouse arrows or keyboard
+left/right cycle choices, up/down selects a row, Enter starts and
+Escape cancels. The visual appearance matches the dark dashboard
+theme and uses the same DirectWrite text fallback.
+
+The existing version-1 `.cache/camera-recognition/camera-settings.json`
+settings schema remains unchanged. The dialog still opens only if
+configuration is missing/invalid or `--settings` is explicitly passed.
+The WIN32 CMake executable is additionally linked with `-mwindows` to
+request a GUI-subsystem PE explicitly from the BCC64X driver. Run CMake
+configure again so the linker option takes effect, then build and
+install. No focus or matching algorithm was modified.
+
+The Windows GUI executable has not been built or smoke-tested here.
+Check the PE Subsystem field of the final installed executable if a
+separate console window still appears; the launching terminal itself
+remains open when the executable is run from a command prompt.
+
 ## 2026-11-13: GUI settings, JSON persistence and physical card orientation
 
 DeckKernel uses a Windows GUI-subsystem executable and retains the SDL2/Skia
