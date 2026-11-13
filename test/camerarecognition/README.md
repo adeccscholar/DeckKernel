@@ -977,6 +977,44 @@ module evaluation is unchanged.
 PostgreSQL printing-query duration, preview of `frozen-overscan.png`,
 and OCR success on known printed collector/set fields.
 
+## 2026-11-13: Windows GUI launcher, camera settings and directional scan regions
+
+The existing SDL2/Skia camera dashboard is now launched as a Windows GUI
+subsystem executable, without creating a console window. Starting the camera
+recognizer with no arguments (or with `--settings`) opens a native graphical
+settings dialog first. The dialog can select the named DirectShow camera,
+request a resolution and frame rate, enable event-image saving, enable verbose
+logging, and choose the preferred card position.
+
+The dialog saves confirmed settings in
+`.cache/camera-recognition/camera-settings.ini` and reloads them next time.
+If Windows DirectShow device enumeration fails, the camera selector falls back
+to explicit index choices. The configured DirectShow camera is then opened
+with the DSHOW OpenCV backend to retain index consistency. Requested capture
+resolution and frame rate are still subject to the device's negotiated mode.
+
+Card-position options are **Full image**, **Top**, **Bottom**, **Left** and
+**Right**. The four directional options restrict the actual initial Canny /
+contour scan to 60% of the relevant image dimension, overlapping the image
+midpoint by 10%. Detected corners are converted back into full-frame pixel
+coordinates before tracker initialization, OCR rectification or artwork
+matching. The tracking phase still uses complete camera frames and the
+standard-card identification pipeline is unchanged. A blue/orange rectangle
+in the live preview indicates the current scan region.
+
+The `--verbose` option and the graphical checkbox write application
+diagnostics to `.cache/camera-recognition/verbose.log`. This appends across
+runs and includes asynchronous matcher diagnostics. Error dialogs replace
+otherwise invisible console errors. Existing command line modes for
+self-tests, replay, camera probing and `--region=full|top|bottom|left|right`
+remain supported. Note that the GUI-subsystem program does not display
+standard output on a terminal unless verbose logging redirects it to a file.
+
+The regression suite checks directional ROI geometry and source-coordinate
+restoration. This implementation was not compiled on the target BCC64X
+Windows system in this environment; GUI interaction and DirectShow device
+enumeration require a real Windows smoke test.
+
 ## 2026-11-11: identification regression and targeted rollback
 
 The experimental shared dHash shortlist and split-face matching fallback
