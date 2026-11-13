@@ -7,6 +7,7 @@
              can supply the actual typeline bounds. The rules area is always
              available independently, even for unknown layouts.
 */
+#include "CameraFrameGeometry.h"
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <algorithm>
@@ -27,6 +28,8 @@ struct Zones {
    cv::Rect rules;
    bool typeSeparated{};
    float separationConfidence{};
+   cv::Rect printing;
+   bool printingStripDetected{};
 };
 
 [[nodiscard]] inline cv::Rect Relative(cv::Size size,
@@ -183,6 +186,46 @@ struct Separator {
       Relative(size,  70, 643, 930, 880), // independent rules fallback
       false,0.f
    };
+   // Prefer the measured outlines of framed title/type bars.
+   // Their coordinates are derived from contour edges, not fixed crops.
+   auto const aFrame=deckkernel::camera::DetectFrameGeometry(card);
+   if(aFrame.optTitle) {
+      cv::Rect const& aTitle=*aFrame.optTitle;
+      int const iPad=std::max(2,aTitle.height/9);
+      int const iTop=aTitle.y+iPad;
+      int const iBottom=aTitle.br().y-iPad;
+      if(iBottom>iTop+8) {
+         result.name.y=iTop;
+         result.name.height=iBottom-iTop;
+         result.mana.y=iTop;
+         result.mana.height=iBottom-iTop;
+      }
+   }
+   result.printing=Relative(size,40,865,960,990);
+   if(aFrame.optPrintingStrip) {
+      result.printing=*aFrame.optPrintingStrip;
+      result.printingStripDetected=true;
+   }
+   if(aFrame.optType) {
+      cv::Rect const& aType=*aFrame.optType;
+      int const iPad=std::max(3,aType.height/10);
+      int const iTop=aType.y+iPad;
+      int const iBottom=aType.br().y-iPad;
+      int const iRulesTop=aType.br().y+std::max(5,size.height/90);
+      int const iRulesBottom=size.height*89/100;
+      if(iBottom>iTop+8 && iRulesTop+15<iRulesBottom) {
+         result.type.y=iTop;
+         result.type.height=iBottom-iTop;
+         result.setSymbol.y=iTop;
+         result.setSymbol.height=iBottom-iTop;
+         result.rules.y=iRulesTop;
+         result.rules.height=iRulesBottom-iRulesTop;
+         result.typeSeparated=true;
+         result.separationConfidence=std::clamp(
+            static_cast<float>(aFrame.flTypeConfidence-0.65),0.f,1.f);
+         return result;
+      }
+   }
    auto const peaks=HorizontalRules(card);
    float best=-1.f;
    Separator top{},bottom{};
@@ -263,6 +306,7 @@ inline bool ApplyTypeTextLine(Zones& zones,cv::Size const size,
          r.x+r.width<=size.width&&r.y+r.height<=size.height;
    };
    return inside(z.name)&&inside(z.mana)&&inside(z.type)&&
+      inside(z.printing)&&
       inside(z.setSymbol)&&inside(z.rules)&&
       (z.name&z.mana).empty()&&(z.type&z.setSymbol).empty()&&
       (z.type&z.rules).empty()&&(z.setSymbol&z.rules).empty();
@@ -280,6 +324,8 @@ inline bool ApplyTypeTextLine(Zones& zones,cv::Size const size,
    draw(z.type,cv::Scalar(20,230,230),z.typeSeparated?"TYPE":"TYPE?");
    draw(z.setSymbol,cv::Scalar(230,70,230),"SET");
    draw(z.rules,cv::Scalar(40,140,240),z.typeSeparated?"RULES":"RULES?");
+   draw(z.printing,cv::Scalar(220,120,40),
+      z.printingStripDetected?"PRINTING":"PRINTING?");
    return annotated;
 }
 } // namespace deckkernel_camera::ocr
