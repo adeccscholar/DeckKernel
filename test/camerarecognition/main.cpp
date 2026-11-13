@@ -3340,7 +3340,33 @@ bool ProbeCamera(int index) {
          double maximum=0;
          auto const beginning=std::chrono::steady_clock::now();
          for(unsigned n=0;n<45;++n) {
-            if(!capture.read(frame)||frame.empty()){
+   #if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
+         if(preview.ConsumeFocusToggle()) {
+            if(processor.CardLocked()) {
+               preview.SetSettingsNotice(
+                  "Finish the current card before switching focus");
+            }
+            else {
+               tableFocus=!tableFocus;
+               autoFocus=tableFocus;
+               manualFocusPosition.reset();
+               boPreserveExternalFocus=!tableFocus;
+               upTableFocus=std::make_unique<
+                  deckkernel::camera::TablePlaneFocus>(
+                     tableFocus,std::nullopt,boPreserveExternalFocus);
+               upTableFocus->Begin(capture);
+               deckkernel::camera::CameraLaunchSettings aSaved;
+               if(deckkernel::camera::CameraSettingsFile::Load(aSaved)) {
+                  aSaved.boTableAutoFocus=tableFocus;
+                  deckkernel::camera::CameraSettingsFile::Save(aSaved);
+               }
+               preview.SetSettingsNotice(tableFocus?
+                  "Table autofocus started":"Table autofocus disabled");
+            }
+         }
+         preview.SetTableAutoFocus(tableFocus);
+#endif
+         if(!capture.read(frame)||frame.empty()){
                ++empty;
             } else {
                ++received;
@@ -3491,6 +3517,8 @@ int CameraApplicationMain(int argc,char** argv) {
          save=aSettings.boSaveEvents;
          verbose=aSettings.boVerbose;
          eCardOrientation=aSettings.eOrientation;
+         tableFocus=aSettings.boTableAutoFocus;
+         autoFocus=tableFocus;
          artwork=true;
       }
       if(verbose) {
@@ -3678,11 +3706,11 @@ int CameraApplicationMain(int argc,char** argv) {
       // changed on startup, hotkey F, or after finishing a scan.
       // --auto-focus explicitly restores the former table calibration,
       // including its continuous-autofocus fallback.
-      bool const boPreserveExternalFocus=!autoFocus &&
+      bool boPreserveExternalFocus=!autoFocus &&
          !manualFocusPosition.has_value();
-      deckkernel::camera::TablePlaneFocus aTableFocus(
+      auto upTableFocus=std::make_unique<deckkernel::camera::TablePlaneFocus>(
          tableFocus,manualFocusPosition,boPreserveExternalFocus);
-      aTableFocus.Begin(capture);
+      upTableFocus->Begin(capture);
 #if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
       CameraDashboard preview;
 #else
@@ -3704,9 +3732,21 @@ int CameraApplicationMain(int argc,char** argv) {
             // start; no implicit camera reopen or lost collection state.
             deckkernel::camera::CameraLaunchSettings aNewSettings;
             deckkernel::camera::CameraSettingsDialog aOptions;
-            if(aOptions.Show(aNewSettings))
+            if(aOptions.Show(aNewSettings)) {
                preview.SetSettingsNotice(
-                  "Options saved - restart to apply");
+                  "Options saved - capture changes on restart");
+               if(aNewSettings.boTableAutoFocus!=tableFocus &&
+                  !processor.CardLocked()) {
+                  tableFocus=aNewSettings.boTableAutoFocus;
+                  autoFocus=tableFocus;
+                  manualFocusPosition.reset();
+                  boPreserveExternalFocus=!tableFocus;
+                  upTableFocus=std::make_unique<
+                     deckkernel::camera::TablePlaneFocus>(
+                        tableFocus,std::nullopt,boPreserveExternalFocus);
+                  upTableFocus->Begin(capture);
+               }
+            }
          }
 #endif
          if(!capture.read(frame)||frame.empty()){
@@ -3726,7 +3766,7 @@ int CameraApplicationMain(int argc,char** argv) {
             else if(!processor.CardLocked()) {
                deckkernel::camera::Trace(
                   "[CAM-TABLE-FOCUS] recalibration requested by F");
-               aTableFocus.Begin(capture);
+               upTableFocus->Begin(capture);
             }
             else deckkernel::camera::Trace(
                "[CAM-TABLE-FOCUS] F ignored: card locked");
@@ -3734,7 +3774,7 @@ int CameraApplicationMain(int argc,char** argv) {
          FrameSignal const signal=MeasureFrame(frame);
          // Pre-focus independently of contours: a blurred table card must
          // never be required to pass layout recognition first.
-         bool const boFocusCalibrating=aTableFocus.Observe(capture,frame);
+         bool const boFocusCalibrating=upTableFocus->Observe(capture,frame);
          // One contour detection/rectification per frame. Use precisely the
          // same pixels for the side panel, the OCR and the artwork worker.
          CardDetectionDiagnostics detection;
@@ -3813,7 +3853,7 @@ int CameraApplicationMain(int argc,char** argv) {
          }
 #if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
          std::string qualityStatus=boFocusCalibrating?
-            aTableFocus.Status():processor.CardLocked()?
+            upTableFocus->Status():processor.CardLocked()?
             "Captured frame retained; no further card search until removal":
             (found?"Card boundary found; stabilizing capture":
                aTableFocus.Status()+" | Looking for a card boundary");
