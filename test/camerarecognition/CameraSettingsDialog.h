@@ -25,6 +25,7 @@
 #include <fstream>
 #include <regex>
 #include <iterator>
+#include <optional>
 
 namespace deckkernel::camera {
    /**
@@ -318,7 +319,7 @@ namespace deckkernel::camera {
       }
    public:
       CameraSettingsDialog() {
-         CameraSettingsFile::Load(m_aSettings);
+         (void)CameraSettingsFile::Load(m_aSettings);
       }
       /**
       \brief Display editable startup settings and wait for user confirmation.
