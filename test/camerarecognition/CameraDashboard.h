@@ -503,27 +503,37 @@ public:
       // Explicit scan decisions and printing navigation. These controls
       // act only when a captured card is locked; the main loop validates
       // whether a candidate is ready before accepting it.
-      if(m_bCardLocked) {
-         float const flActionsY=static_cast<float>(iHeight-77);
-         Fill(pCanvas,SkRect::MakeXYWH(
-            28.f,flActionsY,117.f,43.f),0xff218a78);
-         Fill(pCanvas,SkRect::MakeXYWH(
-            153.f,flActionsY,117.f,43.f),0xff85454a);
-         Text(pCanvas,40.f,flActionsY+27.f,"Accept",15.f,0xffffffff);
-         Text(pCanvas,166.f,flActionsY+27.f,"Discard",15.f,0xffffffff);
-         Fill(pCanvas,SkRect::MakeXYWH(
-            flRight+12.f,flActionsY,140.f,43.f),0xff244454);
-         Fill(pCanvas,SkRect::MakeXYWH(
-            flRight+160.f,flActionsY,140.f,43.f),0xff244454);
-         Fill(pCanvas,SkRect::MakeXYWH(
-            flRight+308.f,flActionsY,172.f,43.f),0xff218a78);
-         Text(pCanvas,flRight+27.f,flActionsY+27.f,
-            "Previous",14.f,0xfff5f7fa);
-         Text(pCanvas,flRight+182.f,flActionsY+27.f,
-            "Next",14.f,0xfff5f7fa);
-         Text(pCanvas,flRight+324.f,flActionsY+27.f,
-            "All printings",14.f,0xffffffff);
-      }
+      // Always draw actions. Availability changes their appearance,
+      // never their visibility or location on the dashboard.
+      float const flActionsY=static_cast<float>(iHeight-77);
+      bool const boCanBrowse=m_bCardLocked && m_uCandidateCount>1;
+      bool const boCanList=m_bCardLocked && m_uCandidateCount>0 &&
+         !m_strOracleId.empty();
+      Fill(pCanvas,SkRect::MakeXYWH(
+         28.f,flActionsY,117.f,43.f),
+         m_bCardLocked?0xff218a78:0xff344753);
+      Fill(pCanvas,SkRect::MakeXYWH(
+         153.f,flActionsY,117.f,43.f),
+         m_bCardLocked?0xff85454a:0xff344753);
+      Text(pCanvas,40.f,flActionsY+27.f,"Accept",15.f,
+         m_bCardLocked?0xffffffff:0xff95a8b3);
+      Text(pCanvas,166.f,flActionsY+27.f,"Discard",15.f,
+         m_bCardLocked?0xffffffff:0xff95a8b3);
+      Fill(pCanvas,SkRect::MakeXYWH(
+         flRight+12.f,flActionsY,140.f,43.f),
+         boCanBrowse?0xff244454:0xff344753);
+      Fill(pCanvas,SkRect::MakeXYWH(
+         flRight+160.f,flActionsY,140.f,43.f),
+         boCanBrowse?0xff244454:0xff344753);
+      Fill(pCanvas,SkRect::MakeXYWH(
+         flRight+308.f,flActionsY,172.f,43.f),
+         boCanList?0xff218a78:0xff344753);
+      Text(pCanvas,flRight+27.f,flActionsY+27.f,
+         "Previous",14.f,boCanBrowse?0xfff5f7fa:0xff95a8b3);
+      Text(pCanvas,flRight+182.f,flActionsY+27.f,
+         "Next",14.f,boCanBrowse?0xfff5f7fa:0xff95a8b3);
+      Text(pCanvas,flRight+324.f,flActionsY+27.f,
+         "All printings",14.f,boCanList?0xffffffff:0xff95a8b3);
       // Reuse the SDL background raster; actual card textures are rendered above it.
       SkPixmap aPixels;
       if(aSurface->peekPixels(&aPixels)) {
