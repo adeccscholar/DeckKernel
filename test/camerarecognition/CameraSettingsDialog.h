@@ -20,9 +20,14 @@
 #include <array>
 #include <algorithm>
 #include <stdexcept>
+#include <utility>
+#include <vector>
 
 namespace deckkernel::camera {
    enum class SearchRegion { Full, Top, Bottom, Left, Right };
+
+   /** \brief Enumerate named DirectShow video-input devices in native index order. */
+   [[nodiscard]] std::vector<std::pair<int,std::wstring>> EnumerateCameraDevices();
 
    struct CameraLaunchSettings {
       int iCamera{0};
@@ -71,6 +76,7 @@ namespace deckkernel::camera {
       HWND m_hWindow{};
       HWND m_hCamera{},m_hResolution{},m_hFps{},m_hRegion{};
       HWND m_hSave{},m_hVerbose{};
+      std::vector<int> m_vecCameraIndices;
       bool m_boAccepted{};
       bool m_boFinished{};
 
@@ -115,11 +121,28 @@ namespace deckkernel::camera {
       void CreateControls() {
          AddLabel(m_hWindow,L"Camera device (index)",22);
          m_hCamera=AddCombo(m_hWindow,Camera,18);
-         for(int iIndex=0;iIndex<16;++iIndex) {
-            std::wstring const strLabel=L"Camera "+std::to_wstring(iIndex);
+         int iSelected=-1;
+         auto const vecDevices=EnumerateCameraDevices();
+         for(auto const& [iIndex,strName]:vecDevices) {
+            m_vecCameraIndices.push_back(iIndex);
+            std::wstring const strLabel=std::to_wstring(iIndex)+
+               L": "+strName;
             AddItem(m_hCamera,strLabel.c_str());
+            if(iIndex==m_aSettings.iCamera)
+               iSelected=static_cast<int>(m_vecCameraIndices.size())-1;
          }
-         Select(m_hCamera,std::clamp(m_aSettings.iCamera,0,15));
+         // The camera name/index mapping follows the DirectShow backend.
+         // If enumeration fails, retain manual index selection.
+         if(m_vecCameraIndices.empty()) {
+            for(int iIndex=0;iIndex<16;++iIndex) {
+               m_vecCameraIndices.push_back(iIndex);
+               std::wstring const strLabel=
+                  L"Camera index "+std::to_wstring(iIndex);
+               AddItem(m_hCamera,strLabel.c_str());
+            }
+            iSelected=std::clamp(m_aSettings.iCamera,0,15);
+         }
+         Select(m_hCamera,std::max(0,iSelected));
          AddLabel(m_hWindow,L"Resolution",64);
          m_hResolution=AddCombo(m_hWindow,Resolution,60);
          for(wchar_t const* szResolution:{
@@ -175,7 +198,10 @@ namespace deckkernel::camera {
             GetModuleHandleW(nullptr),nullptr);
       }
       void Accept() {
-         m_aSettings.iCamera=std::max(0,Selection(m_hCamera));
+         int const iSelection=Selection(m_hCamera);
+         m_aSettings.iCamera=iSelection>=0 &&
+            iSelection<static_cast<int>(m_vecCameraIndices.size())?
+               m_vecCameraIndices[iSelection]:0;
          std::array<std::pair<int,int>,5> const arrRes{{
             {3840,2160},{2560,1440},{1920,1080},
             {1280,720},{640,480}
