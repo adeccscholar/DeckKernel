@@ -94,6 +94,7 @@ struct FoundCard {
    std::array<cv::Point,4> corners{};
    bool boRotate180{};
    bool boLayoutRecognized{};
+   bool boOrientationReliable{};
 };
 /**
 \brief Estimate actual card width from four raw camera-frame corners.
@@ -280,7 +281,8 @@ struct CardDetectionDiagnostics {
 
 std::optional<FoundCard> FindCard(cv::Mat const& frame,
    CardDetectionDiagnostics* diagnostics=nullptr,
-   bool boRequireStandardLayout=false,bool boHighDetail=false) {
+   bool boRequireStandardLayout=false,bool boHighDetail=false,
+   bool boInferOrientation=true) {
    if(diagnostics)*diagnostics={};
    if(frame.empty()||frame.cols<64||frame.rows<64)return std::nullopt;
    auto const aDetectionStarted=std::chrono::steady_clock::now();
@@ -307,6 +309,7 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
    std::vector<cv::Point> best;
    bool boBestRotate180{};
    bool boBestLayoutRecognized{};
+   bool boBestOrientationReliable{};
    unsigned uBestInnerPanels{};
    unsigned uBestRotatedPanels{};
    double flBestRatio{};
@@ -655,6 +658,7 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
          double flLayoutEvidence=0.0;
          bool boRotate180{};
          bool boLayoutRecognized{};
+         bool boOrientationReliable{};
          if(boRequireStandardLayout) {
             // PHASE 01: a physical card must contain the expected outer
             // standard-card structure. Reject artwork-only rectangles before
@@ -739,18 +743,24 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
             if(!aWholeFrame.boWholeCard && boNestedLayout)
                ++stats.acceptedNestedLayouts;
             ++stats.layoutChecked;
-            auto const aLayout=
-               deckkernel::camera::InspectStandardCard(aCandidateImage);
+            auto const aLayout=boInferOrientation?
+               deckkernel::camera::InspectStandardCard(aCandidateImage):
+               deckkernel::camera::StandardCardLayout{};
             boLayoutRecognized=aWholeFrame.boWholeCard;
             if(boLayoutRecognized)++stats.layoutRecognized;
             flLayoutEvidence=boLayoutRecognized?
                25.0*aWholeFrame.flScore:0.0;
             // A typed card-frame signal is more discriminating than two
             // isolated horizontal edges for determining uprightness.
-            if(aLayout.boRecognized)
+            if(boInferOrientation && aLayout.boRecognized) {
                boRotate180=aLayout.boRotate180;
-            else if(aWholeFrame.boOrientationReliable)
+               boOrientationReliable=true;
+            }
+            else if(boInferOrientation &&
+               aWholeFrame.boOrientationReliable) {
                boRotate180=aWholeFrame.boRotate180;
+               boOrientationReliable=true;
+            }
             // Do not turn uncertain 0/180 orientation into a 90-degree
             // landscape-to-portrait reinterpretation of the card's artwork.
             // If layout is inconclusive, retain the geometrically valid
@@ -770,6 +780,7 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
          flBestRatio=ratio;
          boBestRotate180=boRotate180;
          boBestLayoutRecognized=boLayoutRecognized;
+         boBestOrientationReliable=boOrientationReliable;
          best=std::move(corners);
       }
    };
@@ -877,7 +888,8 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
       iMicros,image.cols,image.rows,stats.contours,uBestInnerPanels,
       boBestLayoutRecognized,flBestRatio);
    return FoundCard{rectified,DHash(rectified),quad,
-      boBestRotate180,boBestLayoutRecognized};
+      boBestRotate180,boBestLayoutRecognized,
+      boBestOrientationReliable};
 }
 /** High-resolution OCR warp only for an accepted card presentation.
     Corners are the ordered source-frame positions found by FindCard.
@@ -2314,12 +2326,16 @@ public:
          else if(boRight)
             cv::rotate(aFrame,aAligned,cv::ROTATE_90_COUNTERCLOCKWISE);
          else aAligned=aFrame;
-         auto optCard=FindCard(aAligned,pDiagnostics,true);
+         bool const boAutomatic=m_eCardOrientation==
+            deckkernel::camera::CardOrientation::Automatic;
+         auto optCard=FindCard(
+            aAligned,pDiagnostics,true,false,boAutomatic);
          if(!optCard && ++m_uOuterContourMisses%6==0) {
             // A finer scan is justified only after multiple fast passes
             // failed. This recovers dark, thin or broken physical borders
             // without processing every 4K camera frame at maximum detail.
-            optCard=FindCard(aAligned,pDiagnostics,true,true);
+            optCard=FindCard(
+               aAligned,pDiagnostics,true,true,boAutomatic);
          }
          if(optCard) {
             m_uOuterContourMisses=0;
@@ -2327,12 +2343,12 @@ public:
             // Automatic preserves the previous layout-based 0/180 policy.
             bool const boReversed=m_eCardOrientation==
                deckkernel::camera::CardOrientation::Bottom;
-            if(m_eCardOrientation!=
-               deckkernel::camera::CardOrientation::Automatic) {
+            if(!boAutomatic) {
                if(optCard->boRotate180!=boReversed)
                   cv::rotate(optCard->rectified,optCard->rectified,
                      cv::ROTATE_180);
                optCard->boRotate180=boReversed;
+               optCard->boOrientationReliable=true;
             }
             if(boLeft || boRight) {
                for(cv::Point& aCorner:optCard->corners) {
@@ -2360,6 +2376,7 @@ public:
       aCard.rectified=RectifyForOcr(aFrame,aCard.corners,false);
       aCard.fingerprint=DHash(aCard.rectified);
       aCard.boRotate180=m_boCapturedRotate180;
+      aCard.boOrientationReliable=m_boKnownUpright;
       return aCard;
    }
 
@@ -2466,16 +2483,27 @@ public:
       if(found) {
          // Only a structurally resolved standard layout, or a user-provided
          // top-edge orientation, can eliminate the reverse image search.
-         m_boKnownUpright=found->boLayoutRecognized ||
-            m_eCardOrientation!=deckkernel::camera::CardOrientation::Automatic;
+         m_boKnownUpright=found->boOrientationReliable;
          m_boCapturedRotate180=found->boRotate180;
-         m_strOrientation=found->boLayoutRecognized?
-            std::format("Standard frame: auto {} deg",
-               m_boCapturedRotate180?180:0):
-            "Orientation uncertain - reference search will test both";
-         deckkernel::camera::Trace("[CAM-ORIENTATION] card={} layout={} initial={} deg",
-            event->number,found->boLayoutRecognized?"standard":"uncertain",
-            m_boCapturedRotate180?180:0);
+         bool const boAutomatic=m_eCardOrientation==
+            deckkernel::camera::CardOrientation::Automatic;
+         m_strOrientation=!boAutomatic?
+            std::format("Fixed card top: {}",
+               m_eCardOrientation==deckkernel::camera::CardOrientation::Top?
+                  "top":m_eCardOrientation==deckkernel::camera::CardOrientation::Bottom?
+                  "bottom":m_eCardOrientation==deckkernel::camera::CardOrientation::Left?
+                  "left":"right"):
+            m_boKnownUpright?
+               std::format("Automatic: reliable {} deg",
+                  m_boCapturedRotate180?180:0):
+               "Automatic: orientation uncertain (0/180 search)";
+         deckkernel::camera::Trace(
+            "[CAM-ORIENTATION] card={} mode={} layout={} reliable={} "
+            "initial180={}",event->number,
+            m_eCardOrientation==deckkernel::camera::CardOrientation::Automatic?
+               "automatic":"fixed",
+            found->boLayoutRecognized,m_boKnownUpright,
+            m_boCapturedRotate180);
       }
       if(!sourceFrame.empty() && found)
          event->card=RectifyForOcr(sourceFrame,found->corners,
