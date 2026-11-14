@@ -40,139 +40,137 @@ namespace deckkernel::camera {
       cv::Mat const& aCard) {
       if(aCard.empty() || aCard.cols<180 || aCard.rows<280 ||
          aCard.rows<=aCard.cols)return std::nullopt;
-      // A reliably conventional frame always takes the existing standard path.
-      if(InspectStandardCard(aCard).boRecognized)return std::nullopt;
+
       SplitWestLayout aResult;
+      // This rotation is local to the two printed faces. The physical
+      // portrait image is never rotated in the acquisition/tracker state.
       cv::rotate(aCard,aResult.aAligned,cv::ROTATE_90_CLOCKWISE);
       int const iWidth=aResult.aAligned.cols;
       int const iHeight=aResult.aAligned.rows;
       int const iMid=iWidth/2;
-      int const iGap=std::max(3,iWidth/140);
-      if(iMid<=iGap+80 || iHeight<180)return std::nullopt;
+      if(iMid<150 || iHeight<180)return std::nullopt;
+      int const iSideMargin=std::max(2,iWidth/150);
       aResult.arrFaces={{
-         cv::Rect(iGap,0,iMid-2*iGap,iHeight),
-         cv::Rect(iMid+iGap,0,iWidth-iMid-2*iGap,iHeight)
+         cv::Rect(iSideMargin,0,iMid-2*iSideMargin,iHeight),
+         cv::Rect(iMid+iSideMargin,0,
+            iWidth-iMid-2*iSideMargin,iHeight)
       }};
-      // The type bar is not necessarily split into two separate boxes.
-      // On several classic printings it spans the two face panels.
-      // Measure one shared horizontal separator on the rotated source.
-      cv::Mat aGray,aVertical;
+
+      // A horizontal artwork edge is not the type line. In the old code,
+      // the unrestricted maximum from 38..79% often selected the RULES
+      // box instead of the first art/type boundary, producing mixed text
+      // and artwork crops. Require two distinct bands independently in
+      // each face: title/art at 8..20%, artwork/type at 49..65%.
+      struct Bands {
+         int iTop{};
+         int iBottom{};
+         double flTop{};
+         double flBottom{};
+      };
+      std::array<Bands,2> arrBands{};
+      for(int iFace=0;iFace<2;++iFace) {
+         cv::Mat const aFace=aResult.aAligned(aResult.arrFaces[iFace]);
+         cv::Mat aSmall,aGray,aGradient;
+         cv::resize(aFace,aSmall,cv::Size(240,336),
+            0.0,0.0,cv::INTER_AREA);
+         if(aSmall.channels()==4)
+            cv::cvtColor(aSmall,aGray,cv::COLOR_BGRA2GRAY);
+         else if(aSmall.channels()==3)
+            cv::cvtColor(aSmall,aGray,cv::COLOR_BGR2GRAY);
+         else
+            aGray=aSmall;
+         cv::Sobel(aGray,aGradient,CV_16S,0,1,3);
+         auto const RowCoverage=[&](int iY)->double {
+            short const* pRow=aGradient.ptr<short>(iY);
+            unsigned uCount{};
+            for(int iX=24;iX<216;++iX)
+               uCount+=std::abs(static_cast<int>(pRow[iX]))>=85;
+            return static_cast<double>(uCount)/192.0;
+         };
+         auto const BestTop=[&]()->std::pair<int,double> {
+            int iBest=-1;
+            double flBest{};
+            for(int iY=27;iY<68;++iY) {
+               double const flCoverage=RowCoverage(iY);
+               if(flCoverage>flBest) {
+                  flBest=flCoverage;
+                  iBest=iY;
+               }
+            }
+            return {iBest,flBest};
+         };
+         auto const FirstBottom=[&]()->std::pair<int,double> {
+            // Use the earliest real separator rather than the strongest
+            // later text-bar edge. Reject isolated texture/noisy rows.
+            int iBest=-1;
+            double flBest{};
+            for(int iY=165;iY<220;++iY) {
+               double const flCoverage=RowCoverage(iY);
+               if(flCoverage>=0.70) {
+                  iBest=iY;
+                  flBest=flCoverage;
+                  break;
+               }
+            }
+            return {iBest,flBest};
+         };
+         auto const [iTop,flTop]=BestTop();
+         auto const [iBottom,flBottom]=FirstBottom();
+         if(iTop<0 || iBottom<0 || flTop<0.70 ||
+            flBottom<0.70 || iBottom-iTop<108 ||
+            iBottom-iTop>190)return std::nullopt;
+         arrBands[iFace]={iTop,iBottom,flTop,flBottom};
+      }
+
+      // Two different faces share the same physical layout. A row from
+      // one face's rules box cannot replace the other's artwork border.
+      if(std::abs(arrBands[0].iTop-arrBands[1].iTop)>15 ||
+         std::abs(arrBands[0].iBottom-arrBands[1].iBottom)>18)
+         return std::nullopt;
+
+      // A conventional single-face card may also have continuous
+      // horizontal title/type separators. Require independent evidence
+      // of the vertical division into two printed faces.
+      cv::Mat aGray,aGradient;
       if(aResult.aAligned.channels()==4)
          cv::cvtColor(aResult.aAligned,aGray,cv::COLOR_BGRA2GRAY);
       else if(aResult.aAligned.channels()==3)
          cv::cvtColor(aResult.aAligned,aGray,cv::COLOR_BGR2GRAY);
       else
          aGray=aResult.aAligned;
-      cv::Sobel(aGray,aVertical,CV_16S,0,1,3);
-      int iSharedType=-1;
-      double flBestSharedCoverage{};
-      for(int iY=iHeight*38/100;iY<iHeight*79/100;++iY) {
-         short const* pRow=aVertical.ptr<short>(iY);
-         unsigned uEdges{};
-         int const iXFirst=iWidth*10/100;
-         int const iXLast=iWidth*90/100;
-         for(int iX=iXFirst;iX<iXLast;++iX)
-            uEdges+=std::abs(static_cast<int>(pRow[iX]))>=85;
-         double const flCoverage=static_cast<double>(uEdges)/
-            std::max(1,iXLast-iXFirst);
-         if(flCoverage>flBestSharedCoverage) {
-            flBestSharedCoverage=flCoverage;
-            iSharedType=iY;
-         }
+      cv::resize(aGray,aGray,cv::Size(672,480),0,0,cv::INTER_AREA);
+      cv::Sobel(aGray,aGradient,CV_16S,1,0,3);
+      double flDivider{};
+      for(int iX=672*46/100;iX<672*54/100;++iX) {
+         unsigned uCount{};
+         for(int iY=480*15/100;iY<480*65/100;++iY)
+            uCount+=std::abs(
+               static_cast<int>(aGradient.at<short>(iY,iX)))>=85;
+         flDivider=std::max(flDivider,
+            static_cast<double>(uCount)/(480*50/100));
       }
-      bool const boSharedType=iSharedType>=0 &&
-         flBestSharedCoverage>=0.40;
-      // Prefer fully outlined, measured rectangles for traditional splits.
-      bool boMeasured=true;
-      for(int iFace=0;iFace<2;++iFace) {
-         cv::Mat const aFace=aResult.aAligned(aResult.arrFaces[iFace]);
-         FrameGeometry const aGeometry=DetectFrameGeometry(aFace);
-         if(!aGeometry.optTitle) {
-            boMeasured=false;
-            break;
-         }
-         cv::Rect const& aTitle=*aGeometry.optTitle;
-         int const iTop=aTitle.br().y+
-            std::max(2,aFace.rows/120);
-         int const iTypeY=aGeometry.optType?
-            aGeometry.optType->y:
-            boSharedType?iSharedType:-1;
-         int const iBottom=iTypeY-
-            std::max(2,aFace.rows/120);
-         if(iTypeY<0 || iBottom-iTop<aFace.rows/5 ||
-            iBottom-iTop>aFace.rows*65/100 ||
-            aTitle.width<aFace.cols*55/100) {
-            boMeasured=false;
-            break;
-         }
-         aResult.arrArtwork[iFace]=cv::Rect(
-            aResult.arrFaces[iFace].x+aTitle.x,iTop,
-            aTitle.width,iBottom-iTop);
-      }
-      if(boMeasured)return aResult;
+      if(flDivider<0.16)return std::nullopt;
 
-      // Some real split/room printings have unclosed or shared title/type
-      // frames. Validate two independent horizontal separators per face,
-      // plus matching type-band heights, before accepting a split. This
-      // fallback never rotates or changes the outer physical card.
-      struct FaceSeparators {
-         int iTitle{};
-         int iType{};
-         double flTitle{};
-         double flType{};
-      };
-      std::array<FaceSeparators,2> arrSeparators{};
-      for(int iFace=0;iFace<2;++iFace) {
-         cv::Mat const aFace=aResult.aAligned(aResult.arrFaces[iFace]);
-         cv::Mat aSample,aFaceGray,aGradient;
-         cv::resize(aFace,aSample,cv::Size(240,336),
-            0.0,0.0,cv::INTER_AREA);
-         if(aSample.channels()==4)
-            cv::cvtColor(aSample,aFaceGray,cv::COLOR_BGRA2GRAY);
-         else if(aSample.channels()==3)
-            cv::cvtColor(aSample,aFaceGray,cv::COLOR_BGR2GRAY);
-         else
-            aFaceGray=aSample;
-         cv::Sobel(aFaceGray,aGradient,CV_16S,0,1,3);
-         auto const FindSeparator=[&](int iFirst,int iLast) {
-            double flBest{};
-            int iBest=-1;
-            for(int iY=iFirst;iY<iLast;++iY) {
-               short const* pRow=aGradient.ptr<short>(iY);
-               unsigned uEdges{};
-               for(int iX=24;iX<216;++iX)
-                  uEdges+=std::abs(static_cast<int>(pRow[iX]))>=85;
-               double const flCoverage=static_cast<double>(uEdges)/192.0;
-               if(flCoverage>flBest) {
-                  flBest=flCoverage;
-                  iBest=iY;
-               }
-            }
-            return std::pair<int,double>{iBest,flBest};
-         };
-         auto const [iTitle,flTitle]=FindSeparator(14,68);
-         auto const [iType,flType]=FindSeparator(134,255);
-         if(iTitle<0 || iType<0 || flTitle<0.58 || flType<0.60)
-            return std::nullopt;
-         arrSeparators[iFace]=FaceSeparators{iTitle,iType,flTitle,flType};
-      }
-      // Shared or mirrored type bands should occur at essentially the same
-      // vertical position in the two independently framed halves.
-      if(std::abs(arrSeparators[0].iType-arrSeparators[1].iType)>29)
-         return std::nullopt;
       for(int iFace=0;iFace<2;++iFace) {
          cv::Rect const& aFace=aResult.arrFaces[iFace];
-         int const iTop=aFace.height*arrSeparators[iFace].iTitle/336+
-            std::max(2,aFace.height/50);
-         int const iBottom=aFace.height*arrSeparators[iFace].iType/336-
-            std::max(2,aFace.height/50);
-         if(iBottom-iTop<aFace.height/5 ||
-            iBottom-iTop>aFace.height*65/100)
-            return std::nullopt;
-         int const iMargin=std::max(2,aFace.width/10);
+         // Exclude the title/type bars and the outer/central card frame.
+         // Both coordinates come from detected separator rows, never
+         // arbitrary whole-card artwork percentages.
+         int const iTop=
+            arrBands[iFace].iTop*aFace.height/336+
+               std::max(3,aFace.height/100);
+         int const iBottom=
+            arrBands[iFace].iBottom*aFace.height/336-
+               std::max(3,aFace.height/100);
+         int const iMargin=std::max(3,aFace.width*7/100);
+         if(iBottom-iTop<aFace.height*30/100 ||
+            iBottom-iTop>aFace.height*57/100 ||
+            aFace.width<=2*iMargin)return std::nullopt;
          aResult.arrArtwork[iFace]=cv::Rect(
-            aFace.x+iMargin,iTop,aFace.width-2*iMargin,iBottom-iTop);
+            aFace.x+iMargin,iTop,
+            aFace.width-2*iMargin,iBottom-iTop);
       }
       return aResult;
    }
+
 }
