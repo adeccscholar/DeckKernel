@@ -98,6 +98,7 @@ namespace deckkernel::camera {
          cv::Mat aSplitSecond;
          std::string strSplitOcr;
          std::string strSplitTitle;
+         std::string strSplitSecondTitle;
          bool boNonstandard{};
       };
 
@@ -1380,6 +1381,7 @@ namespace deckkernel::camera {
          // OCR can include leading smart quotes, punctuation or whitespace.
          // Trim only outer garbage; preserve meaningful internal apostrophes.
          std::string strFaceTitle=aTask.strSplitTitle;
+         std::string strSecondTitle=aTask.strSplitSecondTitle;
          auto const IsNameCharacter=[](unsigned char uChar) {
             return std::isalnum(uChar)!=0;
          };
@@ -1391,12 +1393,21 @@ namespace deckkernel::camera {
             !IsNameCharacter(static_cast<unsigned char>(
                strFaceTitle.back())))
             strFaceTitle.pop_back();
+         while(!strSecondTitle.empty() &&
+            !IsNameCharacter(static_cast<unsigned char>(
+               strSecondTitle.front())))
+            strSecondTitle.erase(strSecondTitle.begin());
+         while(!strSecondTitle.empty() &&
+            !IsNameCharacter(static_cast<unsigned char>(
+               strSecondTitle.back())))
+            strSecondTitle.pop_back();
          std::optional<Ranked> optFirst=
             FindArtwork(pConnection,aTask.aSplitFirst);
          bool boArtworkVerified=optFirst &&
             AcceptArtwork(*optFirst);
          bool boUsedSecondAsPrimary{};
          if(!boArtworkVerified && strFaceTitle.empty() &&
+            strSecondTitle.empty() &&
             !aTask.aSplitSecond.empty() && !Cancelled(aTask.uEvent)) {
             // First illustration unavailable: try the second ONLY as a
             // recovery path. No second search is performed on the fast
@@ -1405,16 +1416,9 @@ namespace deckkernel::camera {
             boArtworkVerified=optFirst && AcceptArtwork(*optFirst);
             boUsedSecondAsPrimary=boArtworkVerified;
          }
-         if(!boArtworkVerified) {
-            // Even a confident OCR title may contain apostrophe or glyph
-            // errors, and cannot replace a visual match. Always attempt
-            // the complete split printing before exact title lookup.
-            CardImageMatchResult aVisual=MatchSplitFullCard(
-               pConnection,aTask);
-            if(!aVisual.vecCandidates.empty() ||
-               strFaceTitle.empty())return aVisual;
-            // No visual candidates: retain the existing title-only
-            // fallback, explicitly unverified.
+         if(!boArtworkVerified && strFaceTitle.empty() &&
+            strSecondTitle.empty()) {
+            return MatchSplitFullCard(pConnection,aTask);
          }
          if(Cancelled(aTask.uEvent))return aResult;
          // Read complete printings related to the detected FIRST face.
@@ -1423,7 +1427,7 @@ namespace deckkernel::camera {
          char const* arrParams[]{
             boArtworkVerified?optFirst->strAssetId.c_str():"0",
             boArtworkVerified?optFirst->strIllustrationId.c_str():"",
-            strFaceTitle.c_str()
+            strFaceTitle.c_str(),strSecondTitle.c_str()
          };
          result_ty aRows(PQexecParams(pConnection,
             "WITH first_face AS MATERIALIZED ("
@@ -1437,8 +1441,9 @@ namespace deckkernel::camera {
             " UNION "
             " SELECT DISTINCT cf.card_id "
             " FROM deckkernel_test.scryfall_card_faces cf "
-            " WHERE $1::bigint=0 AND $3::text<>'' "
-            " AND lower(cf.name)=lower($3::text)"
+            " WHERE $1::bigint=0 "
+            " AND (($3::text<>'' AND lower(cf.name)=lower($3::text)) "
+            " OR ($4::text<>'' AND lower(cf.name)=lower($4::text)))"
             ") "
             "SELECT DISTINCT ON (c.scryfall_id) "
             "a.id::text,c.scryfall_id,cf.face_id::text,"
@@ -1465,7 +1470,7 @@ namespace deckkernel::camera {
             "CASE v.variant WHEN 'normal' THEN 0 "
             "WHEN 'large' THEN 1 ELSE 2 END "
             "LIMIT 257",
-            3,nullptr,arrParams,nullptr,nullptr,0));
+            4,nullptr,arrParams,nullptr,nullptr,0));
          if(!aRows || PQresultStatus(aRows.get())!=PGRES_TUPLES_OK)
             throw std::runtime_error(std::format(
                "split printings query failed: {}",
@@ -1609,6 +1614,10 @@ namespace deckkernel::camera {
          aResult.boCandidatesTruncated=boTruncated;
          aResult.vecCandidates=std::move(vecCandidates);
          if(aResult.vecCandidates.empty()) {
+            // Only if a title and image search both fail, pay for the
+            // expensive bounded full-card reference comparison.
+            if(!boArtworkVerified)
+               return MatchSplitFullCard(pConnection,aTask);
             aResult.strStatus="SPLIT-WEST: artwork found, printing unresolved";
             return aResult;
          }
@@ -1889,6 +1898,7 @@ namespace deckkernel::camera {
          cv::Mat const& aSplitSecond={},
          std::string const& strSplitOcr={},
          std::string const& strSplitTitle={},
+         std::string const& strSplitSecondTitle={},
          bool boNonstandard=false) {
          {
             std::lock_guard const aLock(m_mutex);
@@ -1896,7 +1906,7 @@ namespace deckkernel::camera {
             m_pending=Task{uEvent,aCard.clone(),{},0,aEvidenceDirectory,
                {},{},boKnownUpright,aSplitFirst.clone(),
                aSplitSecond.clone(),strSplitOcr,strSplitTitle,
-               boNonstandard};
+               strSplitSecondTitle,boNonstandard};
          }
          m_signal.notify_one();
          deckkernel::camera::Trace(
