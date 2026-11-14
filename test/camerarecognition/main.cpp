@@ -4028,19 +4028,36 @@ int CameraApplicationMain(int argc,char** argv) {
             deckkernel::camera::Trace("[CAM-SCAN] next scan: pre-focus tabletop");
             upTableFocus->Begin(capture);
          }
-         // Visual diagnostic: mark the four corners that pass card geometry checks.
-         cv::Mat annotated=frame.clone();
+         // Render only a display-resolution copy. The immutable 4K source
+         // is still used for tracking, optical focus, capture and matching.
+         // Avoid a 4K clone + BGR/RGBA conversion + SDL upload every frame.
+         double const flDisplayScale=std::min(1.0,
+            1280.0/std::max(frame.cols,frame.rows));
+         cv::Mat annotated;
+         if(flDisplayScale<1.0)
+            cv::resize(frame,annotated,cv::Size(),flDisplayScale,
+               flDisplayScale,cv::INTER_AREA);
+         else
+            annotated=frame.clone();
+         auto const ScalePreview=[&](cv::Point const& aPoint) {
+            return cv::Point(cvRound(aPoint.x*flDisplayScale),
+               cvRound(aPoint.y*flDisplayScale));
+         };
          // Full capture area is searched regardless of card orientation.
          if(boFocusCalibrating) {
-            cv::rectangle(annotated,
-               deckkernel::camera::TablePlaneFocus::FocusRegion(frame.size()),
-               cv::Scalar(0,180,250),3,cv::LINE_AA);
+            cv::Rect const aFocusRegion=
+               deckkernel::camera::TablePlaneFocus::FocusRegion(frame.size());
+            cv::rectangle(annotated,cv::Rect(
+               ScalePreview(aFocusRegion.tl()),
+               ScalePreview(aFocusRegion.br())),
+               cv::Scalar(0,180,250),2,cv::LINE_AA);
             cv::putText(annotated,"TABLE FOCUS CALIBRATION",cv::Point(12,26),
                cv::FONT_HERSHEY_SIMPLEX,0.7,
                cv::Scalar(0,180,250),2,cv::LINE_AA);
          } else if(found && !processor.CardLocked()) {
             for(unsigned i=0;i<4;++i)
-               cv::line(annotated,found->corners[i],found->corners[(i+1)%4],
+               cv::line(annotated,ScalePreview(found->corners[i]),
+                  ScalePreview(found->corners[(i+1)%4]),
                   cv::Scalar(0,220,0),2,cv::LINE_AA);
             cv::putText(annotated,"CARD CONTOUR",cv::Point(12,26),
                cv::FONT_HERSHEY_SIMPLEX,0.7,cv::Scalar(0,220,0),2,cv::LINE_AA);
