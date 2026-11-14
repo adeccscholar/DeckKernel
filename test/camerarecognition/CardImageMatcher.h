@@ -100,6 +100,7 @@ namespace deckkernel::camera {
          std::string strSplitTitle;
          std::string strSplitSecondTitle;
          bool boNonstandard{};
+         bool boFullCardOnly{};
       };
 
       struct Ranked final {
@@ -1635,6 +1636,55 @@ namespace deckkernel::camera {
          return aResult;
       }
 
+      /**
+      \brief Last-resort comparison against complete printing images.
+      \details Runs only after OCR title lookup fails, or explicit deep search.
+      \param pConnection Dedicated matcher connection.
+      \param aTask Immutable frozen-card search task.
+      \returns Corroborated visual evidence or unresolved result.
+      \throw std::runtime_error On failed database operations.
+      */
+      CardImageMatchResult MatchFullCard(PGconn* pConnection,
+         Task const& aTask) {
+         cv::Mat aCard=aTask.aCard;
+         std::optional<CardImageMatchResult> optBest;
+         int iBestOrb = -1, iBestHash = 65;
+         aCard = aTask.aCard;
+         for(int iOrientation : {0, 180}) {
+            if(aTask.boKnownUpright && iOrientation==180)break;
+            if(Cancelled(aTask.uEvent))return CardImageMatchResult{aTask.uEvent};
+            Publish(CardImageMatchResult{
+               aTask.uEvent,std::format("ARTWORK NOT FOUND - full card {} deg",iOrientation),
+               "Searching complete-card index",false});
+            std::vector<Ranked> vecMatches =
+               FindPrintings(pConnection, aCard, std::nullopt);
+            if(Cancelled(aTask.uEvent))return CardImageMatchResult{aTask.uEvent};
+            RefinePrintingImages(pConnection,aCard,vecMatches);
+            CardImageMatchResult aResult = SummarizePrintings(
+               vecMatches, false, aTask.uEvent, iOrientation);
+            if(!vecMatches.empty() && AcceptFull(vecMatches.front()) &&
+               vecMatches.front().iArtworkMatches>=12 &&
+               (vecMatches.front().iOrb > iBestOrb ||
+               (vecMatches.front().iOrb == iBestOrb &&
+                  vecMatches.front().iHash < iBestHash))) {
+               iBestOrb = vecMatches.front().iOrb;
+               iBestHash = vecMatches.front().iHash;
+               optBest = std::move(aResult);
+            }
+            if(iOrientation == 0) {
+               cv::rotate(aCard, aCard, cv::ROTATE_180);
+            }
+         }
+         if(optBest) {
+            LoadReference(pConnection,*optBest);
+            return std::move(*optBest);
+         }
+         return CardImageMatchResult{aTask.uEvent,
+            deckkernel::camera::TraceEnabled()?DiagnoseIndex(pConnection):
+               "NO VISUAL MATCH - OCR fallback",
+            "Edition not verified"};
+      }
+
       CardImageMatchResult Match(PGconn* pConnection, Task const& aTask) {
          // PHASE 06: compare BOTH orientations and two card-art windows.
          // Never stop at the first barely acceptable visual match: it may
@@ -1742,48 +1792,10 @@ namespace deckkernel::camera {
          // of images is expensive and produces frame/text false positives.
          // Return quickly and let frozen-image OCR be the last resort.
          // --deep-search explicitly enables the slow legacy global fallback.
-         if(!aTask.boNonstandard &&
-            !deckkernel::camera::DeepSearchEnabled())
+         if(!deckkernel::camera::DeepSearchEnabled())
             return CardImageMatchResult{aTask.uEvent,
                "ARTWORK NOT FOUND - OCR fallback", "Visual evidence insufficient"};
-         // Both artwork orientations failed: the full card becomes the fallback.
-         cv::Mat aCard=aTask.aCard;
-         std::optional<CardImageMatchResult> optBest;
-         int iBestOrb = -1, iBestHash = 65;
-         aCard = aTask.aCard;
-         for(int iOrientation : {0, 180}) {
-            if(aTask.boKnownUpright && iOrientation==180)break;
-            if(Cancelled(aTask.uEvent))return CardImageMatchResult{aTask.uEvent};
-            Publish(CardImageMatchResult{
-               aTask.uEvent,std::format("ARTWORK NOT FOUND - full card {} deg",iOrientation),
-               "Searching complete-card index",false});
-            std::vector<Ranked> vecMatches =
-               FindPrintings(pConnection, aCard, std::nullopt);
-            if(Cancelled(aTask.uEvent))return CardImageMatchResult{aTask.uEvent};
-            RefinePrintingImages(pConnection,aCard,vecMatches);
-            CardImageMatchResult aResult = SummarizePrintings(
-               vecMatches, false, aTask.uEvent, iOrientation);
-            if(!vecMatches.empty() && AcceptFull(vecMatches.front()) &&
-               vecMatches.front().iArtworkMatches>=12 &&
-               (vecMatches.front().iOrb > iBestOrb ||
-               (vecMatches.front().iOrb == iBestOrb &&
-                  vecMatches.front().iHash < iBestHash))) {
-               iBestOrb = vecMatches.front().iOrb;
-               iBestHash = vecMatches.front().iHash;
-               optBest = std::move(aResult);
-            }
-            if(iOrientation == 0) {
-               cv::rotate(aCard, aCard, cv::ROTATE_180);
-            }
-         }
-         if(optBest) {
-            LoadReference(pConnection,*optBest);
-            return std::move(*optBest);
-         }
-         return CardImageMatchResult{aTask.uEvent,
-            deckkernel::camera::TraceEnabled()?DiagnoseIndex(pConnection):
-               "NO VISUAL MATCH - OCR fallback",
-            "Edition not verified"};
+         return MatchFullCard(pConnection,aTask);
       }
 
       /** \brief Publish a worker result without touching capture-thread state.
@@ -1837,6 +1849,8 @@ namespace deckkernel::camera {
                   Publish(AllPrintings(aConnection.get(),aTask));
                else if(aTask.optOcrName)
                   Publish(MatchOcrName(aConnection.get(),aTask));
+               else if(aTask.boFullCardOnly)
+                  Publish(MatchFullCard(aConnection.get(),aTask));
                else if(!aTask.aSplitFirst.empty())
                   Publish(MatchSplitWest(aConnection.get(),aTask));
                else
@@ -1930,6 +1944,31 @@ namespace deckkernel::camera {
             std::lock_guard const aLock(m_mutex);
             if(m_uActiveEvent.load(std::memory_order_relaxed)!=uEvent)return;
             m_pending=Task{uEvent,{},aCandidate,uSelectionSerial};
+         }
+         m_signal.notify_one();
+      }
+
+      /**
+      \brief Queue complete-card matching after the OCR title path has failed.
+      \details The worker compares the immutable captured card, without
+         resuming the camera or overwriting a confirmed printing.
+      \param aCard Frozen full-resolution card image.
+      \param uEvent Current physical presentation event.
+      \param boKnownUpright Whether only the given orientation is relevant.
+      \returns Nothing.
+      \throw std::bad_alloc If the queue or image copy cannot be allocated.
+      */
+      void SearchFullCard(cv::Mat const& aCard,unsigned uEvent,
+         bool boKnownUpright) {
+         {
+            std::lock_guard const aLock(m_mutex);
+            if(m_uActiveEvent.load(std::memory_order_rel)!=uEvent)return;
+            Task aTask;
+            aTask.uEvent=uEvent;
+            aTask.aCard=aCard.clone();
+            aTask.boKnownUpright=boKnownUpright;
+            aTask.boFullCardOnly=true;
+            m_pending=std::move(aTask);
          }
          m_signal.notify_one();
       }
