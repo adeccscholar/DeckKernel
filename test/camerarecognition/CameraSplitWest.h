@@ -68,6 +68,7 @@ namespace deckkernel::camera {
          double flBottom{};
       };
       std::array<Bands,2> arrBands{};
+      std::array<std::array<double,336>,2> arrCoverage{};
       for(int iFace=0;iFace<2;++iFace) {
          cv::Mat const aFace=aResult.aAligned(aResult.arrFaces[iFace]);
          cv::Mat aSmall,aGray,aGradient;
@@ -80,53 +81,50 @@ namespace deckkernel::camera {
          else
             aGray=aSmall;
          cv::Sobel(aGray,aGradient,CV_16S,0,1,3);
-         auto const RowCoverage=[&](int iY)->double {
+         for(int iY=0;iY<336;++iY) {
             short const* pRow=aGradient.ptr<short>(iY);
             unsigned uCount{};
             for(int iX=24;iX<216;++iX)
                uCount+=std::abs(static_cast<int>(pRow[iX]))>=85;
-            return static_cast<double>(uCount)/192.0;
-         };
-         auto const BestTop=[&]()->std::pair<int,double> {
-            int iBest=-1;
-            double flBest{};
-            for(int iY=27;iY<68;++iY) {
-               double const flCoverage=RowCoverage(iY);
-               if(flCoverage>flBest) {
-                  flBest=flCoverage;
-                  iBest=iY;
-               }
+            arrCoverage[iFace][iY]=
+               static_cast<double>(uCount)/192.0;
+         }
+         for(int iY=27;iY<68;++iY)
+            if(arrCoverage[iFace][iY]>arrBands[iFace].flTop) {
+               arrBands[iFace].iTop=iY;
+               arrBands[iFace].flTop=arrCoverage[iFace][iY];
             }
-            return {iBest,flBest};
-         };
-         auto const FirstBottom=[&]()->std::pair<int,double> {
-            // Use the earliest real separator rather than the strongest
-            // later text-bar edge. Reject isolated texture/noisy rows.
-            int iBest=-1;
-            double flBest{};
-            for(int iY=165;iY<220;++iY) {
-               double const flCoverage=RowCoverage(iY);
-               if(flCoverage>=0.70) {
-                  iBest=iY;
-                  flBest=flCoverage;
-                  break;
-               }
-            }
-            return {iBest,flBest};
-         };
-         auto const [iTop,flTop]=BestTop();
-         auto const [iBottom,flBottom]=FirstBottom();
-         if(iTop<0 || iBottom<0 || flTop<0.70 ||
-            flBottom<0.70 || iBottom-iTop<108 ||
-            iBottom-iTop>190)return std::nullopt;
-         arrBands[iFace]={iTop,iBottom,flTop,flBottom};
+         if(arrBands[iFace].flTop<0.70)return std::nullopt;
       }
-
-      // Two different faces share the same physical layout. A row from
-      // one face's rules box cannot replace the other's artwork border.
-      if(std::abs(arrBands[0].iTop-arrBands[1].iTop)>15 ||
-         std::abs(arrBands[0].iBottom-arrBands[1].iBottom)>18)
+      if(std::abs(arrBands[0].iTop-arrBands[1].iTop)>15)
          return std::nullopt;
+
+      // Room cards frequently have a dark/soft separator on one face.
+      // The former 0.70 requirement per half discarded whole cards while
+      // still accepting internal rectangles. Both faces MUST confirm the
+      // same boundary, but the stronger side can corroborate a weaker one.
+      int iSharedBottom=-1;
+      for(int iY=165;iY<220;++iY) {
+         std::array<double,2> arrStrength{};
+         for(int iFace=0;iFace<2;++iFace)
+            for(int iOffset=0;iOffset<3;++iOffset)
+               arrStrength[iFace]=std::max(arrStrength[iFace],
+                  arrCoverage[iFace][iY+iOffset]);
+         if(arrStrength[0]+arrStrength[1]>=1.10 &&
+            std::max(arrStrength[0],arrStrength[1])>=0.75 &&
+            std::min(arrStrength[0],arrStrength[1])>=0.30) {
+            iSharedBottom=iY+1;
+            arrBands[0].flBottom=arrStrength[0];
+            arrBands[1].flBottom=arrStrength[1];
+            break;
+         }
+      }
+      if(iSharedBottom<0)return std::nullopt;
+      for(int iFace=0;iFace<2;++iFace) {
+         arrBands[iFace].iBottom=iSharedBottom;
+         int const iHeight=iSharedBottom-arrBands[iFace].iTop;
+         if(iHeight<108 || iHeight>190)return std::nullopt;
+      }
 
       // A conventional single-face card may also have continuous
       // horizontal title/type separators. Require independent evidence
