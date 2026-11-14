@@ -3208,6 +3208,36 @@ void SelfTest() {
       aSplitStats.selectedInnerPanels<2)
       throw std::runtime_error(
          "nested split-face card failed outer-card acquisition");
+   // Classic split-west: each printed face is independently framed and
+   // points to the left of the original physical portrait card.
+   // The synthetic landscape view is rotated back into that orientation.
+   cv::Mat aTwoFaces(480,672,CV_8UC3,cv::Scalar(21,25,29));
+   for(int iFace=0;iFace<2;++iFace) {
+      int const iLeft=iFace*336+7;
+      cv::rectangle(aTwoFaces,cv::Rect(iLeft+4,9,318,462),
+         cv::Scalar(130,145,158),-1);
+      cv::rectangle(aTwoFaces,cv::Rect(iLeft+23,27,280,54),
+         cv::Scalar(52,58,64),-1);
+      cv::rectangle(aTwoFaces,cv::Rect(iLeft+24,91,278,195),
+         cv::Scalar(65+iFace*25,118,140),-1);
+      cv::rectangle(aTwoFaces,cv::Rect(iLeft+23,300,280,47),
+         cv::Scalar(51,57,63),-1);
+      cv::rectangle(aTwoFaces,cv::Rect(iLeft+25,358,276,92),
+         cv::Scalar(214,211,196),-1);
+   }
+   cv::Mat aSplitWestPortrait;
+   cv::rotate(aTwoFaces,aSplitWestPortrait,
+      cv::ROTATE_90_COUNTERCLOCKWISE);
+   auto const optSplitWest=
+      deckkernel::camera::DetectSplitWest(aSplitWestPortrait);
+   if(!optSplitWest ||
+      optSplitWest->arrArtwork[0].empty() ||
+      optSplitWest->arrArtwork[1].empty() ||
+      optSplitWest->arrArtwork[0].x>=
+         optSplitWest->arrArtwork[1].x)
+      throw std::runtime_error(
+         "split-west two-face segmentation or artwork crop regression");
+
    // DEMO TEST 01: the same physical card, actually upside-down, must
    // retain the outer contour and correct the 180-degree orientation.
    cv::Mat aReversedScene;
