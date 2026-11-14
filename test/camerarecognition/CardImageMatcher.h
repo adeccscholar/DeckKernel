@@ -560,7 +560,8 @@ namespace deckkernel::camera {
          bool boSplitOnly=false) const {
          std::string const strHash=DHashBits(aCard);
          std::string const strLimit=std::to_string(
-            optArtwork?std::max(1000u,m_uCandidates):m_uCandidates);
+            optArtwork?std::max(1000u,m_uCandidates):
+             boSplitOnly?std::max(600u,m_uCandidates):m_uCandidates);
          // PHASE 07: if the artwork is identified, begin with its printing
          // faces, NEVER with a global dHash sort over 2.7M indexed assets.
          // The existing FirstConnection model already indexes
@@ -1324,7 +1325,11 @@ namespace deckkernel::camera {
          std::vector<Ranked> vecCandidates=FindPrintings(
             pConnection,aTask.aCard,std::nullopt,true);
          if(Cancelled(aTask.uEvent))return aResult;
-         auto const uLimit=std::min<std::size_t>(24,vecCandidates.size());
+         deckkernel::camera::Trace(
+            "[CAM-SPLIT-REFERENCE] card={} shortlisted={} inspecting={}",
+            aTask.uEvent,vecCandidates.size(),
+            std::min<std::size_t>(48,vecCandidates.size()));
+         auto const uLimit=std::min<std::size_t>(48,vecCandidates.size());
          for(std::size_t uIndex=0;uIndex<uLimit;++uIndex) {
             Ranked& aCandidate=vecCandidates[uIndex];
             CardImageMatchResult aReference;
@@ -1382,8 +1387,16 @@ namespace deckkernel::camera {
             boArtworkVerified=optFirst && AcceptArtwork(*optFirst);
             boUsedSecondAsPrimary=boArtworkVerified;
          }
-         if(!boArtworkVerified && aTask.strSplitTitle.empty()) {
-            return MatchSplitFullCard(pConnection,aTask);
+         if(!boArtworkVerified) {
+            // Even a confident OCR title may contain apostrophe or glyph
+            // errors, and cannot replace a visual match. Always attempt
+            // the complete split printing before exact title lookup.
+            CardImageMatchResult aVisual=MatchSplitFullCard(
+               pConnection,aTask);
+            if(!aVisual.vecCandidates.empty() ||
+               aTask.strSplitTitle.empty())return aVisual;
+            // No visual candidates: retain the existing title-only
+            // fallback, explicitly unverified.
          }
          if(Cancelled(aTask.uEvent))return aResult;
          // Read complete printings related to the detected FIRST face.
