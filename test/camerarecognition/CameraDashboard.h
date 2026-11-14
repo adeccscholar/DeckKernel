@@ -77,7 +77,7 @@ class CameraDashboard {
    std::size_t m_uCandidateCount{};
    bool m_boPrintingConfirmed{};
    enum class ButtonId {
-      None,TableFocus,Options,Accept,Discard,Previous,Next,AllPrintings
+      None,TableFocus,Options,Accept,Discard,Missed,Previous,Next,AllPrintings
    };
    ButtonId m_eHovered{ButtonId::None};
    ButtonId m_ePressed{ButtonId::None};
@@ -99,8 +99,10 @@ class CameraDashboard {
       };
       if(Inside(iWidth-306.f,9.f,153.f,38.f))return ButtonId::TableFocus;
       if(Inside(iWidth-145.f,9.f,128.f,38.f))return ButtonId::Options;
-      if(!m_bCardLocked)return ButtonId::None;
       float const flY=static_cast<float>(iHeight-77);
+      if(!m_bCardLocked && Inside(278.f,flY,117.f,43.f))
+         return ButtonId::Missed;
+      if(!m_bCardLocked)return ButtonId::None;
       if(Inside(28.f,flY,117.f,43.f))return ButtonId::Accept;
       if(Inside(153.f,flY,117.f,43.f))return ButtonId::Discard;
       float const flPaneWidth=(iWidth-32.f-36.f-
@@ -138,6 +140,7 @@ class CameraDashboard {
          case ButtonId::Options:m_boOptions=true;break;
          case ButtonId::Accept:m_boConfirm=true;break;
          case ButtonId::Discard:m_boReject=true;break;
+         case ButtonId::Missed:m_boSaveUndetected=true;break;
          case ButtonId::Previous:--m_iNavigation;break;
          case ButtonId::Next:++m_iNavigation;break;
          case ButtonId::AllPrintings:m_boAllPrintings=true;break;
@@ -278,8 +281,6 @@ public:
                aEvent.key.repeat==0)m_boReject=true;
             if(aEvent.key.keysym.sym==SDLK_r)m_bFlip=!m_bFlip;
             if(aEvent.key.keysym.sym==SDLK_f)m_boFocusReset=true;
-            if(aEvent.key.keysym.sym==SDLK_d &&
-               aEvent.key.repeat==0)m_boSaveUndetected=true;
             if(aEvent.key.keysym.sym==SDLK_g &&
                aEvent.key.repeat==0)m_boFocusToggle=true;
             if(aEvent.key.keysym.sym==SDLK_o &&
@@ -383,10 +384,11 @@ public:
       return boToggle;
    }
    /**
-   \brief Consume a manual diagnostic snapshot request, even without a card.
-   \details Pressing D saves the original full-resolution camera frame and
-      classification statistics; no physical-card event is required.
-   \returns True once per D key press.
+   \brief Consume an explicitly clicked Missed diagnostic action.
+   \details Missed saves exactly one full-resolution camera frame and
+      associated classifier evidence without a card event. The control is
+      available only when no card is locked; no intermediate frames are saved.
+   \returns True once per completed Missed click.
    \throw None.
    */
    [[nodiscard]] bool ConsumeUndetectedSnapshot() noexcept {
@@ -599,7 +601,7 @@ public:
       }
       else {
          Text(pCanvas,30.f,flPaneTop+flPaneHeight-18.f,
-            "Not detected? Press D to save diagnostic images",
+            "Not detected? Click Missed to save one diagnostic frame",
             12.f,0xff9dddb9);
       }
       Text(pCanvas,flRight+14.f,flPaneTop+flPaneHeight-18.f,
@@ -677,6 +679,9 @@ public:
       DrawButton(pCanvas,SkRect::MakeXYWH(
          153.f,flActionsY,117.f,43.f),
          "Discard",0xff85454a,m_bCardLocked,ButtonId::Discard,15.f);
+      DrawButton(pCanvas,SkRect::MakeXYWH(
+         278.f,flActionsY,117.f,43.f),
+         "Missed",0xffa66a24,!m_bCardLocked,ButtonId::Missed,15.f);
       float const flNavWidth=std::min(140.f,(flPaneWidth-44.f)/3.f);
       float const flNavX=flRight+12.f;
       DrawButton(pCanvas,SkRect::MakeXYWH(
