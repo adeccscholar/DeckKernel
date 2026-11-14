@@ -1238,13 +1238,23 @@ namespace deckkernel::camera {
          CardImageMatchResult aResult{aTask.uEvent};
          aResult.boSplitWest=true;
          aResult.strStatus="SPLIT-WEST: searching first face";
-         std::optional<Ranked> const optFirst=
+         std::optional<Ranked> optFirst=
             FindArtwork(pConnection,aTask.aSplitFirst);
-         bool const boArtworkVerified=optFirst &&
+         bool boArtworkVerified=optFirst &&
             AcceptArtwork(*optFirst);
+         bool boUsedSecondAsPrimary{};
+         if(!boArtworkVerified && aTask.strSplitTitle.empty() &&
+            !aTask.aSplitSecond.empty() && !Cancelled(aTask.uEvent)) {
+            // First illustration unavailable: try the second ONLY as a
+            // recovery path. No second search is performed on the fast
+            // route where the first face and set have already matched.
+            optFirst=FindArtwork(pConnection,aTask.aSplitSecond);
+            boArtworkVerified=optFirst && AcceptArtwork(*optFirst);
+            boUsedSecondAsPrimary=boArtworkVerified;
+         }
          if(!boArtworkVerified && aTask.strSplitTitle.empty()) {
             aResult.strStatus=
-               "SPLIT-WEST: first face unresolved - recapture or discard";
+               "SPLIT-WEST: neither face artwork established";
             return aResult;
          }
          if(Cancelled(aTask.uEvent))return aResult;
@@ -1388,7 +1398,8 @@ namespace deckkernel::camera {
                "[CAM-SPLIT] first face and set found; skipping second "
                "global artwork search; printings={}",vecCandidates.size());
          }
-         else if(!aTask.aSplitSecond.empty() && !boTruncated &&
+         else if(!boUsedSecondAsPrimary &&
+            !aTask.aSplitSecond.empty() && !boTruncated &&
             !vecCandidates.empty()) {
             // Missing set: the other illustration is useful corroboration.
             // It is never searched when the set already matches.
