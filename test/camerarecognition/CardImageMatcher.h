@@ -1373,12 +1373,26 @@ namespace deckkernel::camera {
          CardImageMatchResult aResult{aTask.uEvent};
          aResult.boSplitWest=true;
          aResult.strStatus="SPLIT-WEST: searching first face";
+         // OCR can include leading smart quotes, punctuation or whitespace.
+         // Trim only outer garbage; preserve meaningful internal apostrophes.
+         std::string strFaceTitle=aTask.strSplitTitle;
+         auto const IsNameCharacter=[](unsigned char uChar) {
+            return std::isalnum(uChar)!=0;
+         };
+         while(!strFaceTitle.empty() &&
+            !IsNameCharacter(static_cast<unsigned char>(
+               strFaceTitle.front())))
+            strFaceTitle.erase(strFaceTitle.begin());
+         while(!strFaceTitle.empty() &&
+            !IsNameCharacter(static_cast<unsigned char>(
+               strFaceTitle.back())))
+            strFaceTitle.pop_back();
          std::optional<Ranked> optFirst=
             FindArtwork(pConnection,aTask.aSplitFirst);
          bool boArtworkVerified=optFirst &&
             AcceptArtwork(*optFirst);
          bool boUsedSecondAsPrimary{};
-         if(!boArtworkVerified && aTask.strSplitTitle.empty() &&
+         if(!boArtworkVerified && strFaceTitle.empty() &&
             !aTask.aSplitSecond.empty() && !Cancelled(aTask.uEvent)) {
             // First illustration unavailable: try the second ONLY as a
             // recovery path. No second search is performed on the fast
@@ -1394,7 +1408,7 @@ namespace deckkernel::camera {
             CardImageMatchResult aVisual=MatchSplitFullCard(
                pConnection,aTask);
             if(!aVisual.vecCandidates.empty() ||
-               aTask.strSplitTitle.empty())return aVisual;
+               strFaceTitle.empty())return aVisual;
             // No visual candidates: retain the existing title-only
             // fallback, explicitly unverified.
          }
@@ -1405,7 +1419,7 @@ namespace deckkernel::camera {
          char const* arrParams[]{
             boArtworkVerified?optFirst->strAssetId.c_str():"0",
             boArtworkVerified?optFirst->strIllustrationId.c_str():"",
-            aTask.strSplitTitle.c_str()
+            strFaceTitle.c_str()
          };
          result_ty aRows(PQexecParams(pConnection,
             "WITH first_face AS MATERIALIZED ("
@@ -1586,7 +1600,7 @@ namespace deckkernel::camera {
          }
          aResult.boArtworkRecognized=boArtworkVerified;
          aResult.boOcrNameRecognized=!boArtworkVerified &&
-            !aTask.strSplitTitle.empty();
+            !strFaceTitle.empty();
          aResult.boComplete=true;
          aResult.boCandidatesTruncated=boTruncated;
          aResult.vecCandidates=std::move(vecCandidates);
