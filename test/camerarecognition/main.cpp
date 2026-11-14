@@ -1430,6 +1430,9 @@ class Processor {
    bool m_boNameOcrStarted{};
    bool m_boOcrNameRecognized{};
    unsigned m_uSelectionSerial{};
+   unsigned m_uAutomaticPrintingsSerial{};
+   bool m_boAutomaticPrintingsRequested{};
+   bool m_boCurrentStandard{};
    deckkernel::camera::RecognitionPhase m_ePhase{
       deckkernel::camera::RecognitionPhase::Searching};
    bool m_save{};
@@ -1645,6 +1648,9 @@ public:
       m_boNameOcrStarted=false;
       m_boOcrNameRecognized=false;
       m_uSelectionSerial=0;m_uFocusFrames=0;
+      m_uAutomaticPrintingsSerial=0;
+      m_boAutomaticPrintingsRequested=false;
+      m_boCurrentStandard=false;
       m_flCaptureScore=-1.0;m_flCaptureSharpness=0.0;
       m_bestNameConfidence=0;m_bestTypeConfidence=0;
       m_bestRulesConfidence=0;
@@ -1829,7 +1835,8 @@ public:
    */
    void StartPrintingOcr() {
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
-      if(m_strPrintingOcrData.empty() || m_identity.Count()<2 ||
+      if(!m_boCurrentStandard || m_strPrintingOcrData.empty() ||
+         m_identity.Count()<1 ||
          m_capture.Bottom().empty() || m_printingOcr.valid())return;
       // PHASE 08: use the reference-confirmed orientation of the frozen
       // display copy. CardCapture itself remains immutable throughout.
@@ -1947,9 +1954,24 @@ public:
          m_referenceCard.release();
          m_strReferenceLabel="Loading OCR-supported DB printing...";
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
-         if(m_artwork && m_identity.Selected())
+         bool const boBackgroundPrintings=
+            m_boCurrentStandard && boReadLanguage &&
+            !m_boAutomaticPrintingsRequested &&
+            !m_identity.OracleId().empty();
+         if(m_artwork && m_identity.Selected() &&
+            !boBackgroundPrintings)
             m_artwork->Select(*m_identity.Selected(),*m_ocrCard,
                ++m_uSelectionSerial);
+         if(boBackgroundPrintings && m_artwork) {
+            m_boAutomaticPrintingsRequested=true;
+            m_uAutomaticPrintingsSerial=++m_uSelectionSerial;
+            m_artwork->RequestAllPrintings(
+               m_identity.OracleId(),*m_ocrCard,
+               m_uAutomaticPrintingsSerial);
+            deckkernel::camera::Trace(
+               "[CAM-PRINTINGS-BG] card={} oracle={} requested",
+               *m_ocrCard,m_identity.OracleId());
+         }
 #endif
          m_strStatus=std::format(
             "PRINTING OCR uniquely selects {}/{} - Accept to collect",
@@ -1978,6 +2000,21 @@ public:
          result->uSelectionSerial!=m_uSelectionSerial)return;
       if(result->boAllPrintings) {
          if(result->uSelectionSerial!=m_uSelectionSerial)return;
+         if(m_boAutomaticPrintingsRequested &&
+            result->uSelectionSerial==m_uAutomaticPrintingsSerial) {
+            m_boAutomaticPrintingsRequested=false;
+            m_identity.ExtendCandidates(
+               std::move(result->vecCandidates),
+               result->boCandidatesTruncated);
+            deckkernel::camera::Trace(
+               "[CAM-PRINTINGS-BG] card={} count={} selected={} confirmed={}",
+               *m_ocrCard,m_identity.Count(),m_identity.Index(),
+               m_identity.Confirmed());
+            if(!m_identity.Confirmed() && m_identity.Selected())
+               m_artwork->Select(*m_identity.Selected(),
+                  *m_ocrCard,++m_uSelectionSerial);
+            return;
+         }
          if(result->vecCandidates.empty()) {
             m_strStatus="ALL PRINTINGS - no stored images for this Oracle ID";
             return;
@@ -2045,7 +2082,8 @@ public:
          SetPhase(m_identity.Count()>1 || m_identity.Truncated()?
             deckkernel::camera::RecognitionPhase::Selecting:
             deckkernel::camera::RecognitionPhase::Printing);
-         // PHASE 08 occurs only when complete-card comparison left alternatives.
+         // A standard card reads the printed set/language once, even when
+         // artwork yielded only one provisional printing candidate.
          StartPrintingOcr();
       }
       else if(!result->boComplete)
@@ -2253,6 +2291,7 @@ public:
          auto optSplit=boStandard?
             std::optional<deckkernel::camera::SplitWestLayout>{}:
             deckkernel::camera::DetectSplitWest(m_capture.Image());
+         m_boCurrentStandard=boStandard;
          deckkernel::camera::Trace("[CAM-LAYOUT] card={} standard={} split={}",
             *m_ocrCard,boStandard,optSplit.has_value());
          if(optSplit) {
@@ -2515,6 +2554,9 @@ public:
          m_boUserNavigated=false;
          m_boArtworkRecognized=false;
          m_uSelectionSerial=0;
+         m_uAutomaticPrintingsSerial=0;
+         m_boAutomaticPrintingsRequested=false;
+         m_boCurrentStandard=false;
          m_tracker.Reset();
          m_boCapturedRotate180=false;
          m_boKnownUpright=false;
@@ -2597,6 +2639,9 @@ public:
       m_boNameOcrStarted=false;
       m_boOcrNameRecognized=false;
       m_uSelectionSerial=0;
+      m_uAutomaticPrintingsSerial=0;
+      m_boAutomaticPrintingsRequested=false;
+      m_boCurrentStandard=false;
       SetPhase(deckkernel::camera::RecognitionPhase::Tracking);
       if(m_boTableFocus)
          SetPhase(deckkernel::camera::RecognitionPhase::Focusing);
