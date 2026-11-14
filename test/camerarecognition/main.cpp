@@ -3360,6 +3360,26 @@ void SelfTest() {
       cv::NORM_L2)/aStandard->rectified.total()>8.0)
       throw std::runtime_error(
          "rotation correction does not preserve the standard card layout");
+   // Controlled entry: fixed Top/Bottom never consults the card's title
+   // or artwork for rotation. The declared bottom-up orientation is the
+   // only source for the physical 180-degree normalization.
+   auto const optFixedTop=FindCard(
+      aFramedScene,nullptr,true,false,false);
+   auto const optFixedBottom=FindCard(
+      aReversedScene,nullptr,true,false,false);
+   if(!optFixedTop || !optFixedBottom ||
+      optFixedTop->boRotate180 || optFixedBottom->boRotate180 ||
+      optFixedTop->boOrientationReliable ||
+      optFixedBottom->boOrientationReliable)
+      throw std::runtime_error(
+         "fixed orientation incorrectly used automatic layout rotation");
+   cv::Mat aFixedBottom=optFixedBottom->rectified.clone();
+   cv::rotate(aFixedBottom,aFixedBottom,cv::ROTATE_180);
+   if(cv::norm(optFixedTop->rectified,aFixedBottom,
+      cv::NORM_L2)/optFixedTop->rectified.total()>8.0)
+      throw std::runtime_error(
+         "fixed Top/Bottom does not preserve the same normalized card");
+
 
    // Projective skew: unequal top/bottom widths and oblique vertical edges.
    // Four real corners, not a rotated bounding rectangle, must be restored.
