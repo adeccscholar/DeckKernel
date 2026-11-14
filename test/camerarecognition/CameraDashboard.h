@@ -69,6 +69,7 @@ class CameraDashboard {
    std::string m_strSettingsNotice;
    std::vector<deckkernel::camera::CollectedCard> m_vecCollected;
    bool m_boFocusReset{};
+   bool m_boSaveUndetected{};
    bool m_boFocusToggle{};
    bool m_boTableAutoFocus{};
    std::string m_strPhase{"01 SEARCHING"};
@@ -277,6 +278,8 @@ public:
                aEvent.key.repeat==0)m_boReject=true;
             if(aEvent.key.keysym.sym==SDLK_r)m_bFlip=!m_bFlip;
             if(aEvent.key.keysym.sym==SDLK_f)m_boFocusReset=true;
+            if(aEvent.key.keysym.sym==SDLK_d &&
+               aEvent.key.repeat==0)m_boSaveUndetected=true;
             if(aEvent.key.keysym.sym==SDLK_g &&
                aEvent.key.repeat==0)m_boFocusToggle=true;
             if(aEvent.key.keysym.sym==SDLK_o &&
@@ -378,6 +381,18 @@ public:
       bool const boToggle=m_boFocusToggle;
       m_boFocusToggle=false;
       return boToggle;
+   }
+   /**
+   \brief Consume a manual diagnostic snapshot request, even without a card.
+   \details Pressing D saves the original full-resolution camera frame and
+      classification statistics; no physical-card event is required.
+   \returns True once per D key press.
+   \throw None.
+   */
+   [[nodiscard]] bool ConsumeUndetectedSnapshot() noexcept {
+      bool const boRequested=m_boSaveUndetected;
+      m_boSaveUndetected=false;
+      return boRequested;
    }
    [[nodiscard]] bool ConsumeFocusReset() noexcept {
       bool const boReset=m_boFocusReset;
