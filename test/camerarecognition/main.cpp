@@ -3512,7 +3512,19 @@ FrameSignal MeasureFrame(cv::Mat const& frame) {
    if(frame.channels()>=3)
       signal.brightness=(mean[0]+mean[1]+mean[2])/3.0;
    else signal.brightness=mean[0];
-   signal.nonblack=signal.maximum>5.0;
+   // A single saturated LED reflection, hot pixel, or white spot is
+   // not evidence that the camera is delivering a usable frame.
+   cv::Mat aGray,aLit;
+   if(thumbnail.channels()==4)
+      cv::cvtColor(thumbnail,aGray,cv::COLOR_BGRA2GRAY);
+   else if(thumbnail.channels()==3)
+      cv::cvtColor(thumbnail,aGray,cv::COLOR_BGR2GRAY);
+   else
+      aGray=thumbnail;
+   cv::threshold(aGray,aLit,12.0,255.0,cv::THRESH_BINARY);
+   unsigned const uLit=static_cast<unsigned>(cv::countNonZero(aLit));
+   unsigned const uPixels=static_cast<unsigned>(aLit.total());
+   signal.nonblack=uPixels>0 && uLit>=uPixels/50;
    return signal;
 }
 
