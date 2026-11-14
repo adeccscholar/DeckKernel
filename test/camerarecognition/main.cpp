@@ -1503,6 +1503,14 @@ public:
    void SetCardOrientation(
       deckkernel::camera::CardOrientation eOrientation) noexcept {
       m_eCardOrientation=eOrientation;
+      // An explicit physical top-edge is authoritative for this session.
+      // It is never reinterpreted by a manual/automatic OCR rotation.
+      if(eOrientation!=deckkernel::camera::CardOrientation::Automatic)
+         m_manualOrientation=false;
+   }
+   [[nodiscard]] bool AutomaticOrientation() const noexcept {
+      return m_eCardOrientation==
+         deckkernel::camera::CardOrientation::Automatic;
    }
    [[nodiscard]] unsigned RemovedEvents() const noexcept {return m_removedEvents;}
    [[nodiscard]] unsigned StableFrames() const noexcept{return m_detector.StableCount();}
@@ -2088,9 +2096,9 @@ public:
    }
 
    void ReevaluateOcrAfterRotation(bool manualFlip) noexcept {
-      // PHASE 05 invariant: R must never change a frozen card or the active
-      // physical object's captured evidence. The matcher tests both rotations.
-      if(m_cardLocked)return;
+      // A fixed physical card-top direction must not be overridden by R.
+      // Manual rotation belongs exclusively to automatic orientation mode.
+      if(m_cardLocked || !AutomaticOrientation())return;
       m_manualOrientation=manualFlip;
       // Changing the orientation must be allowed to rerun OCR even when a
       // previous, wrong-side-up title passed the provisional confidence test.
@@ -2554,8 +2562,19 @@ public:
             m_ocrAttempts,!m_manualOrientation && !m_boKnownUpright);
          m_autoFlipped=m_ocr->LastAutoFlipped();
          if(m_autoFlipped)m_boKnownUpright=false;
-         m_strOrientation=m_manualOrientation?"Manual orientation":
-            (m_autoFlipped?"Auto 180 deg (both tested)":"Auto 0 deg (both tested)");
+         if(AutomaticOrientation()) {
+            if(m_manualOrientation)
+               m_strOrientation="Automatic / manual 180 deg";
+            else if(m_autoFlipped)
+               m_strOrientation="Automatic / OCR 180 deg";
+            else if(m_boKnownUpright)
+               m_strOrientation=std::format(
+                  "Automatic / structural {} deg",
+                  m_boCapturedRotate180?180:0);
+            else
+               m_strOrientation="Automatic / orientation uncertain";
+         }
+         // Fixed modes retain their physical card-top label.
          MergeOcr();
       }
 #endif
@@ -4153,11 +4172,13 @@ int CameraApplicationMain(int argc,char** argv) {
          }
 #endif
          bool const flip=preview.Flip180();
-         if(flip!=appliedFlip) {
-            processor.ReevaluateOcrAfterRotation(flip);
-            appliedFlip=flip;
+         if(processor.AutomaticOrientation()) {
+            if(flip!=appliedFlip) {
+               processor.ReevaluateOcrAfterRotation(flip);
+               appliedFlip=flip;
+            }
+            if(found&&flip)FlipRectifiedCard(*found);
          }
-         if(found&&flip)FlipRectifiedCard(*found);
          if(signal.nonblack) {
             blackFrames=0;
             if(!boFocusCalibrating && !boRecognitionPaused)
