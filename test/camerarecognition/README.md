@@ -985,9 +985,11 @@ The archive cannot establish *why* those six were missed: unrecognized
 cards do not receive event numbers, and previous code did not save a raw
 frame for a failed acquisition.
 
-To gather that previously missing evidence, press **D** with an unrecognized
-card visible under the camera. This works even if there is no active card,
-no contour, and no OCR or artwork event. The application saves in
+To gather that previously missing evidence, click the **Missed**
+button with an unrecognized card visible under the camera. This control is
+available while no card is locked, even if no contour or OCR/artwork event
+exists. Each click saves exactly one snapshot; intermediate frames are never
+automatically retained. The application saves in
 `.cache/camera-recognition/`:
 
 - `undetected-<timestamp>-raw.png` — original full-resolution camera frame
@@ -998,11 +1000,10 @@ no contour, and no OCR or artwork event. The application saves in
 
 This explicit diagnostic snapshot is independent of the `saveEvents`
 setting and does not change physical tracking, matching, or the selected
-printing. The scanning dashboard shows the D shortcut while no card is
-locked, and writes a confirmation after the files have been saved.
+printing. The scanning dashboard shows the Missed button alongside Accept and
+Discard and writes a confirmation after the files have been saved.
 Do not use snapshots of already captured events as evidence of a missed
-outer card. Press D separately for each missed physical card before
-moving it away.
+outer card. Click Missed once for each missed physical card before moving it away.
 
 In the supplied log the main camera negotiated 2592x1944 @30 fps (not the
 2560x1440 requested in settings). Measured median `[CAM-ART-QUERY]` SQL
