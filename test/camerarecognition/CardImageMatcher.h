@@ -99,7 +99,6 @@ namespace deckkernel::camera {
          std::string strSplitOcr;
          std::string strSplitTitle;
          std::string strSplitSecondTitle;
-         bool boNonstandard{};
          bool boFullCardOnly{};
       };
 
@@ -1912,15 +1911,14 @@ namespace deckkernel::camera {
          cv::Mat const& aSplitSecond={},
          std::string const& strSplitOcr={},
          std::string const& strSplitTitle={},
-         std::string const& strSplitSecondTitle={},
-         bool boNonstandard=false) {
+         std::string const& strSplitSecondTitle={}) {
          {
             std::lock_guard const aLock(m_mutex);
             m_uActiveEvent.store(uEvent,std::memory_order_relaxed);
             m_pending=Task{uEvent,aCard.clone(),{},0,aEvidenceDirectory,
                {},{},boKnownUpright,aSplitFirst.clone(),
                aSplitSecond.clone(),strSplitOcr,strSplitTitle,
-               strSplitSecondTitle,boNonstandard};
+               strSplitSecondTitle};
          }
          m_signal.notify_one();
          deckkernel::camera::Trace(
