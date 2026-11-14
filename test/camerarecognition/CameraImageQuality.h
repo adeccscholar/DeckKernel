@@ -35,9 +35,13 @@ struct Metrics {
    [[nodiscard]] bool UsableForMatching() const noexcept {
       // Conservative, provisional starting values. Use actual camera source
       // pixels instead of the upscaled rectangle dimensions.
+      // Brightness alone is not a quality failure: black-bordered
+      // or deliberately dark printed cards can be sharply focused.
+      // Reject truly overexposed/unfocused frames by measurable losses
+      // of detail, not average luminance of the illustration.
       return sourceWidth>=320 && sourceHeight>=440 &&
-         brightness>=55.0 && clippedPercent<12.0 &&
-         sharpness>=12.0 && detailSharpness>=15.0;
+         clippedPercent<18.0 && sharpness>=10.0 &&
+         detailSharpness>=12.0;
    }
    [[nodiscard]] bool GlareRisk() const noexcept {
       return clippedPercent>=4.0;
