@@ -702,47 +702,39 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
             auto const aWholeFrame=
                deckkernel::camera::InspectWholeCardFrame(
                   aCandidateImage,boInferOrientation,boFixedBottomUp);
-            if(!aWholeFrame.boWholeCard && !boNestedLayout) {
-               // PHASE 01 fallback: when the low-resolution interior is
-               // washed out, accept a physical outline ONLY if its four
-               // straight sides are independently supported by the
-               // observed edge map. This is not a general layout bypass:
-               // it excludes unsupported minAreaRect boxes and art-only
-               // contours without external border evidence.
+            if(!aWholeFrame.boWholeCard) {
+               // A pair of internal rectangles is not sufficient to prove
+               // that the enclosing candidate is the physical card.
+               // Artwork frames can contain multiple nested shapes too.
+               // Require independent support at the candidate PERIMETER.
                unsigned uStrongSides{};
                for(double const flCoverage:arrEdgeCoverage)
                   uStrongSides+=flCoverage>=0.72;
-               // Borderless cards may have neither printed separator.
-               // Permit a convincingly supported physical silhouette,
-               // but do not accept isolated artwork with no exterior
-               // foreground/background distinction.
-               bool const boStrongPhysicalOutline=
-                  uStrongSides>=3 && ratio>=1.28 && ratio<=1.55 &&
-                  area>=imageArea*0.006 && boundaryContrast>=12.0 &&
-                  uInnerPanels>=1;
                bool const boFullPerimeter=
                   uStrongSides>=4 && ratio>=1.28 && ratio<=1.55 &&
                   area>=imageArea*0.004;
-               // Dark borders may contribute just two visible exterior
-               // sides; require an additional independent inner panel so
-               // an isolated artwork rectangle cannot be promoted to a
-               // physical card solely because it is rectangular.
-               bool const boDarkBorderCard=uSupportedSides>=2 &&
-                  uInnerPanels>=1 && fill>=0.84 &&
-                  ratio>=1.30 && ratio<=1.53;
-               bool const boOuterBoundary=
-                  boStrongPhysicalOutline || boFullPerimeter ||
-                  boDarkBorderCard;
-               if(!boOuterBoundary) {
+               bool const boPhysicalOutline=
+                  uStrongSides>=3 && ratio>=1.28 && ratio<=1.55 &&
+                  area>=imageArea*0.006 &&
+                  (boundaryContrast>=8.0 || boNestedLayout);
+               // Interrupted dark borders may have two visible sides.
+               // Require both independently enclosed internal structures
+               // AND some exterior contrast. A lone artwork border cannot
+               // qualify merely because its rectangle has the right ratio.
+               bool const boDarkBorderCard=
+                  uSupportedSides>=2 && uInnerPanels>=2 &&
+                  boNestedLayout && boundaryContrast>=8.0 &&
+                  fill>=0.80 && ratio>=1.30 && ratio<=1.53;
+               if(!boFullPerimeter && !boPhysicalOutline &&
+                  !boDarkBorderCard) {
                   ++stats.rejectedPartialFrame;
                   continue;
                }
                ++stats.outerFrameFallbackCandidates;
-               // With no reliable title/text separators, do not invent
-               // orientation; the artwork matcher still tests both.
+               if(boNestedLayout)++stats.acceptedNestedLayouts;
+               // No standard separator evidence means no automatic
+               // 180-degree orientation inference in this branch.
             }
-            if(!aWholeFrame.boWholeCard && boNestedLayout)
-               ++stats.acceptedNestedLayouts;
             ++stats.layoutChecked;
             auto const aLayout=boInferOrientation?
                deckkernel::camera::InspectStandardCard(aCandidateImage):
