@@ -1359,11 +1359,18 @@ namespace deckkernel::camera {
                });
             // Language/collector are optional independent evidence. Apply
             // them only when OCR explicitly contains a candidate value.
-            bool const boLanguageKnown=std::ranges::any_of(
-               vecCandidates,[&](PrintingCandidate const& aCandidate) {
-                  return Contains(aCandidate.strLanguage);
+            // If a language code was actually read, every surviving
+            // printing must have that language, even when none match.
+            // Otherwise an explicit FR reading could incorrectly retain EN.
+            bool const boLanguageRead=std::ranges::any_of(
+               vecWords,[](std::string const& strWord) {
+                  return strWord=="EN" || strWord=="DE" ||
+                     strWord=="FR" || strWord=="IT" ||
+                     strWord=="ES" || strWord=="PT" ||
+                     strWord=="JA" || strWord=="KO" ||
+                     strWord=="RU" || strWord=="ZH";
                });
-            if(boLanguageKnown)
+            if(boLanguageRead)
                std::erase_if(vecCandidates,
                   [&](PrintingCandidate const& aCandidate) {
                      return !Contains(aCandidate.strLanguage);
