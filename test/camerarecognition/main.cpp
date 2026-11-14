@@ -3446,10 +3446,20 @@ void SelfTest() {
    if(!optSplitWest ||
       optSplitWest->arrArtwork[0].empty() ||
       optSplitWest->arrArtwork[1].empty() ||
+      optSplitWest->arrTitles[0].empty() ||
+      optSplitWest->arrTitles[1].empty() ||
       optSplitWest->arrArtwork[0].x>=
          optSplitWest->arrArtwork[1].x)
       throw std::runtime_error(
-         "split-west two-face segmentation or artwork crop regression");
+         "split-west title/artwork segmentation regression");
+   for(int iFace=0;iFace<2;++iFace) {
+      // The illustration must begin AFTER the measured title region;
+      // the two diagnostic outlines must never overlap.
+      if(optSplitWest->arrTitles[iFace].br().y>=
+         optSplitWest->arrArtwork[iFace].y)
+         throw std::runtime_error(
+            "split-west title and artwork regions overlap");
+   }
 
    // DEMO TEST 01: the same physical card, actually upside-down, must
    // retain the outer contour and correct the 180-degree orientation.
