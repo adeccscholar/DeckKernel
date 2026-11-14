@@ -2283,7 +2283,7 @@ public:
          // individual face tops point to the left. Rotate once, then
          // localize the two illustrations independently.
          cv::Mat aSplitFirst,aSplitSecond;
-         std::string strSplitOcr,strSplitTitle;
+         std::string strSplitOcr,strSplitTitle,strSplitSecondTitle;
          // A standard card takes priority over special layouts.
          bool const boStandard=
             deckkernel::camera::InspectStandardCard(
@@ -2331,8 +2331,8 @@ public:
                   deckkernel::camera::Trace(
                      "[CAM-SPLIT-TITLE] card={} second='{}' confidence={}",
                      *m_ocrCard,aSecondTitle.first,aSecondTitle.second);
-                  if(strSplitTitle.empty() && aSecondTitle.second>=70)
-                     strSplitTitle=aSecondTitle.first;
+                  if(aSecondTitle.second>=70)
+                     strSplitSecondTitle=aSecondTitle.first;
                }
                auto const aMargin=aSplitOcr.ReadPrintingMargin(
                   m_capture.Overscan().empty()?
@@ -2374,7 +2374,8 @@ public:
          m_artwork->Search(m_capture.Image(),*m_ocrCard,
             m_save?m_root:std::filesystem::path{},
             m_boKnownUpright,aSplitFirst,aSplitSecond,strSplitOcr,
-            strSplitTitle,!boStandard && !optSplit);
+            strSplitTitle,strSplitSecondTitle,
+            !boStandard && !optSplit);
       }
       else {
          m_strStatus="SHARP FRAME SELECTED - image matcher disabled";
