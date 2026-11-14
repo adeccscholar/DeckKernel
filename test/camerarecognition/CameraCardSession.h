@@ -331,6 +331,50 @@ namespace deckkernel::camera {
       }
 
       /**
+      \brief Extend an identified card with asynchronously loaded printings.
+      \details Preserve the selected printing and confirmed state. This
+         never changes the captured card or the selected physical printing.
+      \param vecCandidates Loaded printing candidates for the same Oracle ID.
+      \param boTruncated True when the stored list is incomplete.
+      \returns Nothing.
+      \throw std::bad_alloc If merging candidate records fails.
+      */
+      void ExtendCandidates(std::vector<PrintingCandidate> vecCandidates,
+         bool boTruncated) {
+         if(vecCandidates.empty())return;
+         if(!m_strOracleId.empty() &&
+            vecCandidates.front().strOracleId!=m_strOracleId)return;
+         std::optional<PrintingCandidate> optSelected;
+         if(auto const* pSelected=Selected())optSelected=*pSelected;
+         for(auto& aExisting:m_vecCandidates) {
+            auto const it=std::find_if(vecCandidates.begin(),
+               vecCandidates.end(),[&](PrintingCandidate const& aCandidate) {
+                  return aCandidate.strPrintingId==aExisting.strPrintingId &&
+                     aCandidate.iFace==aExisting.iFace;
+               });
+            if(it==vecCandidates.end())
+               vecCandidates.push_back(std::move(aExisting));
+         }
+         m_vecCandidates=std::move(vecCandidates);
+         m_boTruncated=boTruncated;
+         m_uSelected=0;
+         if(optSelected) {
+            auto const it=std::find_if(m_vecCandidates.begin(),
+               m_vecCandidates.end(),[&](PrintingCandidate const& aCandidate) {
+                  return aCandidate.strPrintingId==optSelected->strPrintingId &&
+                     aCandidate.iFace==optSelected->iFace;
+               });
+            if(it!=m_vecCandidates.end())
+               m_uSelected=static_cast<std::size_t>(
+                  std::distance(m_vecCandidates.begin(),it));
+         }
+         if(m_strOracleId.empty()) {
+            m_strOracleId=m_vecCandidates.front().strOracleId;
+            m_strOracleName=m_vecCandidates.front().strName;
+         }
+      }
+
+      /**
       \brief Browse candidate printings without rescanning the physical card.
       \details Navigation wraps at either end.
       \param iDelta Negative for left, positive for right.
