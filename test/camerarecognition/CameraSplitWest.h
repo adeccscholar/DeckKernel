@@ -24,6 +24,9 @@ namespace deckkernel::camera {
       cv::Mat aAligned;
       std::array<cv::Rect,2> arrFaces{};
       std::array<cv::Rect,2> arrArtwork{};
+      std::array<cv::Rect,2> arrTitles{};
+      cv::Rect aSharedTitle{};
+      bool boSharedTitle{};
    };
 
    /**
@@ -56,23 +59,19 @@ namespace deckkernel::camera {
             iWidth-iMid-2*iSideMargin,iHeight)
       }};
 
-      // A horizontal artwork edge is not the type line. In the old code,
-      // the unrestricted maximum from 38..79% often selected the RULES
-      // box instead of the first art/type boundary, producing mixed text
-      // and artwork crops. Require two distinct bands independently in
-      // each face: title/art at 8..20%, artwork/type at 49..65%.
-      struct Bands {
-         int iTop{};
-         int iBottom{};
-         double flTop{};
-         double flBottom{};
-      };
-      std::array<Bands,2> arrBands{};
-      std::array<std::array<double,336>,2> arrCoverage{};
+      // Detect the actual printed horizontal bars. No fixed percentage
+      // window is used for the title or the illustration boundaries:
+      // the first independent line is the outer header boundary, the
+      // second is the title/art line, and the next *paired* distant line
+      // delimits the artwork. The two independent halves corroborate it.
+      static constexpr int ciSampleWidth=240;
+      static constexpr int ciSampleHeight=336;
+      std::array<std::array<double,ciSampleHeight>,2> arrCoverage{};
+      std::array<int,2> arrOuterTop{},arrTitleBottom{};
       for(int iFace=0;iFace<2;++iFace) {
          cv::Mat const aFace=aResult.aAligned(aResult.arrFaces[iFace]);
          cv::Mat aSmall,aGray,aGradient;
-         cv::resize(aFace,aSmall,cv::Size(240,336),
+         cv::resize(aFace,aSmall,cv::Size(ciSampleWidth,ciSampleHeight),
             0.0,0.0,cv::INTER_AREA);
          if(aSmall.channels()==4)
             cv::cvtColor(aSmall,aGray,cv::COLOR_BGRA2GRAY);
@@ -81,54 +80,54 @@ namespace deckkernel::camera {
          else
             aGray=aSmall;
          cv::Sobel(aGray,aGradient,CV_16S,0,1,3);
-         for(int iY=0;iY<336;++iY) {
+         for(int iY=0;iY<ciSampleHeight;++iY) {
             short const* pRow=aGradient.ptr<short>(iY);
-            unsigned uCount{};
-            for(int iX=24;iX<216;++iX)
-               uCount+=std::abs(static_cast<int>(pRow[iX]))>=85;
-            arrCoverage[iFace][iY]=
-               static_cast<double>(uCount)/192.0;
+            unsigned uEdges{};
+            for(int iX=ciSampleWidth/10;
+               iX<ciSampleWidth-ciSampleWidth/10;++iX)
+               uEdges+=std::abs(static_cast<int>(pRow[iX]))>=85;
+            arrCoverage[iFace][iY]=static_cast<double>(uEdges)/
+               (ciSampleWidth-2*(ciSampleWidth/10));
          }
-         for(int iY=27;iY<68;++iY)
-            if(arrCoverage[iFace][iY]>arrBands[iFace].flTop) {
-               arrBands[iFace].iTop=iY;
-               arrBands[iFace].flTop=arrCoverage[iFace][iY];
-            }
-         if(arrBands[iFace].flTop<0.70)return std::nullopt;
+         int iLastBand=-ciSampleWidth;
+         std::array<int,2> arrFirstTwo{-1,-1};
+         int iBands{};
+         for(int iY=ciSampleWidth/30;
+            iY<ciSampleHeight-ciSampleWidth/30;++iY) {
+            if(arrCoverage[iFace][iY]<0.65 ||
+               iY-iLastBand<ciSampleWidth/12)continue;
+            arrFirstTwo[iBands++]=iY;
+            iLastBand=iY;
+            if(iBands==2)break;
+         }
+         if(iBands!=2)return std::nullopt;
+         arrOuterTop[iFace]=arrFirstTwo[0];
+         arrTitleBottom[iFace]=arrFirstTwo[1];
       }
-      if(std::abs(arrBands[0].iTop-arrBands[1].iTop)>15)
-         return std::nullopt;
+      if(std::abs(arrTitleBottom[0]-arrTitleBottom[1])>
+         ciSampleWidth/15)return std::nullopt;
 
-      // Room cards frequently have a dark/soft separator on one face.
-      // The former 0.70 requirement per half discarded whole cards while
-      // still accepting internal rectangles. Both faces MUST confirm the
-      // same boundary, but the stronger side can corroborate a weaker one.
       int iSharedBottom=-1;
-      for(int iY=165;iY<220;++iY) {
+      int const iStart=std::max(arrTitleBottom[0],arrTitleBottom[1])+
+         ciSampleWidth/2;
+      for(int iY=iStart;iY<ciSampleHeight-2;++iY) {
          std::array<double,2> arrStrength{};
          for(int iFace=0;iFace<2;++iFace)
-            for(int iOffset=0;iOffset<3;++iOffset)
+            for(int iOffset=-1;iOffset<=1;++iOffset)
                arrStrength[iFace]=std::max(arrStrength[iFace],
                   arrCoverage[iFace][iY+iOffset]);
-         if(arrStrength[0]+arrStrength[1]>=1.10 &&
-            std::max(arrStrength[0],arrStrength[1])>=0.75 &&
-            std::min(arrStrength[0],arrStrength[1])>=0.30) {
-            iSharedBottom=iY+1;
-            arrBands[0].flBottom=arrStrength[0];
-            arrBands[1].flBottom=arrStrength[1];
+         if(arrStrength[0]+arrStrength[1]>=0.95 &&
+            std::max(arrStrength[0],arrStrength[1])>=0.65 &&
+            std::min(arrStrength[0],arrStrength[1])>=0.25) {
+            iSharedBottom=iY;
             break;
          }
       }
-      if(iSharedBottom<0)return std::nullopt;
-      for(int iFace=0;iFace<2;++iFace) {
-         arrBands[iFace].iBottom=iSharedBottom;
-         int const iHeight=iSharedBottom-arrBands[iFace].iTop;
-         if(iHeight<108 || iHeight>190)return std::nullopt;
-      }
+      if(iSharedBottom<0 ||
+         iSharedBottom-iStart>ciSampleWidth/3)return std::nullopt;
 
-      // A conventional single-face card may also have continuous
-      // horizontal title/type separators. Require independent evidence
-      // of the vertical division into two printed faces.
+      // Independently measured vertical separation between two faces.
+      // Its evidence is sampled within the observed artwork height.
       cv::Mat aGray,aGradient;
       if(aResult.aAligned.channels()==4)
          cv::cvtColor(aResult.aAligned,aGray,cv::COLOR_BGRA2GRAY);
@@ -136,37 +135,76 @@ namespace deckkernel::camera {
          cv::cvtColor(aResult.aAligned,aGray,cv::COLOR_BGR2GRAY);
       else
          aGray=aResult.aAligned;
-      cv::resize(aGray,aGray,cv::Size(672,480),0,0,cv::INTER_AREA);
-      cv::Sobel(aGray,aGradient,CV_16S,1,0,3);
+      double const flScale=static_cast<double>(ciSampleHeight)/iHeight;
+      cv::Mat aSmall;
+      cv::resize(aGray,aSmall,cv::Size(),flScale,flScale,
+         cv::INTER_AREA);
+      cv::Sobel(aSmall,aGradient,CV_16S,1,0,3);
+      int const iCenter=aGradient.cols/2;
+      int const iHalfWidth=std::max(2,aGradient.cols/50);
+      int const iArtStart=std::max(arrTitleBottom[0],
+         arrTitleBottom[1]);
       double flDivider{};
-      for(int iX=672*46/100;iX<672*54/100;++iX) {
-         unsigned uCount{};
-         for(int iY=480*15/100;iY<480*65/100;++iY)
-            uCount+=std::abs(
+      for(int iX=std::max(0,iCenter-iHalfWidth);
+         iX<std::min(aGradient.cols,iCenter+iHalfWidth);++iX) {
+         unsigned uEdges{};
+         for(int iY=iArtStart;iY<iSharedBottom;++iY)
+            uEdges+=std::abs(
                static_cast<int>(aGradient.at<short>(iY,iX)))>=85;
          flDivider=std::max(flDivider,
-            static_cast<double>(uCount)/(480*50/100));
+            static_cast<double>(uEdges)/
+               std::max(1,iSharedBottom-iArtStart));
       }
       if(flDivider<0.16)return std::nullopt;
 
+      // A single title across both faces has no comparable central divider
+      // in its title band. Detect that separately from the artwork divider.
+      double flTitleDivider{};
+      for(int iX=std::max(0,iCenter-iHalfWidth);
+         iX<std::min(aGradient.cols,iCenter+iHalfWidth);++iX) {
+         unsigned uEdges{};
+         int const iTop=std::max(arrOuterTop[0],arrOuterTop[1]);
+         int const iBottom=std::min(arrTitleBottom[0],arrTitleBottom[1]);
+         for(int iY=iTop;iY<iBottom;++iY)
+            uEdges+=std::abs(
+               static_cast<int>(aGradient.at<short>(iY,iX)))>=85;
+         flTitleDivider=std::max(flTitleDivider,
+            static_cast<double>(uEdges)/std::max(1,iBottom-iTop));
+      }
+      aResult.boSharedTitle=flTitleDivider<flDivider*0.6;
       for(int iFace=0;iFace<2;++iFace) {
          cv::Rect const& aFace=aResult.arrFaces[iFace];
-         // Exclude the title/type bars and the outer/central card frame.
-         // Both coordinates come from detected separator rows, never
-         // arbitrary whole-card artwork percentages.
-         int const iTop=
-            arrBands[iFace].iTop*aFace.height/336+
-               std::max(3,aFace.height/100);
-         int const iBottom=
-            arrBands[iFace].iBottom*aFace.height/336-
-               std::max(3,aFace.height/100);
-         int const iMargin=std::max(3,aFace.width*7/100);
-         if(iBottom-iTop<aFace.height*30/100 ||
-            iBottom-iTop>aFace.height*57/100 ||
-            aFace.width<=2*iMargin)return std::nullopt;
+         int const iOuter=arrOuterTop[iFace]*aFace.height/ciSampleHeight;
+         int const iTitle=arrTitleBottom[iFace]*aFace.height/ciSampleHeight;
+         int const iBottom=iSharedBottom*aFace.height/ciSampleHeight;
+         int const iInset=std::max(3,aFace.width/35);
+         int const iLineInset=std::max(2,aFace.height/90);
+         int const iTop=iTitle+iLineInset;
+         int const iArtBottom=iBottom-iLineInset;
+         if(iArtBottom<=iTop || iTitle<=iOuter ||
+            iArtBottom-iTop<aFace.width/2 ||
+            aFace.width<=2*iInset)return std::nullopt;
          aResult.arrArtwork[iFace]=cv::Rect(
-            aFace.x+iMargin,iTop,
-            aFace.width-2*iMargin,iBottom-iTop);
+            aFace.x+iInset,iTop,
+            aFace.width-2*iInset,iArtBottom-iTop);
+         aResult.arrTitles[iFace]=cv::Rect(
+            aFace.x+iInset,iOuter+iLineInset,
+            aFace.width-2*iInset,
+            iTitle-iOuter-2*iLineInset);
+         if(aResult.arrTitles[iFace].height<=0)
+            return std::nullopt;
+      }
+      if(aResult.boSharedTitle) {
+         int const iTop=std::max(aResult.arrTitles[0].y,
+            aResult.arrTitles[1].y);
+         int const iBottom=std::min(
+            aResult.arrTitles[0].br().y,
+            aResult.arrTitles[1].br().y);
+         if(iBottom<=iTop)return std::nullopt;
+         aResult.aSharedTitle=cv::Rect(
+            aResult.arrTitles[0].x,iTop,
+            aResult.arrTitles[1].br().x-aResult.arrTitles[0].x,
+            iBottom-iTop);
       }
       return aResult;
    }
