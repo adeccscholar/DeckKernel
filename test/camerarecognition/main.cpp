@@ -1486,6 +1486,10 @@ class Processor {
    std::filesystem::path m_root;
    deckkernel::camera::CardOrientation m_eCardOrientation{
       deckkernel::camera::CardOrientation::Automatic};
+   [[nodiscard]] bool CaptureFlip180() const noexcept {
+      return m_boCapturedRotate180 !=
+         (m_manualOrientation != m_autoFlipped);
+   }
 public:
    explicit Processor(bool save,bool verbose=false):m_save(save),m_verbose(verbose),
       m_root(std::getenv("DECKKERNEL_CAMERA_EVIDENCE_ROOT")?
@@ -2128,7 +2132,7 @@ public:
       if(pCandidate) {
          cv::Mat aImage=aSource.empty()?pCandidate->rectified.clone():
             RectifyForOcr(aSource,pCandidate->corners,
-               m_boCapturedRotate180 != m_manualOrientation);
+               CaptureFlip180());
          // PHASE 04: the card was already acquired as a physical object.
          // An uncertain internal layout must not prevent quality sampling.
          // The tracker owns the four outer corners, not artwork detection.
@@ -2136,7 +2140,7 @@ public:
          // footprint before offering a new registered frame.
          cv::Mat const aExtended=aSource.empty()?cv::Mat{}:
             RectifyWithMargin(aSource,pCandidate->corners,
-               m_boCapturedRotate180 != m_manualOrientation);
+               CaptureFlip180());
          if(m_capture.Offer(aImage,
             NativeCardWidth(pCandidate->corners),aExtended)) {
             m_displayCard=m_capture.Overscan();
@@ -2422,10 +2426,12 @@ public:
                   cv::Mat aCandidate;
                   if(!sourceFrame.empty())
                      aCandidate=RectifyForOcr(sourceFrame,found->corners,
-                        m_manualOrientation);
-                  else aCandidate=found->rectified.clone();
-                  if(m_autoFlipped)
-                     cv::rotate(aCandidate,aCandidate,cv::ROTATE_180);
+                        CaptureFlip180());
+                  else {
+                     aCandidate=found->rectified.clone();
+                     if(CaptureFlip180())
+                        cv::rotate(aCandidate,aCandidate,cv::ROTATE_180);
+                  }
                   m_ocrAccepted=m_ocr->Read(aCandidate,
                      *m_ocrCard,m_ocrAttempts);
                   MergeOcr();
@@ -2515,7 +2521,7 @@ public:
       }
       if(!sourceFrame.empty() && found)
          event->card=RectifyForOcr(sourceFrame,found->corners,
-            m_boCapturedRotate180 != m_manualOrientation);
+            CaptureFlip180());
       m_ocrCard=event->number;
       // PHASE 03: lock the outer physical card before examining its artwork.
       if(!sourceFrame.empty() && found) {
@@ -2586,7 +2592,7 @@ public:
       cv::Mat const aInitialOverscan=
          (!sourceFrame.empty() && found)?
             RectifyWithMargin(sourceFrame,found->corners,
-               m_boCapturedRotate180 != m_manualOrientation):cv::Mat{};
+               CaptureFlip180()):cv::Mat{};
       m_capture.Begin(event->card,
          found?NativeCardWidth(found->corners):event->card.cols,
          aInitialOverscan);
