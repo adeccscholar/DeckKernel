@@ -2409,8 +2409,7 @@ public:
          m_artwork->Search(m_capture.Image(),*m_ocrCard,
             m_save?m_root:std::filesystem::path{},
             m_boKnownUpright,aSplitFirst,aSplitSecond,strSplitOcr,
-            strSplitTitle,strSplitSecondTitle,
-            !boStandard && !optSplit);
+            strSplitTitle,strSplitSecondTitle);
       }
       else {
          m_strStatus="SHARP FRAME SELECTED - image matcher disabled";
