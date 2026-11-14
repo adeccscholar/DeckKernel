@@ -1977,7 +1977,7 @@ public:
             deckkernel::camera::RecognitionPhase::Printing);
       else if(m_identity.Count()==0 && !result->boCandidateSelection) {
          SetPhase(deckkernel::camera::RecognitionPhase::Unresolved);
-         if(!m_boNameOcrStarted &&
+         if(!result->boSplitWest && !m_boNameOcrStarted &&
             !result->strStatus.starts_with("OCR NAME"))
             StartNameOcr();
       }
