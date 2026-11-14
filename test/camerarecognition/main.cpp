@@ -3369,7 +3369,7 @@ void SelfTest() {
    auto const optFixedTop=FindCard(
       aFramedScene,nullptr,true,false,false);
    auto const optFixedBottom=FindCard(
-      aReversedScene,nullptr,true,false,false);
+      aReversedScene,nullptr,true,false,false,true);
    if(!optFixedTop || !optFixedBottom ||
       optFixedTop->boRotate180 || optFixedBottom->boRotate180 ||
       optFixedTop->boOrientationReliable ||
