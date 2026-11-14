@@ -11,6 +11,7 @@ both orientations. Results are suggestions until physically validated.
 #pragma once
 
 #include "CameraCardSession.h"
+#include "CameraSplitWest.h"
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/features2d.hpp>
@@ -555,7 +556,8 @@ namespace deckkernel::camera {
           \throw std::runtime_error On an invalid database result.
       */
       std::vector<Ranked> FindPrintings(PGconn* pConnection,
-         cv::Mat const& aCard, std::optional<Ranked> const& optArtwork) const {
+         cv::Mat const& aCard, std::optional<Ranked> const& optArtwork,
+         bool boSplitOnly=false) const {
          std::string const strHash=DHashBits(aCard);
          std::string const strLimit=std::to_string(
             optArtwork?std::max(1000u,m_uCandidates):m_uCandidates);
@@ -610,7 +612,12 @@ namespace deckkernel::camera {
             "JOIN deckkernel_test.scryfall_card_faces cf "
             "ON cf.card_id=v.card_id AND cf.face_id=v.face_id ";
          if(!optArtwork)
-            strSql+="WHERE v.variant IN ('normal','border_crop','large') ";
+            strSql+=boSplitOnly?
+            "WHERE v.variant IN ('normal','large') "
+            "AND cf.layout IN ('split','room') "
+            "AND (SELECT count(*) FROM deckkernel_test.scryfall_card_faces f2 "
+            "WHERE f2.card_id=v.card_id)=2 ":
+            "WHERE v.variant IN ('normal','border_crop','large') ";
          strSql+=
             optArtwork?
                "ORDER BY bit_count(f.perceptual_hash # $1::bit(64)), "
@@ -1233,6 +1240,131 @@ namespace deckkernel::camera {
       \returns Database printing candidates, never silently confirmed.
       \throw std::runtime_error On database failure.
       */
+      /**
+      \brief Independently compare both split artworks with an indexed normal printing.
+      \details The full physical card is stored upright. The card's internal
+         split faces are rotated clockwise only for artwork comparison.
+      \param aTask Frozen query with both locally rectified illustrations.
+      \param aReference Complete stored normal printing.
+      \returns Combined score only if both illustrations corroborate the match.
+      \throw cv::Exception If image operations fail.
+      */
+      [[nodiscard]] static int SplitReferenceMatches(
+         Task const& aTask,cv::Mat const& aReference) {
+         if(aReference.empty())return 0;
+         cv::Mat aAligned;
+         cv::rotate(aReference,aAligned,cv::ROTATE_90_CLOCKWISE);
+         if(aAligned.cols<200 || aAligned.rows<180)return 0;
+         std::array<cv::Mat,2> arrArt{};
+         if(auto optLayout=DetectSplitWest(aReference)) {
+            for(int iFace=0;iFace<2;++iFace)
+               arrArt[iFace]=optLayout->aAligned(optLayout->arrArtwork[iFace]);
+         }
+         else {
+            int const iMid=aAligned.cols/2;
+            std::array<cv::Rect,2> const arrFaces{{
+               {0,0,iMid,aAligned.rows},
+               {iMid,0,aAligned.cols-iMid,aAligned.rows}
+            }};
+            for(int iFace=0;iFace<2;++iFace)
+               arrArt[iFace]=Artwork(aAligned(arrFaces[iFace]),0).aImage;
+         }
+         auto const Compare=[&](cv::Mat const& aCamera,
+            cv::Mat const& aStored)->int {
+            if(aCamera.empty() || aStored.empty())return 0;
+            cv::Mat const aQuery=Descriptors(aCamera);
+            cv::Mat const aTrain=Descriptors(aStored);
+            if(aQuery.rows<2 || aTrain.rows<2)return 0;
+            cv::BFMatcher aMatcher(cv::NORM_HAMMING,false);
+            std::vector<std::vector<cv::DMatch>> vecPairs;
+            aMatcher.knnMatch(aQuery,aTrain,vecPairs,2);
+            std::vector<cv::DMatch> vecGood;
+            for(auto const& vecPair:vecPairs)
+               if(vecPair.size()==2 &&
+                  vecPair[0].distance<0.75f*vecPair[1].distance)
+                  vecGood.push_back(vecPair[0]);
+            std::ranges::sort(vecGood,{},
+               &cv::DMatch::distance);
+            std::vector<bool> vecUsed(
+               static_cast<std::size_t>(aTrain.rows),false);
+            int iCount{};
+            for(auto const& aMatch:vecGood) {
+               auto const uIndex=static_cast<std::size_t>(aMatch.trainIdx);
+               if(!vecUsed[uIndex]) {
+                  vecUsed[uIndex]=true;
+                  ++iCount;
+               }
+            }
+            return iCount;
+         };
+         int iBest{};
+         for(int iOrder=0;iOrder<2;++iOrder) {
+            int const iFirst=Compare(aTask.aSplitFirst,arrArt[iOrder]);
+            int const iSecond=Compare(aTask.aSplitSecond,arrArt[1-iOrder]);
+            if(iFirst>=12 && iSecond>=6)
+               iBest=std::max(iBest,iFirst+iSecond);
+         }
+         return iBest;
+      }
+
+      /**
+      \brief Search only indexed split/room printings when art_crop cannot match.
+      \details A complete printing is admitted only if both of its printed
+         face illustrations corroborate the query.
+      \param pConnection Database worker connection.
+      \param aTask Frozen physical split card and face images.
+      \returns Unverified printing candidates supported by two artworks.
+      \throw std::runtime_error On database errors.
+      */
+      CardImageMatchResult MatchSplitFullCard(PGconn* pConnection,
+         Task const& aTask) {
+         CardImageMatchResult aResult{aTask.uEvent};
+         aResult.boSplitWest=true;
+         aResult.strStatus="SPLIT-WEST: no corroborated split/room artwork";
+         std::vector<Ranked> vecCandidates=FindPrintings(
+            pConnection,aTask.aCard,std::nullopt,true);
+         if(Cancelled(aTask.uEvent))return aResult;
+         auto const uLimit=std::min<std::size_t>(24,vecCandidates.size());
+         for(std::size_t uIndex=0;uIndex<uLimit;++uIndex) {
+            Ranked& aCandidate=vecCandidates[uIndex];
+            if(!AcceptFull(aCandidate))continue;
+            CardImageMatchResult aReference;
+            aReference.strAssetId=aCandidate.strAssetId;
+            LoadReference(pConnection,aReference);
+            aCandidate.iArtworkMatches=SplitReferenceMatches(
+               aTask,aReference.aReferenceImage);
+            deckkernel::camera::Trace(
+               "[CAM-SPLIT-REFERENCE] card={} asset={} full-orb={} "
+               "hash={} pair-orb={}",
+               aTask.uEvent,aCandidate.strAssetId,aCandidate.iOrb,
+               aCandidate.iHash,aCandidate.iArtworkMatches);
+         }
+         std::erase_if(vecCandidates,[](Ranked const& aCandidate) {
+            return !AcceptFull(aCandidate) ||
+               aCandidate.iArtworkMatches<18;
+         });
+         if(vecCandidates.empty())return aResult;
+         std::ranges::sort(vecCandidates,[](Ranked const& aLeft,
+            Ranked const& aRight) {
+            return aLeft.iArtworkMatches!=aRight.iArtworkMatches?
+               aLeft.iArtworkMatches>aRight.iArtworkMatches:
+               Better(aLeft,aRight);
+         });
+         for(Ranked const& aCandidate:vecCandidates) {
+            aResult.vecCandidates.push_back(Candidate(aCandidate));
+            if(aResult.vecCandidates.size()==32)break;
+         }
+         aResult.boArtworkRecognized=true;
+         SetPrinting(aResult,aResult.vecCandidates.front());
+         aResult.strStatus=std::format(
+            "SPLIT-WEST: paired artworks matched; {} printings",
+            aResult.vecCandidates.size());
+         aResult.strEdition=
+            "Both split artworks matched; exact printing remains unverified";
+         LoadReference(pConnection,aResult);
+         return aResult;
+      }
+
       CardImageMatchResult MatchSplitWest(PGconn* pConnection,
          Task const& aTask) {
          CardImageMatchResult aResult{aTask.uEvent};
@@ -1253,9 +1385,7 @@ namespace deckkernel::camera {
             boUsedSecondAsPrimary=boArtworkVerified;
          }
          if(!boArtworkVerified && aTask.strSplitTitle.empty()) {
-            aResult.strStatus=
-               "SPLIT-WEST: neither face artwork established";
-            return aResult;
+            return MatchSplitFullCard(pConnection,aTask);
          }
          if(Cancelled(aTask.uEvent))return aResult;
          // Read complete printings related to the detected FIRST face.
