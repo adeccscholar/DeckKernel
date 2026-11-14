@@ -987,7 +987,9 @@ the reverse-image matching fallback.
 
 In controlled entry mode, **Top, Bottom, Left and Right** describe the
 physical card's top edge in the raw camera image. The layout detector
-does not infer or override rotation in these modes. Bottom is normalized
+does not infer or override rotation in these modes. It evaluates only
+the expected frame direction, rather than automatically inspecting
+both upright and inverted structural hypotheses on every candidate. Bottom is normalized
 once by 180 degrees; Left/Right rotate the camera coordinate system
 once by 90 degrees before outer-card detection. The declared orientation
 is retained across optical tracking, high-resolution rectification,
