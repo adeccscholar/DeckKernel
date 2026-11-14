@@ -615,7 +615,10 @@ namespace deckkernel::camera {
          if(!optArtwork)
             strSql+=boSplitOnly?
             "WHERE v.variant IN ('normal','large') "
-            "AND cf.layout IN ('split','room') "
+            // The two physical faces, not the optional face-level layout field,
+            // determine eligibility. Actual artwork from BOTH halves must
+            // still corroborate the shortlisted printing.
+            
             "AND (SELECT count(*) FROM deckkernel_test.scryfall_card_faces f2 "
             "WHERE f2.card_id=v.card_id)=2 ":
             "WHERE v.variant IN ('normal','border_crop','large') ";
