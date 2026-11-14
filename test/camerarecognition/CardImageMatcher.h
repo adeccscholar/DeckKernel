@@ -1327,7 +1327,6 @@ namespace deckkernel::camera {
          auto const uLimit=std::min<std::size_t>(24,vecCandidates.size());
          for(std::size_t uIndex=0;uIndex<uLimit;++uIndex) {
             Ranked& aCandidate=vecCandidates[uIndex];
-            if(!AcceptFull(aCandidate))continue;
             CardImageMatchResult aReference;
             aReference.strAssetId=aCandidate.strAssetId;
             LoadReference(pConnection,aReference);
@@ -1340,8 +1339,7 @@ namespace deckkernel::camera {
                aCandidate.iHash,aCandidate.iArtworkMatches);
          }
          std::erase_if(vecCandidates,[](Ranked const& aCandidate) {
-            return !AcceptFull(aCandidate) ||
-               aCandidate.iArtworkMatches<18;
+            return aCandidate.iArtworkMatches<18;
          });
          if(vecCandidates.empty())return aResult;
          std::ranges::sort(vecCandidates,[](Ranked const& aLeft,
