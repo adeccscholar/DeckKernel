@@ -977,6 +977,52 @@ module evaluation is unchanged.
 PostgreSQL printing-query duration, preview of `frozen-overscan.png`,
 and OCR success on known printed collector/set fields.
 
+## 2026-11-14: split-west first-face matching and interactive button feedback
+
+The live SDL2/Skia dashboard now uses one shared button hit-test function
+for painting and mouse interaction. Enabled actions show a hand cursor on
+hover, a brighter fill and outline on hover, and a darker two-pixel inset
+while pressed. Disabled buttons remain grey and do not consume clicks.
+Actions fire on mouse-button release **only when released over the same
+control that received mouse-button down**. This covers Accept, Discard,
+Previous, Next, All printings, Options and Table AF.
+
+The first dedicated special-layout path is **classic Split West**,
+referencing two printed face panels whose upper edges point west relative
+to the physical portrait card. `CameraSplitWest.h` validates that the
+standard frame is not recognized, rotates the frozen physical card 90
+degrees clockwise, divides it into two portrait face panels, and
+requires independent measured title/type contours and two artwork areas.
+The standard-card layout test and normal artwork-match scoring stay
+unchanged. A synthetic self-test verifies that two artwork regions are
+returned in the correct left/right order.
+
+The frozen split detector passes two isolated artwork crops and optional
+printing-line/first-face-title OCR to the existing asynchronous image
+worker. The first crop goes through the existing `art_crop` feature
+lookup once. If the first-face art is not independently indexed, a
+high-confidence first-face title permits an exact relational
+`scryfall_card_faces.name` fallback instead of a speculative image
+match. For either first-face evidence, the worker queries printings
+of that card from the local PostgreSQL Scryfall tables, requiring
+**exactly two stored faces**, and displays the combined name
+`Face A // Face B` rather than a single face's name.
+
+When the frozen lower-margin OCR contains an exact known set code,
+the candidate printing list is narrowed using set, language and
+collector-number tokens as available. **No second global artwork
+comparison runs in that case.** If no set code is recognized, the
+second face can be matched as additional evidence, and linked printing
+IDs are intersected. Missing/ambiguous evidence keeps printing
+selection unverified; no automatic collection confirmation is made.
+A split result is also prevented from falling back into the ordinary
+whole-card title OCR path.
+
+These changes require a Windows/BCC64X build, tests with real
+`Assault // Battery` and `Boom // Bust` cards, and database-specific
+verification that the split `art_crop` assets are linked to the two
+faces as expected. None of those physical outcomes is claimed yet.
+
 ## 2026-11-13: runtime tabletop autofocus, measured frame geometry and OCR-supported printing
 
 Table-plane autofocus is now **explicitly optional**. A new `tableAutoFocus`
