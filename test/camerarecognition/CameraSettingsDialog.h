@@ -175,6 +175,8 @@ namespace deckkernel::camera {
       int m_iSelectedRow{};
       int m_iCameraSelection{};
       bool m_boAccepted{};
+      int m_iHoverControl{-1};
+      int m_iPressedControl{-1};
       static constexpr int ciWidth=920;
       static constexpr int ciHeight=740;
       static constexpr int ciTop=157;
@@ -291,6 +293,28 @@ namespace deckkernel::camera {
          CameraSettingsFile::Save(m_aSettings);
          m_boAccepted=true;
       }
+      /**
+      \brief Resolve controls from mouse coordinates inside the dialog.
+      \param iX SDL window x coordinate.
+      \param iY SDL window y coordinate.
+      \returns Control ID or minus one if no button is under the pointer.
+      \throw None.
+      */
+      [[nodiscard]] static int HitControl(int iX,int iY) {
+         if(iY>=639 && iY<693) {
+            if(iX>=594 && iX<762)return 100;
+            if(iX>=772 && iX<892)return 101;
+         }
+         if(iY>=ciTop && iY<ciTop+ciCount*ciRowHeight) {
+            int const iRow=(iY-ciTop)/ciRowHeight;
+            if(iRow>=0 && iRow<ciCount &&
+               iY<ciTop+iRow*ciRowHeight+55) {
+               if(iX>=410 && iX<460)return 2*iRow;
+               if(iX>=460 && iX<858)return 2*iRow+1;
+            }
+         }
+         return -1;
+      }
       void Draw(SDL_Renderer* pRenderer) const {
          auto const aSurface=SkSurfaces::Raster(
             SkImageInfo::MakeN32Premul(ciWidth,ciHeight));
@@ -318,19 +342,39 @@ namespace deckkernel::camera {
                std::string(arrLabels[iRow]),16.f,0xffc9d9e2);
             Rectangle(pCanvas,SkRect::MakeXYWH(
                410.f,flY+7.f,448.f,41.f),0xff0b202c,8.f);
+            if(m_iHoverControl==2*iRow ||
+               m_iPressedControl==2*iRow)
+               Rectangle(pCanvas,SkRect::MakeXYWH(
+                  418.f,flY+9.f,38.f,38.f),
+                  m_iPressedControl==2*iRow?0xff275265:0xff1a4051,7.f);
             Text(pCanvas,428.f,flY+33.f,"<",
-               22.f,0xff8ed5ee);
+               22.f,m_iHoverControl==2*iRow?0xffffffff:0xff8ed5ee);
             Text(pCanvas,472.f,flY+33.f,Value(iRow),
                16.f,0xfff5f7fa);
+            if(m_iHoverControl==2*iRow+1 ||
+               m_iPressedControl==2*iRow+1)
+               Rectangle(pCanvas,SkRect::MakeXYWH(
+                  807.f,flY+9.f,43.f,38.f),
+                  m_iPressedControl==2*iRow+1?
+                     0xff275265:0xff1a4051,7.f);
             Text(pCanvas,817.f,flY+33.f,">",
-               22.f,0xff8ed5ee);
+               22.f,m_iHoverControl==2*iRow+1?
+                  0xffffffff:0xff8ed5ee);
          }
+         bool const boStartPressed=m_iPressedControl==100;
+         bool const boCancelPressed=m_iPressedControl==101;
          Rectangle(pCanvas,SkRect::MakeXYWH(
-            594.f,639.f,168.f,54.f),0xff218a78);
+            594.f,639.f+(boStartPressed?2.f:0.f),168.f,54.f),
+            boStartPressed?0xff196555:
+               m_iHoverControl==100?0xff2eb297:0xff218a78);
          Rectangle(pCanvas,SkRect::MakeXYWH(
-            772.f,639.f,120.f,54.f),0xff263b48);
-         Text(pCanvas,624.f,672.f,"Start camera",17.f,0xffffffff);
-         Text(pCanvas,797.f,672.f,"Cancel",17.f,0xffd5e5ed);
+            772.f,639.f+(boCancelPressed?2.f:0.f),120.f,54.f),
+            boCancelPressed?0xff1d3039:
+               m_iHoverControl==101?0xff345363:0xff263b48);
+         Text(pCanvas,624.f,672.f+(boStartPressed?2.f:0.f),
+            "Start camera",17.f,0xffffffff);
+         Text(pCanvas,797.f,672.f+(boCancelPressed?2.f:0.f),
+            "Cancel",17.f,0xffd5e5ed);
          Text(pCanvas,37.f,672.f,
             "Arrow keys: select / change   Enter: start   Esc: cancel",
             12.f,0xff9cbdcf);
@@ -396,6 +440,8 @@ namespace deckkernel::camera {
             SDL_QuitSubSystem(SDL_INIT_VIDEO);
             throw std::runtime_error(SDL_GetError());
          }
+         SDL_Cursor* pHand=SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
+         SDL_Cursor* pArrow=SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
          Draw(pRenderer);
          bool boFinished{};
          while(!boFinished) {
@@ -407,37 +453,59 @@ namespace deckkernel::camera {
                   case SDLK_ESCAPE:boFinished=true;break;
                   case SDLK_RETURN:
                   case SDLK_KP_ENTER:Accept();boFinished=true;break;
-                  case SDLK_UP:m_iSelectedRow=(m_iSelectedRow+ciCount-1)%ciCount;break;
-                  case SDLK_DOWN:m_iSelectedRow=(m_iSelectedRow+1)%ciCount;break;
+                  case SDLK_UP:
+                     m_iSelectedRow=(m_iSelectedRow+ciCount-1)%ciCount;
+                     break;
+                  case SDLK_DOWN:
+                     m_iSelectedRow=(m_iSelectedRow+1)%ciCount;
+                     break;
                   case SDLK_LEFT:Cycle(m_iSelectedRow,-1);break;
                   case SDLK_RIGHT:Cycle(m_iSelectedRow,1);break;
                   default:break;
                }
             }
+            else if(aEvent.type==SDL_MOUSEMOTION) {
+               int const iHover=HitControl(
+                  aEvent.motion.x,aEvent.motion.y);
+               if(iHover!=m_iHoverControl) {
+                  m_iHoverControl=iHover;
+                  if(SDL_Cursor* pCursor=iHover<0?pArrow:pHand)
+                     SDL_SetCursor(pCursor);
+               }
+            }
             else if(aEvent.type==SDL_MOUSEBUTTONDOWN &&
                aEvent.button.button==SDL_BUTTON_LEFT) {
-               int const iX=aEvent.button.x;
-               int const iY=aEvent.button.y;
-               if(iY>=639 && iY<693) {
-                  if(iX>=594 && iX<762) {
+               m_iPressedControl=HitControl(
+                  aEvent.button.x,aEvent.button.y);
+            }
+            else if(aEvent.type==SDL_MOUSEBUTTONUP &&
+               aEvent.button.button==SDL_BUTTON_LEFT) {
+               int const iReleased=HitControl(
+                  aEvent.button.x,aEvent.button.y);
+               if(iReleased>=0 && iReleased==m_iPressedControl) {
+                  if(iReleased==100) {
                      Accept();
                      boFinished=true;
                   }
-                  else if(iX>=772 && iX<892)boFinished=true;
-               }
-               else if(iX>=28 && iX<892 && iY>=ciTop &&
-                  iY<ciTop+ciCount*ciRowHeight) {
-                  int const iRow=(iY-ciTop)/ciRowHeight;
-                  if(iRow>=0 && iRow<ciCount &&
-                     iY<ciTop+iRow*ciRowHeight+55) {
-                     m_iSelectedRow=iRow;
-                     if(iX>=410 && iX<858)
-                        Cycle(iRow,iX<460?-1:1);
+                  else if(iReleased==101)boFinished=true;
+                  else {
+                     m_iSelectedRow=iReleased/2;
+                     Cycle(m_iSelectedRow,iReleased%2==0?-1:1);
                   }
                }
+               m_iPressedControl=-1;
+            }
+            else if(aEvent.type==SDL_WINDOWEVENT &&
+               aEvent.window.event==SDL_WINDOWEVENT_LEAVE) {
+               m_iHoverControl=-1;
+               m_iPressedControl=-1;
+               if(pArrow)SDL_SetCursor(pArrow);
             }
             if(!boFinished)Draw(pRenderer);
          }
+         SDL_SetCursor(SDL_GetDefaultCursor());
+         if(pHand)SDL_FreeCursor(pHand);
+         if(pArrow)SDL_FreeCursor(pArrow);
          SDL_DestroyRenderer(pRenderer);
          SDL_DestroyWindow(pWindow);
          SDL_QuitSubSystem(SDL_INIT_VIDEO);
