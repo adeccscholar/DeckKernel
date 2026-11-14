@@ -2167,11 +2167,13 @@ public:
          // individual face tops point to the left. Rotate once, then
          // localize the two illustrations independently.
          cv::Mat aSplitFirst,aSplitSecond;
-         std::string strSplitOcr;
-         if(!m_boKnownUpright) {
-            auto optSplit=deckkernel::camera::DetectSplitWest(
-               m_capture.Image());
-            if(optSplit) {
+         std::string strSplitOcr,strSplitTitle;
+         // Explicit orientation describes the OUTER card top edge. It
+         // must not suppress detection of west-facing inner face tops.
+         // DetectSplitWest itself rejects reliably standard layouts.
+         auto optSplit=deckkernel::camera::DetectSplitWest(
+            m_capture.Image());
+         if(optSplit) {
                aSplitFirst=optSplit->aAligned(
                   optSplit->arrArtwork[0]).clone();
                aSplitSecond=optSplit->aAligned(
@@ -2186,6 +2188,10 @@ public:
                   // The set line belongs to the physical card, not a
                   // particular half. Read it only once before matching.
                   CardOcr aSplitOcr(m_strPrintingOcrData);
+                  auto const aFaceTitle=aSplitOcr.ReadFrozenTitle(
+                     optSplit->aAligned(optSplit->arrFaces[0]));
+                  if(aFaceTitle.second>=70)
+                     strSplitTitle=aFaceTitle.first;
                   auto const aMargin=aSplitOcr.ReadPrintingMargin(
                      m_capture.Overscan().empty()?
                         m_capture.Image():m_capture.Overscan());
@@ -2194,6 +2200,9 @@ public:
                   deckkernel::camera::Trace(
                      "[CAM-SPLIT] card={} margin-confidence={} text='{}'",
                      *m_ocrCard,aMargin.second,strSplitOcr);
+                  deckkernel::camera::Trace(
+                     "[CAM-SPLIT] card={} first-title-confidence={} title='{}'",
+                     *m_ocrCard,aFaceTitle.second,strSplitTitle);
                }
 #endif
                if(m_save) {
@@ -2206,11 +2215,11 @@ public:
                      *m_ocrCard)).string(),aSplitSecond);
                }
                m_strStatus="SPLIT-WEST - recognizing first face";
-            }
          }
          m_artwork->Search(m_capture.Image(),*m_ocrCard,
             m_save?m_root:std::filesystem::path{},
-            m_boKnownUpright,aSplitFirst,aSplitSecond,strSplitOcr);
+            m_boKnownUpright,aSplitFirst,aSplitSecond,strSplitOcr,
+            strSplitTitle);
       }
       else {
          m_strStatus="SHARP FRAME SELECTED - image matcher disabled";
