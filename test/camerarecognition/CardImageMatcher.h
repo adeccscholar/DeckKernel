@@ -98,6 +98,7 @@ namespace deckkernel::camera {
          cv::Mat aSplitSecond;
          std::string strSplitOcr;
          std::string strSplitTitle;
+         bool boNonstandard{};
       };
 
       struct Ranked final {
@@ -1732,7 +1733,8 @@ namespace deckkernel::camera {
          // of images is expensive and produces frame/text false positives.
          // Return quickly and let frozen-image OCR be the last resort.
          // --deep-search explicitly enables the slow legacy global fallback.
-         if(!deckkernel::camera::DeepSearchEnabled())
+         if(!aTask.boNonstandard &&
+            !deckkernel::camera::DeepSearchEnabled())
             return CardImageMatchResult{aTask.uEvent,
                "ARTWORK NOT FOUND - OCR fallback", "Visual evidence insufficient"};
          // Both artwork orientations failed: the full card becomes the fallback.
@@ -1886,13 +1888,15 @@ namespace deckkernel::camera {
          cv::Mat const& aSplitFirst={},
          cv::Mat const& aSplitSecond={},
          std::string const& strSplitOcr={},
-         std::string const& strSplitTitle={}) {
+         std::string const& strSplitTitle={},
+         bool boNonstandard=false) {
          {
             std::lock_guard const aLock(m_mutex);
             m_uActiveEvent.store(uEvent,std::memory_order_relaxed);
             m_pending=Task{uEvent,aCard.clone(),{},0,aEvidenceDirectory,
                {},{},boKnownUpright,aSplitFirst.clone(),
-               aSplitSecond.clone(),strSplitOcr,strSplitTitle};
+               aSplitSecond.clone(),strSplitOcr,strSplitTitle,
+               boNonstandard};
          }
          m_signal.notify_one();
          deckkernel::camera::Trace(
