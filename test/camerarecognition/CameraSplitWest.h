@@ -52,24 +52,55 @@ namespace deckkernel::camera {
          cv::Rect(iGap,0,iMid-2*iGap,iHeight),
          cv::Rect(iMid+iGap,0,iWidth-iMid-2*iGap,iHeight)
       }};
+      // The type bar is not necessarily split into two separate boxes.
+      // On several classic printings it spans the two face panels.
+      // Measure one shared horizontal separator on the rotated source.
+      cv::Mat aGray,aVertical;
+      if(aResult.aAligned.channels()==4)
+         cv::cvtColor(aResult.aAligned,aGray,cv::COLOR_BGRA2GRAY);
+      else if(aResult.aAligned.channels()==3)
+         cv::cvtColor(aResult.aAligned,aGray,cv::COLOR_BGR2GRAY);
+      else
+         aGray=aResult.aAligned;
+      cv::Sobel(aGray,aVertical,CV_16S,0,1,3);
+      int iSharedType=-1;
+      double flBestSharedCoverage{};
+      for(int iY=iHeight*38/100;iY<iHeight*79/100;++iY) {
+         short const* pRow=aVertical.ptr<short>(iY);
+         unsigned uEdges{};
+         int const iXFirst=iWidth*10/100;
+         int const iXLast=iWidth*90/100;
+         for(int iX=iXFirst;iX<iXLast;++iX)
+            uEdges+=std::abs(static_cast<int>(pRow[iX]))>=85;
+         double const flCoverage=static_cast<double>(uEdges)/
+            std::max(1,iXLast-iXFirst);
+         if(flCoverage>flBestSharedCoverage) {
+            flBestSharedCoverage=flCoverage;
+            iSharedType=iY;
+         }
+      }
+      bool const boSharedType=iSharedType>=0 &&
+         flBestSharedCoverage>=0.40;
       for(int iFace=0;iFace<2;++iFace) {
          cv::Mat const aFace=aResult.aAligned(aResult.arrFaces[iFace]);
          FrameGeometry const aGeometry=DetectFrameGeometry(aFace);
-         WholeCardFrameEvidence const aWhole=InspectWholeCardFrame(aFace);
-         if(!aGeometry.optTitle || !aGeometry.optType ||
-            !aWhole.boWholeCard)
-            return std::nullopt;
+         // Each half needs its own upper frame, but the lower type bar
+         // may be a single shared physical line across both halves.
+         if(!aGeometry.optTitle)return std::nullopt;
          cv::Rect const& aTitle=*aGeometry.optTitle;
-         cv::Rect const& aType=*aGeometry.optType;
          int const iTop=aTitle.br().y+
             std::max(2,aFace.rows/120);
-         int const iBottom=aType.y-
+         int const iTypeY=aGeometry.optType?
+            aGeometry.optType->y:
+            boSharedType?iSharedType:-1;
+         if(iTypeY<0)return std::nullopt;
+         int const iBottom=iTypeY-
             std::max(2,aFace.rows/120);
          if(iBottom-iTop<aFace.rows/5 ||
             iBottom-iTop>aFace.rows*65/100)
             return std::nullopt;
-         int const iLeft=std::max(aTitle.x,aType.x);
-         int const iRight=std::min(aTitle.br().x,aType.br().x);
+         int const iLeft=aTitle.x;
+         int const iRight=aTitle.br().x;
          if(iRight-iLeft<aFace.cols*55/100)
             return std::nullopt;
          aResult.arrArtwork[iFace]=cv::Rect(
