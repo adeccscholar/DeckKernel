@@ -4021,6 +4021,107 @@ int CameraApplicationMain(int argc,char** argv) {
             !boRecognitionPaused)?
             processor.Observe(frame,&detection):
             std::optional<FoundCard>{};
+#if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
+         // A rejected physical card has NO event number and therefore
+         // cannot appear in event-*.png. D captures the raw camera frame
+         // even when no contour, stable card or match exists.
+         if(preview.ConsumeUndetectedSnapshot()) {
+            auto const iSnapshotId=std::chrono::duration_cast<
+               std::chrono::milliseconds>(
+                  std::chrono::system_clock::now().
+                     time_since_epoch()).count();
+            std::filesystem::path const aEvidenceRoot=
+               ".cache/camera-recognition";
+            std::filesystem::create_directories(aEvidenceRoot);
+            std::string const strPrefix=
+               std::format("undetected-{}",iSnapshotId);
+            std::filesystem::path const aRawPath=
+               aEvidenceRoot/(strPrefix+"-raw.png");
+            if(!cv::imwrite(aRawPath.string(),frame))
+               throw std::runtime_error(std::format(
+                  "cannot save undetected capture: {}",aRawPath.string()));
+            // Run a fine diagnostic pass only on explicit request.
+            // It must not alter the live tracker, capture or user decision.
+            CardDetectionDiagnostics aFineDiagnostics;
+            auto const aFineStart=std::chrono::steady_clock::now();
+            auto const optFine=FindCard(frame,&aFineDiagnostics,true,true);
+            auto const iFineMicros=std::chrono::duration_cast<
+               std::chrono::microseconds>(
+                  std::chrono::steady_clock::now()-aFineStart).count();
+            cv::Mat aSmall,aGray,aBlur,aEdges;
+            double const flScale=std::min(1.0,
+               1600.0/std::max(frame.cols,frame.rows));
+            if(flScale<1.0)
+               cv::resize(frame,aSmall,cv::Size(),
+                  flScale,flScale,cv::INTER_AREA);
+            else
+               aSmall=frame;
+            if(aSmall.channels()==4)
+               cv::cvtColor(aSmall,aGray,cv::COLOR_BGRA2GRAY);
+            else if(aSmall.channels()==3)
+               cv::cvtColor(aSmall,aGray,cv::COLOR_BGR2GRAY);
+            else
+               aGray=aSmall;
+            cv::GaussianBlur(aGray,aBlur,cv::Size(5,5),0);
+            cv::Canny(aBlur,aEdges,60,150);
+            std::filesystem::path const aEdgesPath=
+               aEvidenceRoot/(strPrefix+"-edges.png");
+            if(!cv::imwrite(aEdgesPath.string(),aEdges))
+               throw std::runtime_error(std::format(
+                  "cannot save undetected edges: {}",aEdgesPath.string()));
+            std::filesystem::path const aReportPath=
+               aEvidenceRoot/(strPrefix+"-diagnostics.txt");
+            std::ofstream aReport(aReportPath);
+            if(!aReport)
+               throw std::runtime_error(std::format(
+                  "cannot save undetected diagnostics: {}",
+                  aReportPath.string()));
+            aReport<<std::format(
+               "frame={}x{} brightness={:.2f} nonblack={} "
+               "focusCalibrating={} paused={} tracked={} "
+               "liveContour={} fineContour={} fineTimeUs={}\\n"
+               "live: contours={} area={} quadrilaterals={} "
+               "rotated={} plausible={} rejectedShape={} "
+               "rejectedAspect={} rejectedOrientation={} "
+               "layoutRecognized={} layoutChecked={}\\n"
+               "fine: contours={} area={} quadrilaterals={} "
+               "rotated={} plausible={} rejectedShape={} "
+               "rejectedAspect={} rejectedOrientation={} "
+               "layoutRecognized={} layoutChecked={}\\n",
+               frame.cols,frame.rows,signal.brightness,signal.nonblack,
+               boFocusCalibrating,boRecognitionPaused,
+               processor.TrackingActive(),found.has_value(),
+               optFine.has_value(),iFineMicros,
+               detection.contours,detection.areaCandidates,
+               detection.quadrilaterals,detection.rotatedCandidates,
+               detection.aspectCandidates,detection.rejectedShape,
+               detection.rejectedAspect,detection.rejectedOrientation,
+               detection.layoutRecognized,detection.layoutChecked,
+               aFineDiagnostics.contours,aFineDiagnostics.areaCandidates,
+               aFineDiagnostics.quadrilaterals,
+               aFineDiagnostics.rotatedCandidates,
+               aFineDiagnostics.aspectCandidates,
+               aFineDiagnostics.rejectedShape,
+               aFineDiagnostics.rejectedAspect,
+               aFineDiagnostics.rejectedOrientation,
+               aFineDiagnostics.layoutRecognized,
+               aFineDiagnostics.layoutChecked);
+            aReport.flush();
+            if(!aReport)
+               throw std::runtime_error(std::format(
+                  "cannot finish undetected diagnostics: {}",
+                  aReportPath.string()));
+            deckkernel::camera::Trace(
+               "[CAM-UNDETECTED] raw={} edges={} report={} "
+               "live={} fine={} contours={} plausible={} fine-us={}",
+               aRawPath.string(),aEdgesPath.string(),
+               aReportPath.string(),found.has_value(),
+               optFine.has_value(),aFineDiagnostics.contours,
+               aFineDiagnostics.aspectCandidates,iFineMicros);
+            preview.SetSettingsNotice(
+               std::format("Diagnostic saved: {}",strPrefix));
+         }
+#endif
          bool const flip=preview.Flip180();
          if(flip!=appliedFlip) {
             processor.ReevaluateOcrAfterRotation(flip);
