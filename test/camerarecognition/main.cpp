@@ -811,12 +811,16 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
       auto const iMicros=std::chrono::duration_cast<
          std::chrono::microseconds>(
             std::chrono::steady_clock::now()-aDetectionStarted).count();
-      deckkernel::camera::Trace(
-         "[CAM-DETECT-TIME] found=0 us={} working={}x{} contours={} "
-         "rejected-shape={} rejected-aspect={} rejected-tilt={}",
-         iMicros,image.cols,image.rows,stats.contours,
-         stats.rejectedShape,stats.rejectedAspect,
-         stats.rejectedOrientation);
+      // Unsuccessful frames are frequent; do not make verbose logging
+      // itself a new performance bottleneck.
+      static thread_local unsigned uMissedSamples{};
+      if(++uMissedSamples%30==0)
+         deckkernel::camera::Trace(
+            "[CAM-DETECT-TIME] found=0 us={} working={}x{} contours={} "
+            "rejected-shape={} rejected-aspect={} rejected-tilt={}",
+            iMicros,image.cols,image.rows,stats.contours,
+            stats.rejectedShape,stats.rejectedAspect,
+            stats.rejectedOrientation);
       return std::nullopt;
    }
 
