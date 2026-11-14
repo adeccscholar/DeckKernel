@@ -54,6 +54,7 @@
 #include <cwchar>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <chrono>
 #include <future>
 #include <memory>
@@ -4079,15 +4080,15 @@ int CameraApplicationMain(int argc,char** argv) {
             aReport<<std::format(
                "frame={}x{} brightness={:.2f} nonblack={} "
                "focusCalibrating={} paused={} tracked={} "
-               "liveContour={} fineContour={} fineTimeUs={}\\n"
+               "liveContour={} fineContour={} fineTimeUs={}\n"
                "live: contours={} area={} quadrilaterals={} "
                "rotated={} plausible={} rejectedShape={} "
                "rejectedAspect={} rejectedOrientation={} "
-               "layoutRecognized={} layoutChecked={}\\n"
+               "layoutRecognized={} layoutChecked={}\n"
                "fine: contours={} area={} quadrilaterals={} "
                "rotated={} plausible={} rejectedShape={} "
                "rejectedAspect={} rejectedOrientation={} "
-               "layoutRecognized={} layoutChecked={}\\n",
+               "layoutRecognized={} layoutChecked={}\n",
                frame.cols,frame.rows,signal.brightness,signal.nonblack,
                boFocusCalibrating,boRecognitionPaused,
                processor.TrackingActive(),found.has_value(),
