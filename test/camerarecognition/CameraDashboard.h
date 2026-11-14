@@ -34,6 +34,9 @@ class CameraDashboard {
    SDL_Renderer* m_pRenderer{};
    SDL_Cursor* m_pHandCursor{};
    SDL_Cursor* m_pArrowCursor{};
+   SDL_Texture* m_pBackground{};
+   int m_iBackgroundWidth{};
+   int m_iBackgroundHeight{};
    SDL_Texture* m_pRaw{};
    SDL_Texture* m_pCard{};
    SDL_Texture* m_pReference{};
@@ -253,6 +256,7 @@ public:
       if(!m_pRenderer)throw std::runtime_error(SDL_GetError());
    }
    ~CameraDashboard() {
+      if(m_pBackground)SDL_DestroyTexture(m_pBackground);
       if(m_pRaw)SDL_DestroyTexture(m_pRaw);
       if(m_pCard)SDL_DestroyTexture(m_pCard);
       if(m_pReference)SDL_DestroyTexture(m_pReference);
@@ -669,14 +673,19 @@ public:
       // Reuse the SDL background raster; actual card textures are rendered above it.
       SkPixmap aPixels;
       if(aSurface->peekPixels(&aPixels)) {
-         SDL_Texture* pBackground=SDL_CreateTexture(m_pRenderer,
-            SDL_PIXELFORMAT_BGRA32,SDL_TEXTUREACCESS_STREAMING,
-            iWidth,iHeight);
-         if(pBackground) {
-            SDL_UpdateTexture(pBackground,nullptr,aPixels.addr(),
+         if(!m_pBackground || m_iBackgroundWidth!=iWidth ||
+            m_iBackgroundHeight!=iHeight) {
+            if(m_pBackground)SDL_DestroyTexture(m_pBackground);
+            m_pBackground=SDL_CreateTexture(m_pRenderer,
+               SDL_PIXELFORMAT_BGRA32,SDL_TEXTUREACCESS_STREAMING,
+               iWidth,iHeight);
+            m_iBackgroundWidth=iWidth;
+            m_iBackgroundHeight=iHeight;
+         }
+         if(m_pBackground) {
+            SDL_UpdateTexture(m_pBackground,nullptr,aPixels.addr(),
                static_cast<int>(aPixels.rowBytes()));
-            SDL_RenderCopy(m_pRenderer,pBackground,nullptr,nullptr);
-            SDL_DestroyTexture(pBackground);
+            SDL_RenderCopy(m_pRenderer,m_pBackground,nullptr,nullptr);
          }
       }
       // The image panels deliberately occupy equal areas for visual comparison.
