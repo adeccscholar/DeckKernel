@@ -32,6 +32,8 @@
 class CameraDashboard {
    SDL_Window* m_pWindow{};
    SDL_Renderer* m_pRenderer{};
+   SDL_Cursor* m_pHandCursor{};
+   SDL_Cursor* m_pArrowCursor{};
    SDL_Texture* m_pRaw{};
    SDL_Texture* m_pCard{};
    SDL_Texture* m_pReference{};
@@ -70,6 +72,102 @@ class CameraDashboard {
    std::size_t m_uCandidateIndex{};
    std::size_t m_uCandidateCount{};
    bool m_boPrintingConfirmed{};
+   enum class ButtonId {
+      None,TableFocus,Options,Accept,Discard,Previous,Next,AllPrintings
+   };
+   ButtonId m_eHovered{ButtonId::None};
+   ButtonId m_ePressed{ButtonId::None};
+
+   /**
+   \brief Resolve an enabled button from render-space mouse coordinates.
+   \details Same rectangles are used by painting and hit testing.
+   \param iX Horizontal renderer pixel coordinate.
+   \param iY Vertical renderer pixel coordinate.
+   \returns Enabled button or None.
+   \throw None.
+   */
+   [[nodiscard]] ButtonId HitButton(int iX,int iY) const {
+      int iWidth{},iHeight{};
+      SDL_GetRendererOutputSize(m_pRenderer,&iWidth,&iHeight);
+      auto const Inside=[&](float flX,float flY,float flWidth,float flHeight) {
+         return iX>=flX && iX<flX+flWidth &&
+            iY>=flY && iY<flY+flHeight;
+      };
+      if(Inside(iWidth-306.f,9.f,153.f,38.f))return ButtonId::TableFocus;
+      if(Inside(iWidth-145.f,9.f,128.f,38.f))return ButtonId::Options;
+      if(!m_bCardLocked)return ButtonId::None;
+      float const flY=static_cast<float>(iHeight-77);
+      if(Inside(28.f,flY,117.f,43.f))return ButtonId::Accept;
+      if(Inside(153.f,flY,117.f,43.f))return ButtonId::Discard;
+      float const flPaneWidth=(iWidth-32.f-36.f-
+         std::max(230.f,iWidth*0.23f))/2.f;
+      float const flFirst=16.f+flPaneWidth+18.f+12.f;
+      float const flNavWidth=std::min(140.f,(flPaneWidth-44.f)/3.f);
+      if(m_uCandidateCount>1) {
+         if(Inside(flFirst,flY,flNavWidth,43.f))
+            return ButtonId::Previous;
+         if(Inside(flFirst+flNavWidth+8.f,flY,flNavWidth,43.f))
+            return ButtonId::Next;
+      }
+      if(m_uCandidateCount>0 && !m_strOracleId.empty() &&
+         Inside(flFirst+2.f*(flNavWidth+8.f),flY,flNavWidth,43.f))
+         return ButtonId::AllPrintings;
+      return ButtonId::None;
+   }
+   [[nodiscard]] ButtonId MouseButton(int iX,int iY) const {
+      int iWidth{},iHeight{},iWindowWidth{},iWindowHeight{};
+      SDL_GetRendererOutputSize(m_pRenderer,&iWidth,&iHeight);
+      SDL_GetWindowSize(m_pWindow,&iWindowWidth,&iWindowHeight);
+      return HitButton(iX*std::max(1,iWidth)/std::max(1,iWindowWidth),
+         iY*std::max(1,iHeight)/std::max(1,iWindowHeight));
+   }
+   void SetHover(ButtonId eButton) {
+      if(m_eHovered==eButton)return;
+      m_eHovered=eButton;
+      SDL_Cursor* pCursor=eButton==ButtonId::None?
+         m_pArrowCursor:m_pHandCursor;
+      if(pCursor)SDL_SetCursor(pCursor);
+   }
+   void Activate(ButtonId eButton) {
+      switch(eButton) {
+         case ButtonId::TableFocus:m_boFocusToggle=true;break;
+         case ButtonId::Options:m_boOptions=true;break;
+         case ButtonId::Accept:m_boConfirm=true;break;
+         case ButtonId::Discard:m_boReject=true;break;
+         case ButtonId::Previous:--m_iNavigation;break;
+         case ButtonId::Next:++m_iNavigation;break;
+         case ButtonId::AllPrintings:m_boAllPrintings=true;break;
+         default:break;
+      }
+   }
+   static SkColor Brightness(SkColor uColor,int iDelta) {
+      auto const Adjust=[&](int iValue) -> U8CPU {
+         return static_cast<U8CPU>(std::clamp(iValue+iDelta,0,255));
+      };
+      return SkColorSetARGB(SkColorGetA(uColor),
+         Adjust(SkColorGetR(uColor)),Adjust(SkColorGetG(uColor)),
+         Adjust(SkColorGetB(uColor)));
+   }
+   void DrawButton(SkCanvas* pCanvas,SkRect aRect,
+      char const* szLabel,SkColor uColor,bool boEnabled,
+      ButtonId eButton,float flSize=14.f) const {
+      bool const boHover=boEnabled && m_eHovered==eButton;
+      bool const boPressed=boEnabled && m_ePressed==eButton;
+      if(boPressed)aRect.offset(0.f,2.f);
+      SkColor const uFill=!boEnabled?0xff344753:
+         Brightness(uColor,boPressed?-24:boHover?26:0);
+      Fill(pCanvas,aRect,uFill);
+      if(boHover || boPressed) {
+         SkPaint aStroke;
+         aStroke.setAntiAlias(true);
+         aStroke.setStyle(SkPaint::kStroke_Style);
+         aStroke.setStrokeWidth(boPressed?2.f:1.5f);
+         aStroke.setColor(boPressed?0xffd9f9ff:0xff8ed5ee);
+         pCanvas->drawRoundRect(aRect,10,10,aStroke);
+      }
+      Text(pCanvas,aRect.x()+11.f,aRect.y()+27.f,
+         szLabel,flSize,boEnabled?0xfff5f7fa:0xff95a8b3);
+   }
    static sk_sp<SkTypeface>& Typeface() {
       static sk_sp<SkTypeface> face=[] {
          auto manager=SkFontMgr_New_DirectWrite();
@@ -150,12 +248,16 @@ public:
       if(!m_pWindow)throw std::runtime_error(SDL_GetError());
       SDL_SetWindowMinimumSize(m_pWindow,1200,760);
       m_pRenderer=SDL_CreateRenderer(m_pWindow,-1,SDL_RENDERER_SOFTWARE);
+      m_pHandCursor=SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
+      m_pArrowCursor=SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
       if(!m_pRenderer)throw std::runtime_error(SDL_GetError());
    }
    ~CameraDashboard() {
       if(m_pRaw)SDL_DestroyTexture(m_pRaw);
       if(m_pCard)SDL_DestroyTexture(m_pCard);
       if(m_pReference)SDL_DestroyTexture(m_pReference);
+      if(m_pHandCursor)SDL_FreeCursor(m_pHandCursor);
+      if(m_pArrowCursor)SDL_FreeCursor(m_pArrowCursor);
       if(m_pRenderer)SDL_DestroyRenderer(m_pRenderer);
       if(m_pWindow)SDL_DestroyWindow(m_pWindow);
       SDL_QuitSubSystem(SDL_INIT_VIDEO);
@@ -193,48 +295,31 @@ public:
          if(aEvent.type==SDL_MOUSEWHEEL && m_bCardLocked &&
             aEvent.wheel.y!=0)
             m_iNavigation-=aEvent.wheel.y;
-         if(aEvent.type==SDL_MOUSEBUTTONDOWN) {
-            if(aEvent.button.button==SDL_BUTTON_LEFT) {
-               int iWidth{},iHeight{};
-               SDL_GetRendererOutputSize(m_pRenderer,&iWidth,&iHeight);
-               int iWindowWidth{},iWindowHeight{};
-               SDL_GetWindowSize(m_pWindow,&iWindowWidth,&iWindowHeight);
-               int const iX=aEvent.button.x*std::max(1,iWidth)/
-                  std::max(1,iWindowWidth);
-               int const iY=aEvent.button.y*std::max(1,iHeight)/
-                  std::max(1,iWindowHeight);
-               if(iY>=9 && iY<47) {
-                  if(iX>=iWidth-145 && iX<iWidth-17)
-                     m_boOptions=true;
-                  else if(iX>=iWidth-306 && iX<iWidth-153)
-                     m_boFocusToggle=true;
-               }
-               float const flPaneWidth=(iWidth-32.f-36.f-
-                  std::max(230.f,iWidth*0.23f))/2.f;
-               float const flRight=16.f+flPaneWidth+18.f;
-               int const iButtonWidth=static_cast<int>(
-                  std::min(140.f,(flPaneWidth-44.f)/3.f));
-               int const iFirst=static_cast<int>(flRight+12.f);
-               int const iControlY=iHeight-77;
-               if(m_bCardLocked &&
-                  iY>=iControlY && iY<iControlY+43) {
-                  if(iX>=28 && iX<145)m_boConfirm=true;
-                  else if(iX>=153 && iX<270)m_boReject=true;
-                  else if(iX>=iFirst &&
-                     iX<iFirst+iButtonWidth && m_uCandidateCount>1)
-                     --m_iNavigation;
-                  else if(iX>=iFirst+iButtonWidth+8 &&
-                     iX<iFirst+2*iButtonWidth+8 && m_uCandidateCount>1)
-                     ++m_iNavigation;
-                  else if(iX>=iFirst+2*(iButtonWidth+8) &&
-                     iX<iFirst+3*iButtonWidth+16 &&
-                     m_uCandidateCount>0 && !m_strOracleId.empty())
-                     m_boAllPrintings=true;
-               }
-            }
-            if(aEvent.button.button==SDL_BUTTON_RIGHT && m_bCardLocked)
-               m_boReject=true;
+         if(aEvent.type==SDL_MOUSEMOTION)
+            SetHover(MouseButton(aEvent.motion.x,aEvent.motion.y));
+         if(aEvent.type==SDL_WINDOWEVENT &&
+            aEvent.window.event==SDL_WINDOWEVENT_LEAVE) {
+            SetHover(ButtonId::None);
+            m_ePressed=ButtonId::None;
          }
+         if(aEvent.type==SDL_MOUSEBUTTONDOWN &&
+            aEvent.button.button==SDL_BUTTON_LEFT) {
+            m_ePressed=MouseButton(aEvent.button.x,aEvent.button.y);
+            SetHover(m_ePressed);
+         }
+         if(aEvent.type==SDL_MOUSEBUTTONUP &&
+            aEvent.button.button==SDL_BUTTON_LEFT) {
+            ButtonId const eReleased=MouseButton(
+               aEvent.button.x,aEvent.button.y);
+            if(m_ePressed!=ButtonId::None &&
+               m_ePressed==eReleased)
+               Activate(eReleased);
+            m_ePressed=ButtonId::None;
+            SetHover(eReleased);
+         }
+         if(aEvent.type==SDL_MOUSEBUTTONDOWN &&
+            aEvent.button.button==SDL_BUTTON_RIGHT && m_bCardLocked)
+            m_boReject=true;
       }
       return m_bRunning;
    }
@@ -441,17 +526,14 @@ public:
       Text(pCanvas,25.f,35.f,"DECKKERNEL  /  IMAGE RECOGNITION",23.f,0xfff5f7fa);
       Text(pCanvas,static_cast<float>(iWidth)-465.f,35.f,
          m_strPhase.substr(0,18),15.f,0xff8ed5ee);
-      Fill(pCanvas,SkRect::MakeXYWH(
+      DrawButton(pCanvas,SkRect::MakeXYWH(
          static_cast<float>(iWidth)-306.f,9.f,153.f,38.f),
-         m_boTableAutoFocus?0xff218a78:0xff344753);
-      Text(pCanvas,static_cast<float>(iWidth)-296.f,35.f,
          m_boTableAutoFocus?"Table AF: ON":"Table AF: OFF",
-         14.f,0xfff5f7fa);
-      Fill(pCanvas,SkRect::MakeXYWH(
+         m_boTableAutoFocus?0xff218a78:0xff344753,
+         true,ButtonId::TableFocus);
+      DrawButton(pCanvas,SkRect::MakeXYWH(
          static_cast<float>(iWidth)-145.f,9.f,128.f,38.f),
-         0xff244454);
-      Text(pCanvas,static_cast<float>(iWidth)-122.f,35.f,
-         "Options",16.f,0xfff5f7fa);
+         "Options",0xff244454,true,ButtonId::Options,16.f);
       Text(pCanvas,30.f,84.f,
          m_bCardLocked?"INPUT / CAPTURED CARD":"INPUT / CAMERA",
          16.f,0xff8ed5ee);
@@ -565,34 +647,25 @@ public:
       bool const boCanBrowse=m_bCardLocked && m_uCandidateCount>1;
       bool const boCanList=m_bCardLocked && m_uCandidateCount>0 &&
          !m_strOracleId.empty();
-      Fill(pCanvas,SkRect::MakeXYWH(
+      DrawButton(pCanvas,SkRect::MakeXYWH(
          28.f,flActionsY,117.f,43.f),
-         m_bCardLocked?0xff218a78:0xff344753);
-      Fill(pCanvas,SkRect::MakeXYWH(
+         "Accept",0xff218a78,m_bCardLocked,ButtonId::Accept,15.f);
+      DrawButton(pCanvas,SkRect::MakeXYWH(
          153.f,flActionsY,117.f,43.f),
-         m_bCardLocked?0xff85454a:0xff344753);
-      Text(pCanvas,40.f,flActionsY+27.f,"Accept",15.f,
-         m_bCardLocked?0xffffffff:0xff95a8b3);
-      Text(pCanvas,166.f,flActionsY+27.f,"Discard",15.f,
-         m_bCardLocked?0xffffffff:0xff95a8b3);
+         "Discard",0xff85454a,m_bCardLocked,ButtonId::Discard,15.f);
       float const flNavWidth=std::min(140.f,(flPaneWidth-44.f)/3.f);
       float const flNavX=flRight+12.f;
-      Fill(pCanvas,SkRect::MakeXYWH(
+      DrawButton(pCanvas,SkRect::MakeXYWH(
          flNavX,flActionsY,flNavWidth,43.f),
-         boCanBrowse?0xff244454:0xff344753);
-      Fill(pCanvas,SkRect::MakeXYWH(
+         "Previous",0xff244454,boCanBrowse,ButtonId::Previous);
+      DrawButton(pCanvas,SkRect::MakeXYWH(
          flNavX+flNavWidth+8.f,flActionsY,flNavWidth,43.f),
-         boCanBrowse?0xff244454:0xff344753);
-      Fill(pCanvas,SkRect::MakeXYWH(
+         "Next",0xff244454,boCanBrowse,ButtonId::Next);
+      DrawButton(pCanvas,SkRect::MakeXYWH(
          flNavX+2.f*(flNavWidth+8.f),flActionsY,
-         flNavWidth,43.f),boCanList?0xff218a78:0xff344753);
-      Text(pCanvas,flNavX+12.f,flActionsY+27.f,
-         "Previous",14.f,boCanBrowse?0xfff5f7fa:0xff95a8b3);
-      Text(pCanvas,flNavX+flNavWidth+20.f,flActionsY+27.f,
-         "Next",14.f,boCanBrowse?0xfff5f7fa:0xff95a8b3);
-      Text(pCanvas,flNavX+2.f*(flNavWidth+8.f)+8.f,
-         flActionsY+27.f,
-         "All printings",13.f,boCanList?0xffffffff:0xff95a8b3);
+         flNavWidth,43.f),
+         "All printings",0xff218a78,boCanList,
+         ButtonId::AllPrintings,13.f);
       // Reuse the SDL background raster; actual card textures are rendered above it.
       SkPixmap aPixels;
       if(aSurface->peekPixels(&aPixels)) {
