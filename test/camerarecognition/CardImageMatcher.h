@@ -73,6 +73,7 @@ namespace deckkernel::camera {
       // overwritten by a newer worker result before the next UI poll.
       bool boArtworkRecognized{};
       bool boOcrNameRecognized{};
+      bool boSplitWest{};
       unsigned uSelectionSerial{};
    };
 
@@ -1235,13 +1236,15 @@ namespace deckkernel::camera {
       CardImageMatchResult MatchSplitWest(PGconn* pConnection,
          Task const& aTask) {
          CardImageMatchResult aResult{aTask.uEvent};
+         aResult.boSplitWest=true;
          aResult.strStatus="SPLIT-WEST: searching first face";
          std::optional<Ranked> const optFirst=
             FindArtwork(pConnection,aTask.aSplitFirst);
          bool const boArtworkVerified=optFirst &&
             AcceptArtwork(*optFirst);
          if(!boArtworkVerified && aTask.strSplitTitle.empty()) {
-            aResult.strStatus="SPLIT-WEST: first face inconclusive";
+            aResult.strStatus=
+               "SPLIT-WEST: first face unresolved - recapture or discard";
             return aResult;
          }
          if(Cancelled(aTask.uEvent))return aResult;
