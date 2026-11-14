@@ -710,11 +710,19 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
                unsigned uStrongSides{};
                for(double const flCoverage:arrEdgeCoverage)
                   uStrongSides+=flCoverage>=0.72;
+               // A sharp card-shaped perimeter alone is not proof of a
+               // physical card. The failed captures contained only an
+               // illustration without an independent printed structure.
+               // A borderless card can still qualify through its distinct
+               // inner text panel; split cards through their face panels.
+               bool const boInternalCardEvidence=uInnerPanels>=1;
                bool const boFullPerimeter=
-                  uStrongSides>=4 && ratio>=1.28 && ratio<=1.55 &&
+                  boInternalCardEvidence && uStrongSides>=4 &&
+                  ratio>=1.28 && ratio<=1.55 &&
                   area>=imageArea*0.004;
                bool const boPhysicalOutline=
-                  uStrongSides>=3 && ratio>=1.28 && ratio<=1.55 &&
+                  boInternalCardEvidence && uStrongSides>=3 &&
+                  ratio>=1.28 && ratio<=1.55 &&
                   area>=imageArea*0.006 &&
                   (boundaryContrast>=8.0 || boNestedLayout);
                // Interrupted dark borders may have two visible sides.
