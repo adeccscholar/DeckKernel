@@ -26,7 +26,7 @@ if(NOT DEFINED ADECC_TP_SDL2_ROOT OR NOT DEFINED ADECC_TP_SKIA_ROOT)
 endif()
 find_package(SDL2 CONFIG REQUIRED PATHS "${ADECC_TP_SDL2_ROOT}" NO_DEFAULT_PATH)
 find_package(Skia CONFIG REQUIRED PATHS "${ADECC_TP_SKIA_ROOT}" NO_DEFAULT_PATH)
-add_executable(deckkernel_camera_recognition_test WIN32 main.cpp CameraDeviceEnumeration.cpp CameraSettingsDialog.h CameraCardSession.h CameraCardLayout.h CameraPhysicalTracker.h CardImageMatcher.h CameraDashboard.h CameraOcrZones.h CameraImageQuality.h CameraTypography.h)
+add_executable(deckkernel_camera_recognition_test WIN32 main.cpp CameraDeviceEnumeration.cpp CameraSettingsDialog.h CameraCardSession.h CameraCardLayout.h CameraSplitWest.h CameraFrameGeometry.h CameraPhysicalTracker.h CardImageMatcher.h CameraDashboard.h CameraOcrZones.h CameraImageQuality.h CameraTypography.h)
 target_link_libraries(deckkernel_camera_recognition_test PRIVATE user32 shell32 ole32 oleaut32)
 # Match the proven BuildEngine-Tests/pdfium/SDL2 target: a WIN32
 # executable with WinMain inside main.cpp; no alternate startup wrapper
