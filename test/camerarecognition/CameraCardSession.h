@@ -13,6 +13,7 @@ present. An immutable capture is shared by all image recognition stages.
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <utility>
