@@ -282,11 +282,12 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
    bool boRequireStandardLayout=false) {
    if(diagnostics)*diagnostics={};
    if(frame.empty()||frame.cols<64||frame.rows<64)return std::nullopt;
+   auto const aDetectionStarted=std::chrono::steady_clock::now();
 
    // Keep contour work bounded even when the camera captures at 4K.
    // Perspective rectification always uses unmodified source pixels.
    double const scale=std::min(1.0,
-      1600.0/std::max(frame.cols,frame.rows));
+      1280.0/std::max(frame.cols,frame.rows));
    cv::Mat image;
    if(scale<1.0)
       cv::resize(frame,image,cv::Size(),scale,scale,cv::INTER_AREA);
@@ -476,23 +477,24 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
          unsigned uSupportedSides{};
          for(double const flCoverage:arrEdgeCoverage)
             uSupportedSides+=flCoverage>=0.45;
-         // A closed four-corner contour needs evidence for at least three
-         // sides, while allowing one weak edge under glare/occlusion.
-         if(uSupportedSides<3) {
+         // Dark printed borders can disappear against a dark desktop;
+         // one strong specular highlight can also break a Canny side.
+         // Do not reject a plausible rectangle solely for two weak sides.
+         // A weak perimeter will require corroborating internal structure
+         // or a well-filled physical rectangular silhouette below.
+         if(uSupportedSides<2) {
             ++stats.rejectedShape;
             continue;
          }
          // A genuinely broken contour requires STRONG support from at
          // least three straight sides. A rounded mouse has tangential
          // touches to a minAreaRect, not long, straight supported edges.
+         bool boStrongRecoveredOutline=true;
          if(recovered && fill<0.86) {
             unsigned uStrongSides{};
             for(double const flCoverage:arrEdgeCoverage)
                uStrongSides+=flCoverage>=0.60;
-            if(uStrongSides<3) {
-               ++stats.rejectedShape;
-               continue;
-            }
+            boStrongRecoveredOutline=uStrongSides>=3;
          }
          // PHASE 01: compare the contour to the 63 x 88 mm physical
          // card. The original code only rewarded the ratio weakly, so an
@@ -611,6 +613,16 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
             arrPanelCenters[uInnerPanels]=aInner.aCenter;
             uRotatedPanels+=boPerpendicular;
             if(++uInnerPanels==arrPanels.size())break;
+         }
+         // Evaluate weak outer edges AFTER inexpensive inner-shape
+         // evidence. This avoids losing dark cards with interrupted borders
+         // while retaining rejection of rounded mice and artwork-only ROIs.
+         bool const boPlausibleSilhouette=fill>=0.91 &&
+            ratio>=1.29 && ratio<=1.52;
+         if((uSupportedSides<3 || !boStrongRecoveredOutline) &&
+            !boPlausibleSilhouette && uInnerPanels<2) {
+            ++stats.rejectedShape;
+            continue;
          }
          // Two distinct inner panels spread across the physical face
          // provide structural evidence even without standard horizontal
@@ -787,7 +799,18 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
    stats.selectedRotatedPanels=uBestRotatedPanels;
    stats.selectedRatio=flBestRatio;
    if(diagnostics)*diagnostics=stats;
-   if(best.size()!=4)return std::nullopt;
+   if(best.size()!=4) {
+      auto const iMicros=std::chrono::duration_cast<
+         std::chrono::microseconds>(
+            std::chrono::steady_clock::now()-aDetectionStarted).count();
+      deckkernel::camera::Trace(
+         "[CAM-DETECT-TIME] found=0 us={} working={}x{} contours={} "
+         "rejected-shape={} rejected-aspect={} rejected-tilt={}",
+         iMicros,image.cols,image.rows,stats.contours,
+         stats.rejectedShape,stats.rejectedAspect,
+         stats.rejectedOrientation);
+      return std::nullopt;
+   }
 
    // Order four corners around the polygon centroid. Sum/difference extrema
    // can assign the same point to multiple corners under strong perspective.
@@ -831,6 +854,14 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
       quad[i]=cv::Point(cvRound(pts[i].x),cvRound(pts[i].y));
    if(boBestRotate180)
       cv::rotate(rectified,rectified,cv::ROTATE_180);
+   auto const iMicros=std::chrono::duration_cast<
+      std::chrono::microseconds>(
+         std::chrono::steady_clock::now()-aDetectionStarted).count();
+   deckkernel::camera::Trace(
+      "[CAM-DETECT-TIME] found=1 us={} working={}x{} contours={} "
+      "inner-panels={} layout={} supported-ratio={:.3f}",
+      iMicros,image.cols,image.rows,stats.contours,uBestInnerPanels,
+      boBestLayoutRecognized,flBestRatio);
    return FoundCard{rectified,DHash(rectified),quad,
       boBestRotate180,boBestLayoutRecognized};
 }
