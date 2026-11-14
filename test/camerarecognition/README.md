@@ -985,7 +985,9 @@ hover, a brighter fill and outline on hover, and a darker two-pixel inset
 while pressed. Disabled buttons remain grey and do not consume clicks.
 Actions fire on mouse-button release **only when released over the same
 control that received mouse-button down**. This covers Accept, Discard,
-Previous, Next, All printings, Options and Table AF.
+Previous, Next, All printings, Options and Table AF. The SDL settings
+dialog additionally highlights its row arrows and Start/Cancel buttons on
+hover and shows a pressed-in state until mouse release.
 
 The first dedicated special-layout path is **classic Split West**,
 referencing two printed face panels whose upper edges point west relative
