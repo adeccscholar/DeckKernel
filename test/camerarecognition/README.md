@@ -977,6 +977,37 @@ module evaluation is unchanged.
 PostgreSQL printing-query duration, preview of `frozen-overscan.png`,
 and OCR success on known printed collector/set fields.
 
+## 2026-11-14: fixed physical orientation is authoritative
+
+Camera orientation has two distinct policies. In **Automatic**, the
+application may infer 0/180 orientation from the standard title/type
+geometry or OCR, but a structurally recognized card is not necessarily
+*directionally* recognized. Only a reliable orientation result disables
+the reverse-image matching fallback.
+
+In controlled entry mode, **Top, Bottom, Left and Right** describe the
+physical card's top edge in the raw camera image. The layout detector
+does not infer or override rotation in these modes. Bottom is normalized
+once by 180 degrees; Left/Right rotate the camera coordinate system
+once by 90 degrees before outer-card detection. The declared orientation
+is retained across optical tracking, high-resolution rectification,
+OCR, printing-strip overscan and image matching. Neither an automatic
+OCR rotation nor the manual **R** reversal can override the fixed
+direction. This eliminates duplicate 0/180 artwork searches on a
+controlled, correctly presented card.
+
+An effective capture rotation now combines the initial physical
+normalization with the optional automatic OCR result, ensuring later
+higher-resolution captures have the same orientation as the initial
+OCR-selected image. In fixed mode, the OCR correction is always off.
+On-screen orientation labels distinguish fixed direction from reliable
+automatic direction and from uncertain automatic mode. A regression
+test checks that fixed Top/Bottom do not run layout rotation inference
+and normalize matching synthetic cards identically.
+
+These are source changes and still need the Windows/BCC64X build and
+physical verification with upside-down / west-facing cards.
+
 ## 2026-11-14: evidence for cards never acquired
 
 A user supplied `Test.zip` containing 50 numbered card events, a verbose
