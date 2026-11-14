@@ -1451,6 +1451,10 @@ class Processor {
    bool m_boCapturedRotate180{};
    bool m_boKnownUpright{};
    unsigned m_uOuterContourMisses{};
+   std::optional<hash_ty> m_optRejectedFingerprint;
+   std::optional<cv::Rect> m_optRejectedBounds;
+   std::optional<cv::Rect> m_optLastObservedBounds;
+   unsigned m_uRejectedMissing{};
    int m_iReferenceOrientation{};
    int m_bestNameConfidence{},m_bestTypeConfidence{},m_bestRulesConfidence{};
    std::string m_strName{"--"};
@@ -1718,6 +1722,13 @@ public:
    [[nodiscard]] bool DiscardScan() {
       deckkernel::camera::Trace("[CAM-COLLECT] discarded event={} collected={}",
          m_ocrCard.value_or(0),m_vecCollected.size());
+      // An explicitly discarded inner artwork must not immediately
+      // start the same expensive recognition again.
+      if(m_capture.Frozen() && m_optLastObservedBounds) {
+         m_optRejectedFingerprint=DHash(m_capture.Image());
+         m_optRejectedBounds=m_optLastObservedBounds;
+         m_uRejectedMissing=0;
+      }
       ResetScan();
       m_strStatus="SCAN DISCARDED - focus table for next card";
       return true;
@@ -2495,6 +2506,32 @@ public:
                }
             }
          }
+         // Reject the same visual object until removed or replaced.
+         // Geometry and dHash must BOTH agree. A new card placed in
+         // the same location can be acquired normally.
+         if(m_optRejectedBounds && m_optRejectedFingerprint) {
+            if(optCard) {
+               cv::Rect const aNewBox=cv::boundingRect(optCard->corners);
+               cv::Rect const aOverlap=aNewBox & *m_optRejectedBounds;
+               double const flOverlap=static_cast<double>(aOverlap.area())/
+                  std::max(1,std::min(
+                     aNewBox.area(),m_optRejectedBounds->area()));
+               unsigned const uHashDistance=std::popcount(
+                  optCard->fingerprint ^ *m_optRejectedFingerprint);
+               if(flOverlap>=0.70 && uHashDistance<=12) {
+                  m_uRejectedMissing=0;
+                  optCard.reset();
+               }
+               else {
+                  m_optRejectedBounds.reset();
+                  m_optRejectedFingerprint.reset();
+               }
+            }
+            else if(++m_uRejectedMissing>=15) {
+               m_optRejectedBounds.reset();
+               m_optRejectedFingerprint.reset();
+            }
+         }
          // Layout is only advisory; acquire a geometrically credible card
          // even when the internal frame is blurred or nonstandard.
          if(!optCard && !m_cardLocked)
@@ -2522,6 +2559,8 @@ public:
    }
    bool Process(std::optional<FoundCard> const& found,
       cv::Mat const& sourceFrame={},bool boTrustedTracking=false) {
+      if(found)
+         m_optLastObservedBounds=cv::boundingRect(found->corners);
       auto event=m_detector.Accept(found,boTrustedTracking);
       if(m_focusPending && m_ocrCard)
          EvaluateFocus(found &&
@@ -4419,7 +4458,8 @@ int CameraApplicationMain(int argc,char** argv) {
             cv::putText(annotated,"TABLE FOCUS CALIBRATION",cv::Point(12,26),
                cv::FONT_HERSHEY_SIMPLEX,0.7,
                cv::Scalar(0,180,250),2,cv::LINE_AA);
-         } else if(found && !processor.CardLocked()) {
+         } else if(found && !processor.CardLocked() &&
+            processor.StableFrames()>=processor.RequiredStableFrames()-1) {
             for(unsigned i=0;i<4;++i)
                cv::line(annotated,ScalePreview(found->corners[i]),
                   ScalePreview(found->corners[(i+1)%4]),
