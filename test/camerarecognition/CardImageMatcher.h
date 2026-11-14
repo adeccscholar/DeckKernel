@@ -620,7 +620,7 @@ namespace deckkernel::camera {
             // still corroborate the shortlisted printing.
             
             "AND (SELECT count(*) FROM deckkernel_test.scryfall_card_faces f2 "
-            "WHERE f2.card_id=v.card_id)=2 ":
+            "WHERE f2.card_id=v.card_id AND f2.face_id>0)=2 ":
             "WHERE v.variant IN ('normal','border_crop','large') ";
          strSql+=
             optArtwork?
@@ -1459,7 +1459,7 @@ namespace deckkernel::camera {
             "ON a.id=v.asset_id AND a.image_data IS NOT NULL "
             "WHERE (SELECT COUNT(*) FROM "
             " deckkernel_test.scryfall_card_faces f2 "
-            " WHERE f2.card_id=c.id)=2 "
+            " WHERE f2.card_id=c.id AND f2.face_id>0)=2 "
             "ORDER BY c.scryfall_id,"
             "CASE v.variant WHEN 'normal' THEN 0 "
             "WHEN 'large' THEN 1 ELSE 2 END "
