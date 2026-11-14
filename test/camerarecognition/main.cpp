@@ -279,7 +279,7 @@ struct CardDetectionDiagnostics {
 
 std::optional<FoundCard> FindCard(cv::Mat const& frame,
    CardDetectionDiagnostics* diagnostics=nullptr,
-   bool boRequireStandardLayout=false) {
+   bool boRequireStandardLayout=false,bool boHighDetail=false) {
    if(diagnostics)*diagnostics={};
    if(frame.empty()||frame.cols<64||frame.rows<64)return std::nullopt;
    auto const aDetectionStarted=std::chrono::steady_clock::now();
@@ -287,7 +287,8 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
    // Keep contour work bounded even when the camera captures at 4K.
    // Perspective rectification always uses unmodified source pixels.
    double const scale=std::min(1.0,
-      1280.0/std::max(frame.cols,frame.rows));
+      (boHighDetail?1600.0:1280.0)/
+         std::max(frame.cols,frame.rows));
    cv::Mat image;
    if(scale<1.0)
       cv::resize(frame,image,cv::Size(),scale,scale,cv::INTER_AREA);
@@ -1429,6 +1430,7 @@ class Processor {
    bool m_manualOrientation{};
    bool m_boCapturedRotate180{};
    bool m_boKnownUpright{};
+   unsigned m_uOuterContourMisses{};
    int m_iReferenceOrientation{};
    int m_bestNameConfidence{},m_bestTypeConfidence{},m_bestRulesConfidence{};
    std::string m_strName{"--"};
@@ -2312,7 +2314,14 @@ public:
             cv::rotate(aFrame,aAligned,cv::ROTATE_90_COUNTERCLOCKWISE);
          else aAligned=aFrame;
          auto optCard=FindCard(aAligned,pDiagnostics,true);
+         if(!optCard && ++m_uOuterContourMisses%6==0) {
+            // A finer scan is justified only after multiple fast passes
+            // failed. This recovers dark, thin or broken physical borders
+            // without processing every 4K camera frame at maximum detail.
+            optCard=FindCard(aAligned,pDiagnostics,true,true);
+         }
          if(optCard) {
+            m_uOuterContourMisses=0;
             // Restore canonical top-edge direction before tracking.
             // Automatic preserves the previous layout-based 0/180 policy.
             bool const boReversed=m_eCardOrientation==
