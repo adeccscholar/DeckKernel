@@ -1428,6 +1428,7 @@ class Processor {
    bool m_boUserNavigated{};
    bool m_boArtworkRecognized{};
    bool m_boNameOcrStarted{};
+   bool m_boFullFallbackStarted{};
    bool m_boOcrNameRecognized{};
    unsigned m_uSelectionSerial{};
    unsigned m_uAutomaticPrintingsSerial{};
@@ -1646,6 +1647,7 @@ public:
       m_boFocusHintShown=false;m_boUserNavigated=false;
       m_boArtworkRecognized=false;
       m_boNameOcrStarted=false;
+      m_boFullFallbackStarted=false;
       m_boOcrNameRecognized=false;
       m_uSelectionSerial=0;m_uFocusFrames=0;
       m_uAutomaticPrintingsSerial=0;
@@ -1764,6 +1766,27 @@ public:
    \returns Nothing.
    \throw std::system_error If worker startup fails.
    */
+   /**
+   \brief Start the final complete-card search after inconclusive title OCR.
+   \details Uses the existing matcher worker and immutable frozen image.
+      The full-card fallback never reopens or refocuses the camera.
+   \returns Nothing.
+   \throw std::bad_alloc If queuing the frozen image fails.
+   */
+   void StartFullCardFallback() {
+#if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
+      if(m_boFullFallbackStarted || !m_artwork ||
+         !m_ocrCard || !m_capture.Frozen() ||
+         m_identity.Count()!=0)return;
+      m_boFullFallbackStarted=true;
+      m_strStatus="OCR UNRESOLVED - trying complete-card reference";
+      m_artwork->SearchFullCard(m_capture.Image(),*m_ocrCard,
+         m_boKnownUpright);
+      deckkernel::camera::Trace("[CAM-FALLBACK] card={} full-card queued",
+         *m_ocrCard);
+#endif
+   }
+
    void StartNameOcr() {
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
       if(m_boNameOcrStarted || m_nameOcr.valid() ||
@@ -1813,8 +1836,9 @@ public:
       deckkernel::camera::Trace("[CAM-NAME-OCR] card={} text='{}' confidence={}",
          uFinished,aName.first,aName.second);
       if(aName.second<65 || aName.first.size()<3) {
-         m_strStatus="OCR TITLE INCONCLUSIVE - discard or retry";
+         m_strStatus="OCR TITLE INCONCLUSIVE - trying full-card fallback";
          SetPhase(deckkernel::camera::RecognitionPhase::Unresolved);
+         StartFullCardFallback();
          return;
       }
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
@@ -2093,8 +2117,16 @@ public:
       else if(m_identity.Count()==0 && !result->boCandidateSelection) {
          SetPhase(deckkernel::camera::RecognitionPhase::Unresolved);
          if(!result->boSplitWest && !m_boNameOcrStarted &&
-            !result->strStatus.starts_with("OCR NAME"))
+            !m_boFullFallbackStarted &&
+            !result->strStatus.starts_with("OCR NAME")) {
             StartNameOcr();
+            // OCR may be unavailable in minimal builds.
+            if(!m_boNameOcrStarted)StartFullCardFallback();
+         }
+         else if(!result->boSplitWest &&
+            result->strStatus.starts_with("OCR NAME")) {
+            StartFullCardFallback();
+         }
       }
       if(!result->strName.empty())m_strName=result->strName;
       if(!result->strTypeLine.empty())m_strType=result->strTypeLine;
@@ -2638,6 +2670,7 @@ public:
       m_boUserNavigated=false;
       m_boArtworkRecognized=false;
       m_boNameOcrStarted=false;
+      m_boFullFallbackStarted=false;
       m_boOcrNameRecognized=false;
       m_uSelectionSerial=0;
       m_uAutomaticPrintingsSerial=0;
