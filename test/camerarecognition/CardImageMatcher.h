@@ -21,6 +21,7 @@ both orientations. Results are suggestions until physically validated.
 #include <atomic>
 #include "CameraTrace.h"
 #include <chrono>
+#include <cctype>
 #include <filesystem>
 #include <condition_variable>
 #include <cstdint>
@@ -94,6 +95,7 @@ namespace deckkernel::camera {
          cv::Mat aSplitFirst;
          cv::Mat aSplitSecond;
          std::string strSplitOcr;
+         std::string strSplitTitle;
       };
 
       struct Ranked final {
@@ -1236,7 +1238,9 @@ namespace deckkernel::camera {
          aResult.strStatus="SPLIT-WEST: searching first face";
          std::optional<Ranked> const optFirst=
             FindArtwork(pConnection,aTask.aSplitFirst);
-         if(!optFirst || !AcceptArtwork(*optFirst)) {
+         bool const boArtworkVerified=optFirst &&
+            AcceptArtwork(*optFirst);
+         if(!boArtworkVerified && aTask.strSplitTitle.empty()) {
             aResult.strStatus="SPLIT-WEST: first face inconclusive";
             return aResult;
          }
@@ -1245,8 +1249,9 @@ namespace deckkernel::camera {
          // Never compare an artificially stretched half-card with the
          // global full-card normal-image index.
          char const* arrParams[]{
-            optFirst->strAssetId.c_str(),
-            optFirst->strIllustrationId.c_str()
+            boArtworkVerified?optFirst->strAssetId.c_str():"0",
+            boArtworkVerified?optFirst->strIllustrationId.c_str():"",
+            aTask.strSplitTitle.c_str()
          };
          result_ty aRows(PQexecParams(pConnection,
             "WITH first_face AS MATERIALIZED ("
@@ -1257,6 +1262,11 @@ namespace deckkernel::camera {
             " WHERE va.variant='art_crop' AND "
             " (va.asset_id=$1::bigint OR "
             " ($2::text<>'' AND aa.illustration_id=$2::text))"
+            " UNION "
+            " SELECT DISTINCT cf.card_id "
+            " FROM deckkernel_test.scryfall_card_faces cf "
+            " WHERE $1::bigint=0 AND $3::text<>'' "
+            " AND lower(cf.name)=lower($3::text)"
             ") "
             "SELECT DISTINCT ON (c.scryfall_id) "
             "a.id::text,c.scryfall_id,cf.face_id::text,cf.name,"
@@ -1280,7 +1290,7 @@ namespace deckkernel::camera {
             "CASE v.variant WHEN 'normal' THEN 0 "
             "WHEN 'large' THEN 1 ELSE 2 END "
             "LIMIT 257",
-            2,nullptr,arrParams,nullptr,nullptr,0));
+            3,nullptr,arrParams,nullptr,nullptr,0));
          if(!aRows || PQresultStatus(aRows.get())!=PGRES_TUPLES_OK)
             throw std::runtime_error(std::format(
                "split printings query failed: {}",
@@ -1304,8 +1314,8 @@ namespace deckkernel::camera {
             aCandidate.strSetName=PQgetvalue(aRows.get(),iRow,10);
             aCandidate.strRarity=PQgetvalue(aRows.get(),iRow,11);
             aCandidate.strOracleId=PQgetvalue(aRows.get(),iRow,12);
-            aCandidate.iOrb=optFirst->iOrb;
-            aCandidate.iHash=optFirst->iHash;
+            aCandidate.iOrb=boArtworkVerified?optFirst->iOrb:0;
+            aCandidate.iHash=boArtworkVerified?optFirst->iHash:65;
             vecCandidates.push_back(std::move(aCandidate));
          }
          // OCR must contain exact set/language/collector tokens, not a
@@ -1405,7 +1415,9 @@ namespace deckkernel::camera {
                   vecCandidates.size());
             }
          }
-         aResult.boArtworkRecognized=true;
+         aResult.boArtworkRecognized=boArtworkVerified;
+         aResult.boOcrNameRecognized=!boArtworkVerified &&
+            !aTask.strSplitTitle.empty();
          aResult.boComplete=true;
          aResult.boCandidatesTruncated=boTruncated;
          aResult.vecCandidates=std::move(vecCandidates);
@@ -1415,7 +1427,8 @@ namespace deckkernel::camera {
          }
          SetPrinting(aResult,aResult.vecCandidates.front());
          aResult.strStatus=std::format(
-            "SPLIT-WEST: first face{}; {} printing candidate(s){}",
+            "SPLIT-WEST: {}{}; {} printing candidate(s){}",
+            boArtworkVerified?"face artwork":"face title",
             boSetIdentified?" + set":"",aResult.vecCandidates.size(),
             boTruncated?" (truncated)":"");
          aResult.strReferenceLabel="Split card database printing (unverified)";
@@ -1683,13 +1696,14 @@ namespace deckkernel::camera {
          bool boKnownUpright=false,
          cv::Mat const& aSplitFirst={},
          cv::Mat const& aSplitSecond={},
-         std::string const& strSplitOcr={}) {
+         std::string const& strSplitOcr={},
+         std::string const& strSplitTitle={}) {
          {
             std::lock_guard const aLock(m_mutex);
             m_uActiveEvent.store(uEvent,std::memory_order_relaxed);
             m_pending=Task{uEvent,aCard.clone(),{},0,aEvidenceDirectory,
                {},{},boKnownUpright,aSplitFirst.clone(),
-               aSplitSecond.clone(),strSplitOcr};
+               aSplitSecond.clone(),strSplitOcr,strSplitTitle};
          }
          m_signal.notify_one();
          deckkernel::camera::Trace(
