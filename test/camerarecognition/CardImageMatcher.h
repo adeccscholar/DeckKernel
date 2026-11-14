@@ -559,11 +559,12 @@ namespace deckkernel::camera {
       */
       std::vector<Ranked> FindPrintings(PGconn* pConnection,
          cv::Mat const& aCard, std::optional<Ranked> const& optArtwork,
-         bool boSplitOnly=false) const {
+         bool boSplitOnly=false,
+         unsigned uSplitLimit=600) const {
          std::string const strHash=DHashBits(aCard);
          std::string const strLimit=std::to_string(
             optArtwork?std::max(1000u,m_uCandidates):
-             boSplitOnly?std::max(600u,m_uCandidates):m_uCandidates);
+             boSplitOnly?uSplitLimit:m_uCandidates);
          // PHASE 07: if the artwork is identified, begin with its printing
          // faces, NEVER with a global dHash sort over 2.7M indexed assets.
          // The existing FirstConnection model already indexes
@@ -1327,30 +1328,43 @@ namespace deckkernel::camera {
          CardImageMatchResult aResult{aTask.uEvent};
          aResult.boSplitWest=true;
          aResult.strStatus="SPLIT-WEST: no corroborated split/room artwork";
-         std::vector<Ranked> vecCandidates=FindPrintings(
-            pConnection,aTask.aCard,std::nullopt,true);
-         if(Cancelled(aTask.uEvent))return aResult;
-         deckkernel::camera::Trace(
-            "[CAM-SPLIT-REFERENCE] card={} shortlisted={} inspecting={}",
-            aTask.uEvent,vecCandidates.size(),
-            std::min<std::size_t>(48,vecCandidates.size()));
-         auto const uLimit=std::min<std::size_t>(48,vecCandidates.size());
-         for(std::size_t uIndex=0;uIndex<uLimit;++uIndex) {
-            Ranked& aCandidate=vecCandidates[uIndex];
-            CardImageMatchResult aReference;
-            aReference.strAssetId=aCandidate.strAssetId;
-            LoadReference(pConnection,aReference);
-            aCandidate.iArtworkMatches=SplitReferenceMatches(
-               aTask,aReference.aReferenceImage);
+         // Search a small dHash-ranked shortlist first. The earlier
+         // unconditional 600-row query and 48 image decodes caused up
+         // to nine seconds latency even when the best printing ranked #1.
+         std::vector<Ranked> vecCandidates;
+         for(unsigned uPass=0;uPass<2;++uPass) {
+            unsigned const uCandidateLimit=uPass==0?96u:600u;
+            vecCandidates=FindPrintings(pConnection,aTask.aCard,
+               std::nullopt,true,uCandidateLimit);
+            if(Cancelled(aTask.uEvent))return aResult;
+            std::size_t const uInspect=std::min<std::size_t>(
+               uPass==0?12u:48u,vecCandidates.size());
             deckkernel::camera::Trace(
-               "[CAM-SPLIT-REFERENCE] card={} asset={} full-orb={} "
-               "hash={} pair-orb={}",
-               aTask.uEvent,aCandidate.strAssetId,aCandidate.iOrb,
-               aCandidate.iHash,aCandidate.iArtworkMatches);
+               "[CAM-SPLIT-REFERENCE] card={} pass={} shortlisted={} inspecting={}",
+               aTask.uEvent,uPass+1,vecCandidates.size(),uInspect);
+            bool boCorroborated{};
+            for(std::size_t uIndex=0;uIndex<uInspect;++uIndex) {
+               if(Cancelled(aTask.uEvent))return aResult;
+               Ranked& aCandidate=vecCandidates[uIndex];
+               CardImageMatchResult aReference;
+               aReference.strAssetId=aCandidate.strAssetId;
+               LoadReference(pConnection,aReference);
+               aCandidate.iArtworkMatches=SplitReferenceMatches(
+                  aTask,aReference.aReferenceImage);
+               deckkernel::camera::Trace(
+                  "[CAM-SPLIT-REFERENCE] card={} asset={} full-orb={} "
+                  "hash={} pair-orb={}",
+                  aTask.uEvent,aCandidate.strAssetId,aCandidate.iOrb,
+                  aCandidate.iHash,aCandidate.iArtworkMatches);
+               if(aCandidate.iArtworkMatches>=18)
+                  boCorroborated=true;
+               if(aCandidate.iArtworkMatches>=60)break;
+            }
+            std::erase_if(vecCandidates,[](Ranked const& aCandidate) {
+               return aCandidate.iArtworkMatches<18;
+            });
+            if(boCorroborated || uPass==1)break;
          }
-         std::erase_if(vecCandidates,[](Ranked const& aCandidate) {
-            return aCandidate.iArtworkMatches<18;
-         });
          if(vecCandidates.empty())return aResult;
          std::ranges::sort(vecCandidates,[](Ranked const& aLeft,
             Ranked const& aRight) {
