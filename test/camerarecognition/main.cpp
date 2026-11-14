@@ -1822,8 +1822,11 @@ public:
       try {aName=m_nameOcr.get();}
       catch(std::exception const& aException) {
          if(m_ocrCard && *m_ocrCard==uFinished) {
-            m_strStatus=std::format("TITLE OCR ERROR: {}",aException.what());
+            m_strStatus=std::format(
+               "TITLE OCR ERROR: {}; trying full-card fallback",
+               aException.what());
             SetPhase(deckkernel::camera::RecognitionPhase::Unresolved);
+            StartFullCardFallback();
          }
          return;
       }
