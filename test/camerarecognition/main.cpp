@@ -23,6 +23,7 @@
 #include "CameraDashboard.h"
 #endif
 #include "CameraOcrZones.h"
+#include "CameraSplitWest.h"
 #include "CameraImageQuality.h"
 #include "CameraCardSession.h"
 #include "CameraCardLayout.h"
@@ -2161,8 +2162,55 @@ public:
          // PHASE 06: keep the frozen full card intact. The matcher owns
          // artwork isolation and, when --save-events is active, exports
          // both measured and fallback artwork crops for debugging.
+         // Special layouts must not weaken the successful standard path.
+         // A split-west card is a single outer physical card whose two
+         // individual face tops point to the left. Rotate once, then
+         // localize the two illustrations independently.
+         cv::Mat aSplitFirst,aSplitSecond;
+         std::string strSplitOcr;
+         if(!m_boKnownUpright) {
+            auto optSplit=deckkernel::camera::DetectSplitWest(
+               m_capture.Image());
+            if(optSplit) {
+               aSplitFirst=optSplit->aAligned(
+                  optSplit->arrArtwork[0]).clone();
+               aSplitSecond=optSplit->aAligned(
+                  optSplit->arrArtwork[1]).clone();
+               m_strOrientation="SPLIT WEST - two face panels";
+               deckkernel::camera::Trace(
+                  "[CAM-SPLIT] card={} first={}x{} second={}x{}",
+                  *m_ocrCard,aSplitFirst.cols,aSplitFirst.rows,
+                  aSplitSecond.cols,aSplitSecond.rows);
+#if defined(DECKKERNEL_CAMERA_HAS_OCR)
+               if(!m_strPrintingOcrData.empty()) {
+                  // The set line belongs to the physical card, not a
+                  // particular half. Read it only once before matching.
+                  CardOcr aSplitOcr(m_strPrintingOcrData);
+                  auto const aMargin=aSplitOcr.ReadPrintingMargin(
+                     m_capture.Overscan().empty()?
+                        m_capture.Image():m_capture.Overscan());
+                  if(aMargin.second>=65)
+                     strSplitOcr=std::move(aMargin.first);
+                  deckkernel::camera::Trace(
+                     "[CAM-SPLIT] card={} margin-confidence={} text='{}'",
+                     *m_ocrCard,aMargin.second,strSplitOcr);
+               }
+#endif
+               if(m_save) {
+                  std::filesystem::create_directories(m_root);
+                  cv::imwrite((m_root/std::format(
+                     "event-{:06}-split-face-1-art.png",
+                     *m_ocrCard)).string(),aSplitFirst);
+                  cv::imwrite((m_root/std::format(
+                     "event-{:06}-split-face-2-art.png",
+                     *m_ocrCard)).string(),aSplitSecond);
+               }
+               m_strStatus="SPLIT-WEST - recognizing first face";
+            }
+         }
          m_artwork->Search(m_capture.Image(),*m_ocrCard,
-            m_save?m_root:std::filesystem::path{},m_boKnownUpright);
+            m_save?m_root:std::filesystem::path{},
+            m_boKnownUpright,aSplitFirst,aSplitSecond,strSplitOcr);
       }
       else {
          m_strStatus="SHARP FRAME SELECTED - image matcher disabled";
