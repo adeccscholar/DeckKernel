@@ -282,7 +282,7 @@ struct CardDetectionDiagnostics {
 std::optional<FoundCard> FindCard(cv::Mat const& frame,
    CardDetectionDiagnostics* diagnostics=nullptr,
    bool boRequireStandardLayout=false,bool boHighDetail=false,
-   bool boInferOrientation=true) {
+   bool boInferOrientation=true,bool boFixedBottomUp=false) {
    if(diagnostics)*diagnostics={};
    if(frame.empty()||frame.cols<64||frame.rows<64)return std::nullopt;
    auto const aDetectionStarted=std::chrono::steady_clock::now();
@@ -700,7 +700,8 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
             // This prevents a landscape artwork being stretched to portrait
             // and falsely accepted as a physical card.
             auto const aWholeFrame=
-               deckkernel::camera::InspectWholeCardFrame(aCandidateImage);
+               deckkernel::camera::InspectWholeCardFrame(
+                  aCandidateImage,boInferOrientation,boFixedBottomUp);
             if(!aWholeFrame.boWholeCard && !boNestedLayout) {
                // PHASE 01 fallback: when the low-resolution interior is
                // washed out, accept a physical outline ONLY if its four
@@ -2340,14 +2341,16 @@ public:
          else aAligned=aFrame;
          bool const boAutomatic=m_eCardOrientation==
             deckkernel::camera::CardOrientation::Automatic;
+         bool const boFixedBottom=m_eCardOrientation==
+            deckkernel::camera::CardOrientation::Bottom;
          auto optCard=FindCard(
-            aAligned,pDiagnostics,true,false,boAutomatic);
+            aAligned,pDiagnostics,true,false,boAutomatic,boFixedBottom);
          if(!optCard && ++m_uOuterContourMisses%6==0) {
             // A finer scan is justified only after multiple fast passes
             // failed. This recovers dark, thin or broken physical borders
             // without processing every 4K camera frame at maximum detail.
             optCard=FindCard(
-               aAligned,pDiagnostics,true,true,boAutomatic);
+               aAligned,pDiagnostics,true,true,boAutomatic,boFixedBottom);
          }
          if(optCard) {
             m_uOuterContourMisses=0;
