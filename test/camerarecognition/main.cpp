@@ -1476,6 +1476,7 @@ class Processor {
    bool m_recognitionReady{};
    bool m_cardLocked{};
    bool m_focusPending{};
+   bool m_boTableFocus{};
    bool m_boFocusHintShown{};
    unsigned m_uFocusFrames{};
    double m_flCaptureScore{-1.0};
@@ -1512,6 +1513,9 @@ public:
       // It is never reinterpreted by a manual/automatic OCR rotation.
       if(eOrientation!=deckkernel::camera::CardOrientation::Automatic)
          m_manualOrientation=false;
+   }
+   void SetTableFocus(bool boEnabled) noexcept {
+      m_boTableFocus=boEnabled;
    }
    [[nodiscard]] bool AutomaticOrientation() const noexcept {
       return m_eCardOrientation==
@@ -2128,7 +2132,7 @@ public:
    \throw cv::Exception If perspective transformation fails.
    */
    void EvaluateFocus(FoundCard const* pCandidate,
-      cv::Mat const& aSource) {
+      cv::Mat const& aSource,bool boSkipFocusWait=false) {
       if(!m_focusPending)return;
       if(pCandidate) {
          cv::Mat aImage=aSource.empty()?pCandidate->rectified.clone():
@@ -2155,7 +2159,7 @@ public:
       auto const flSeconds=std::chrono::duration<double>(
          std::chrono::steady_clock::now()-m_focusStarted).count();
       // Complete after enough valid observations or a bounded wall-clock timeout.
-      if(!m_capture.Ready()) {
+      if(!boSkipFocusWait && !m_capture.Ready()) {
          // PHASE 04: retain the SAME tracked card while focus improves.
          // The image is not frozen, and no Scryfall search starts on blur.
          if(m_capture.NeedsBetterFocusHint() && !m_boFocusHintShown) {
@@ -2221,9 +2225,10 @@ public:
             *m_ocrCard);
          m_strEdition="Low-quality capture; match results need caution";
       }
-      m_strStatus=std::format(
-         "CARD CAPTURED - focus selected (sharpness {:.1f}, {} frames)",
-         m_flCaptureSharpness,m_uFocusFrames);
+      m_strStatus=boSkipFocusWait?
+         "CARD CAPTURED - fixed focus, first stable frame":
+         std::format("CARD CAPTURED - focus selected (sharpness {:.1f}, {} frames)",
+            m_flCaptureSharpness,m_uFocusFrames);
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
       if(m_artwork) {
          m_strStatus=m_capture.UsableForMatching()?
@@ -2300,10 +2305,10 @@ public:
       m_strStatus="SHARP FRAME SELECTED - no image matcher compiled";
       m_recognitionReady=true;
 #endif
-      deckkernel::camera::Trace("[CAM-FOCUS] card #{} frames={} seconds={:.2f} "
+      deckkernel::camera::Trace("[CAM-FOCUS] card #{} mode={} frames={} seconds={:.2f} "
          "sharpness={:.2f} printed-detail={:.2f} score={:.2f} "
          "freeze={} focus-improved={} usable={}",
-         *m_ocrCard,m_uFocusFrames,flSeconds,
+         *m_ocrCard,boSkipFocusWait?"fixed-skip":"table",m_uFocusFrames,flSeconds,
          m_flCaptureSharpness,m_capture.Quality().detailSharpness,
          m_flCaptureScore,
          eFreezeReason==deckkernel::camera::CardCapture::FreezeReason::Deadline?
@@ -2540,7 +2545,7 @@ public:
       m_strEdition="Edition not verified";
       m_recognitionReady=false;
       m_cardLocked=true;
-      m_focusPending=true;
+      m_focusPending=m_boTableFocus;
       m_boFocusHintShown=false;
       m_uFocusFrames=0;
       m_flCaptureScore=-1.0;
@@ -2553,7 +2558,8 @@ public:
       m_boOcrNameRecognized=false;
       m_uSelectionSerial=0;
       SetPhase(deckkernel::camera::RecognitionPhase::Tracking);
-      SetPhase(deckkernel::camera::RecognitionPhase::Focusing);
+      if(m_boTableFocus)
+         SetPhase(deckkernel::camera::RecognitionPhase::Focusing);
       m_strName="--";m_strType="--";m_strRules="--";
       m_referenceCard.release();
       m_strReferenceLabel="Searching Scryfall references...";
@@ -2622,7 +2628,9 @@ public:
          auto const file=m_root/std::format("event-{:06}-zones.png",event->number);
          cv::imwrite(file.string(),deckkernel_camera::ocr::Diagram(event->card,zones));
       }
-      m_strStatus="CARD CAPTURED - waiting for autofocus / sharper input";
+      m_strStatus=m_boTableFocus?
+         "CARD CAPTURED - waiting for autofocus / sharper input":
+         "CARD CAPTURED - fixed focus, freezing initial image";
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
       if(!m_artwork)
          m_strEdition="Image matcher disabled";
@@ -2632,6 +2640,12 @@ public:
          auto const name=m_root/std::format("event-{:06}.png",event->number);
          if(!cv::imwrite(name.string(),event->card))
             throw std::runtime_error("could not save rectified camera evidence");
+      }
+      if(!m_boTableFocus) {
+         // Geometry was already stabilized before entering this branch.
+         // Freeze the initial sample without waiting for further focus frames.
+         m_focusPending=true;
+         EvaluateFocus(nullptr,cv::Mat{},true);
       }
       return true;
    }
@@ -3939,6 +3953,7 @@ int CameraApplicationMain(int argc,char** argv) {
       }
       Processor processor(save,verbose);
       processor.SetCardOrientation(eCardOrientation);
+      processor.SetTableFocus(tableFocus);
 #if defined(DECKKERNEL_CAMERA_HAS_ARTWORK)
       if(artwork)processor.EnableArtwork(artworkLimit);
 #else
@@ -4023,6 +4038,7 @@ int CameraApplicationMain(int argc,char** argv) {
                if(aNewSettings.boTableAutoFocus!=tableFocus &&
                   !processor.CardLocked()) {
                   tableFocus=aNewSettings.boTableAutoFocus;
+                  processor.SetTableFocus(tableFocus);
                   autoFocus=tableFocus;
                   manualFocusPosition.reset();
                   boPreserveExternalFocus=!tableFocus;
@@ -4042,6 +4058,7 @@ int CameraApplicationMain(int argc,char** argv) {
             }
             else {
                tableFocus=!tableFocus;
+               processor.SetTableFocus(tableFocus);
                autoFocus=tableFocus;
                manualFocusPosition.reset();
                boPreserveExternalFocus=!tableFocus;
