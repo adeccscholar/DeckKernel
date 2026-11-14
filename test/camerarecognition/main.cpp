@@ -716,8 +716,16 @@ std::optional<FoundCard> FindCard(cv::Mat const& frame,
                bool const boFullPerimeter=
                   uStrongSides>=4 && ratio>=1.28 && ratio<=1.55 &&
                   area>=imageArea*0.004;
+               // Dark borders may contribute just two visible exterior
+               // sides; require an additional independent inner panel so
+               // an isolated artwork rectangle cannot be promoted to a
+               // physical card solely because it is rectangular.
+               bool const boDarkBorderCard=uSupportedSides>=2 &&
+                  uInnerPanels>=1 && fill>=0.84 &&
+                  ratio>=1.30 && ratio<=1.53;
                bool const boOuterBoundary=
-                  boStrongPhysicalOutline || boFullPerimeter;
+                  boStrongPhysicalOutline || boFullPerimeter ||
+                  boDarkBorderCard;
                if(!boOuterBoundary) {
                   ++stats.rejectedPartialFrame;
                   continue;
