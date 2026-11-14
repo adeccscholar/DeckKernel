@@ -1417,15 +1417,19 @@ namespace deckkernel::camera {
                for(int iRow=0;iRow<PQntuples(aSecond.get());++iRow)
                   vecPrintIds.emplace_back(
                      PQgetvalue(aSecond.get(),iRow,0));
-               std::erase_if(vecCandidates,
-                  [&](PrintingCandidate const& aCandidate) {
-                     return std::ranges::find(
-                        vecPrintIds,aCandidate.strPrintingId)==
-                        vecPrintIds.end();
-                  });
+               // Missing DB links for the second art are inconclusive,
+               // not evidence against every first-face printing.
+               if(!vecPrintIds.empty()) {
+                  std::erase_if(vecCandidates,
+                     [&](PrintingCandidate const& aCandidate) {
+                        return std::ranges::find(
+                           vecPrintIds,aCandidate.strPrintingId)==
+                           vecPrintIds.end();
+                     });
+               }
                deckkernel::camera::Trace(
-                  "[CAM-SPLIT] no set OCR; second face narrowed to {}",
-                  vecCandidates.size());
+                  "[CAM-SPLIT] no set OCR; second face candidates={}"
+                  " linked={}",vecCandidates.size(),vecPrintIds.size());
             }
          }
          aResult.boArtworkRecognized=boArtworkVerified;
@@ -1439,6 +1443,9 @@ namespace deckkernel::camera {
             return aResult;
          }
          SetPrinting(aResult,aResult.vecCandidates.front());
+         if(!boArtworkVerified)
+            aResult.strEdition=
+               "Split first-face title OCR + printing metadata (unverified)";
          aResult.strStatus=std::format(
             "SPLIT-WEST: {}{}; {} printing candidate(s){}",
             boArtworkVerified?"face artwork":"face title",
