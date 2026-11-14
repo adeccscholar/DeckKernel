@@ -1238,6 +1238,16 @@ public:
       return {aBest.text,aBest.confidence};
    }
 
+   [[nodiscard]] std::pair<std::string,int> ReadTitleRegion(
+      cv::Mat const& aCard,cv::Rect const& aRegion) {
+      if(aCard.empty() || aRegion.empty() ||
+         (aRegion&cv::Rect(0,0,aCard.cols,aCard.rows))!=aRegion)
+         return {{},0};
+      auto const aRead=ReadRegion(aCard,aRegion,
+         tesseract::PSM_SINGLE_LINE);
+      return {aRead.text,aRead.confidence};
+   }
+
    [[nodiscard]] std::pair<std::string,int> ReadPrintingMargin(
       cv::Mat const& aCard) {
       if(aCard.empty())return {{},0};
@@ -2236,53 +2246,91 @@ public:
          // localize the two illustrations independently.
          cv::Mat aSplitFirst,aSplitSecond;
          std::string strSplitOcr,strSplitTitle;
-         // Explicit orientation describes the OUTER card top edge. It
-         // must not suppress detection of west-facing inner face tops.
-         // DetectSplitWest itself rejects reliably standard layouts.
-         auto optSplit=deckkernel::camera::DetectSplitWest(
-            m_capture.Image());
+         // A standard card takes priority over special layouts.
+         bool const boStandard=
+            deckkernel::camera::InspectStandardCard(
+               m_capture.Image()).boRecognized;
+         auto optSplit=boStandard?
+            std::optional<deckkernel::camera::SplitWestLayout>{}:
+            deckkernel::camera::DetectSplitWest(m_capture.Image());
+         deckkernel::camera::Trace("[CAM-LAYOUT] card={} standard={} split={}",
+            *m_ocrCard,boStandard,optSplit.has_value());
          if(optSplit) {
-               aSplitFirst=optSplit->aAligned(
-                  optSplit->arrArtwork[0]).clone();
-               aSplitSecond=optSplit->aAligned(
-                  optSplit->arrArtwork[1]).clone();
-               m_strOrientation="SPLIT WEST - two face panels";
-               deckkernel::camera::Trace(
-                  "[CAM-SPLIT] card={} first={}x{} second={}x{}",
-                  *m_ocrCard,aSplitFirst.cols,aSplitFirst.rows,
-                  aSplitSecond.cols,aSplitSecond.rows);
+            aSplitFirst=optSplit->aAligned(
+               optSplit->arrArtwork[0]).clone();
+            aSplitSecond=optSplit->aAligned(
+               optSplit->arrArtwork[1]).clone();
+            m_strOrientation=optSplit->boSharedTitle?
+               "SPLIT WEST - continuous title":
+               "SPLIT WEST - separate face titles";
+            deckkernel::camera::Trace(
+               "[CAM-SPLIT-REGIONS] card={} shared-title={} "
+               "title1={},{},{},{} title2={},{},{},{} "
+               "art1={},{},{},{} art2={},{},{},{}",
+               *m_ocrCard,optSplit->boSharedTitle,
+               optSplit->arrTitles[0].x,optSplit->arrTitles[0].y,
+               optSplit->arrTitles[0].width,optSplit->arrTitles[0].height,
+               optSplit->arrTitles[1].x,optSplit->arrTitles[1].y,
+               optSplit->arrTitles[1].width,optSplit->arrTitles[1].height,
+               optSplit->arrArtwork[0].x,optSplit->arrArtwork[0].y,
+               optSplit->arrArtwork[0].width,optSplit->arrArtwork[0].height,
+               optSplit->arrArtwork[1].x,optSplit->arrArtwork[1].y,
+               optSplit->arrArtwork[1].width,optSplit->arrArtwork[1].height);
 #if defined(DECKKERNEL_CAMERA_HAS_OCR)
-               if(!m_strPrintingOcrData.empty()) {
-                  // The set line belongs to the physical card, not a
-                  // particular half. Read it only once before matching.
-                  CardOcr aSplitOcr(m_strPrintingOcrData);
-                  auto const aFaceTitle=aSplitOcr.ReadFrozenTitle(
-                     optSplit->aAligned(optSplit->arrFaces[0]));
-                  if(aFaceTitle.second>=70)
-                     strSplitTitle=aFaceTitle.first;
-                  auto const aMargin=aSplitOcr.ReadPrintingMargin(
-                     m_capture.Overscan().empty()?
-                        m_capture.Image():m_capture.Overscan());
-                  if(aMargin.second>=65)
-                     strSplitOcr=std::move(aMargin.first);
+            if(!m_strPrintingOcrData.empty()) {
+               CardOcr aSplitOcr(m_strPrintingOcrData);
+               auto const aFaceTitle=optSplit->boSharedTitle?
+                  aSplitOcr.ReadTitleRegion(optSplit->aAligned,
+                     optSplit->aSharedTitle):
+                  aSplitOcr.ReadTitleRegion(optSplit->aAligned,
+                     optSplit->arrTitles[0]);
+               if(aFaceTitle.second>=70)
+                  strSplitTitle=aFaceTitle.first;
+               if(!optSplit->boSharedTitle) {
+                  auto const aSecondTitle=aSplitOcr.ReadTitleRegion(
+                     optSplit->aAligned,optSplit->arrTitles[1]);
                   deckkernel::camera::Trace(
-                     "[CAM-SPLIT] card={} margin-confidence={} text='{}'",
-                     *m_ocrCard,aMargin.second,strSplitOcr);
-                  deckkernel::camera::Trace(
-                     "[CAM-SPLIT] card={} first-title-confidence={} title='{}'",
-                     *m_ocrCard,aFaceTitle.second,strSplitTitle);
+                     "[CAM-SPLIT-TITLE] card={} second='{}' confidence={}",
+                     *m_ocrCard,aSecondTitle.first,aSecondTitle.second);
+                  if(strSplitTitle.empty() && aSecondTitle.second>=70)
+                     strSplitTitle=aSecondTitle.first;
                }
+               auto const aMargin=aSplitOcr.ReadPrintingMargin(
+                  m_capture.Overscan().empty()?
+                     m_capture.Image():m_capture.Overscan());
+               if(aMargin.second>=65)
+                  strSplitOcr=std::move(aMargin.first);
+               deckkernel::camera::Trace(
+                  "[CAM-SPLIT-OCR] card={} margin-confidence={} "
+                  "margin='{}' title-confidence={} title='{}'",
+                  *m_ocrCard,aMargin.second,strSplitOcr,
+                  aFaceTitle.second,strSplitTitle);
+            }
 #endif
-               if(m_save) {
-                  std::filesystem::create_directories(m_root);
-                  cv::imwrite((m_root/std::format(
-                     "event-{:06}-split-face-1-art.png",
-                     *m_ocrCard)).string(),aSplitFirst);
-                  cv::imwrite((m_root/std::format(
-                     "event-{:06}-split-face-2-art.png",
-                     *m_ocrCard)).string(),aSplitSecond);
+            if(m_save) {
+               // ROI diagnostics show only marks on the original full image.
+               cv::Mat aMarked=optSplit->aAligned.clone();
+               for(int iFace=0;iFace<2;++iFace) {
+                  cv::rectangle(aMarked,optSplit->arrArtwork[iFace],
+                     cv::Scalar(0,220,0),3);
+                  cv::rectangle(aMarked,optSplit->arrTitles[iFace],
+                     cv::Scalar(255,170,0),3);
                }
-               m_strStatus="SPLIT-WEST - recognizing first face";
+               if(optSplit->boSharedTitle)
+                  cv::rectangle(aMarked,optSplit->aSharedTitle,
+                     cv::Scalar(255,170,0),3);
+               std::filesystem::create_directories(m_root);
+               cv::imwrite((m_root/std::format(
+                  "event-{:06}-split-roi-markers.png",
+                  *m_ocrCard)).string(),aMarked);
+            }
+            m_strStatus="SPLIT-WEST - identifying both faces";
+         }
+         else if(boStandard) {
+            m_strStatus="STANDARD - identifying artwork";
+         }
+         else {
+            m_strStatus="NONSTANDARD - OCR and full-card fallback";
          }
          m_artwork->Search(m_capture.Image(),*m_ocrCard,
             m_save?m_root:std::filesystem::path{},
