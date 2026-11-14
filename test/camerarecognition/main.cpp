@@ -3130,6 +3130,10 @@ void SelfTest() {
          "artwork was incorrectly accepted as the physical card");
    if(aStandard->boRotate180)
       throw std::runtime_error("upright standard card was rotated 180 degrees");
+   // Special-layout recognition must never hijack a validated standard.
+   if(deckkernel::camera::DetectSplitWest(aStandard->rectified))
+      throw std::runtime_error(
+         "split-west classifier accepted an ordinary standard card");
    // Card top-edge orientation is independent of the card's location.
    // All four directions must restore the physical source-frame geometry.
    for(auto const eOrientation:{
