@@ -4024,8 +4024,9 @@ int CameraApplicationMain(int argc,char** argv) {
             std::optional<FoundCard>{};
 #if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
          // A rejected physical card has NO event number and therefore
-         // cannot appear in event-*.png. D captures the raw camera frame
-         // even when no contour, stable card or match exists.
+         // cannot appear in event-*.png. Only an explicit Missed button
+         // click captures one raw frame, regardless of event recognition.
+         // No intermediate camera images are written automatically.
          if(preview.ConsumeUndetectedSnapshot()) {
             auto const iSnapshotId=std::chrono::duration_cast<
                std::chrono::milliseconds>(
