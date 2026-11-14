@@ -977,6 +977,41 @@ module evaluation is unchanged.
 PostgreSQL printing-query duration, preview of `frozen-overscan.png`,
 and OCR success on known printed collector/set fields.
 
+## 2026-11-14: evidence for cards never acquired
+
+A user supplied `Test.zip` containing 50 numbered card events, a verbose
+log and settings. Six physical cards were reportedly not selected at all.
+The archive cannot establish *why* those six were missed: unrecognized
+cards do not receive event numbers, and previous code did not save a raw
+frame for a failed acquisition.
+
+To gather that previously missing evidence, press **D** with an unrecognized
+card visible under the camera. This works even if there is no active card,
+no contour, and no OCR or artwork event. The application saves in
+`.cache/camera-recognition/`:
+
+- `undetected-<timestamp>-raw.png` — original full-resolution camera frame
+- `undetected-<timestamp>-edges.png` — unmodified 1600-pixel Canny diagnostic
+- `undetected-<timestamp>-diagnostics.txt` — current detection counters,
+  whether contour processing was bypassed, and independent high-detail
+  geometry results and timing
+
+This explicit diagnostic snapshot is independent of the `saveEvents`
+setting and does not change physical tracking, matching, or the selected
+printing. The scanning dashboard shows the D shortcut while no card is
+locked, and writes a confirmation after the files have been saved.
+Do not use snapshots of already captured events as evidence of a missed
+outer card. Press D separately for each missed physical card before
+moving it away.
+
+In the supplied log the main camera negotiated 2592x1944 @30 fps (not the
+2560x1440 requested in settings). Measured median `[CAM-ART-QUERY]` SQL
+time is approximately 1.52 s across 75 queries, while median ORB matching
+time is approximately 0.12 s. Those database delays occur after card
+acquisition and are **not** the cause of six missing event numbers.
+The specific physical-card contour failure remains unverified until the
+missing frames are captured.
+
 ## 2026-11-14: dark-card recovery, split shared type bar and performance instrumentation
 
 This iteration responds to observed standard-card recognition regression (about
