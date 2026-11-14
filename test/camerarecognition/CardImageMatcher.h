@@ -91,6 +91,9 @@ namespace deckkernel::camera {
          std::optional<std::string> optOcrName;
          std::optional<std::string> optAllOracleId;
          bool boKnownUpright{};
+         cv::Mat aSplitFirst;
+         cv::Mat aSplitSecond;
+         std::string strSplitOcr;
       };
 
       struct Ranked final {
@@ -1214,6 +1217,212 @@ namespace deckkernel::camera {
          return m_uActiveEvent.load(std::memory_order_relaxed)!=uEvent;
       }
 
+      /**
+      \brief Recognize a west-facing two-face split card without two global
+         artwork searches when the first face and the printed set agree.
+      \details Matching the first face's art_crop is expensive but necessary.
+         Linked printing records are obtained with a small relational query.
+         If a readable set restricts the first-face match, do not search the
+         second illustration. Only a missing set hint can trigger the second
+         global art comparison, which is then used to intersect linked cards.
+      \param pConnection Worker-owned PostgreSQL connection.
+      \param aTask Frozen split-face crops and optional printing OCR.
+      \returns Database printing candidates, never silently confirmed.
+      \throw std::runtime_error On database failure.
+      */
+      CardImageMatchResult MatchSplitWest(PGconn* pConnection,
+         Task const& aTask) {
+         CardImageMatchResult aResult{aTask.uEvent};
+         aResult.strStatus="SPLIT-WEST: searching first face";
+         std::optional<Ranked> const optFirst=
+            FindArtwork(pConnection,aTask.aSplitFirst);
+         if(!optFirst || !AcceptArtwork(*optFirst)) {
+            aResult.strStatus="SPLIT-WEST: first face inconclusive";
+            return aResult;
+         }
+         if(Cancelled(aTask.uEvent))return aResult;
+         // Read complete printings related to the detected FIRST face.
+         // Never compare an artificially stretched half-card with the
+         // global full-card normal-image index.
+         char const* arrParams[]{
+            optFirst->strAssetId.c_str(),
+            optFirst->strIllustrationId.c_str()
+         };
+         result_ty aRows(PQexecParams(pConnection,
+            "WITH first_face AS MATERIALIZED ("
+            " SELECT DISTINCT va.card_id "
+            " FROM deckkernel_test.scryfall_card_image_variants va "
+            " JOIN deckkernel_test.scryfall_image_assets aa "
+            " ON aa.id=va.asset_id "
+            " WHERE va.variant='art_crop' AND "
+            " (va.asset_id=$1::bigint OR "
+            " ($2::text<>'' AND aa.illustration_id=$2::text))"
+            ") "
+            "SELECT DISTINCT ON (c.scryfall_id) "
+            "a.id::text,c.scryfall_id,cf.face_id::text,cf.name,"
+            "s.code,c.collector_number,c.lang,v.variant,"
+            "cf.type_line,cf.mana_cost,s.name,r.code,"
+            "COALESCE(c.oracle_id,'') "
+            "FROM first_face af "
+            "JOIN deckkernel_test.scryfall_cards c ON c.id=af.card_id "
+            "JOIN deckkernel_test.scryfall_sets s ON s.id=c.set_id "
+            "JOIN deckkernel_test.dom_rarities r ON r.id=c.rarity_id "
+            "JOIN deckkernel_test.scryfall_card_faces cf ON cf.card_id=c.id "
+            "JOIN deckkernel_test.scryfall_card_image_variants v "
+            "ON v.card_id=c.id AND v.face_id=cf.face_id "
+            "AND v.variant IN ('normal','large','border_crop') "
+            "JOIN deckkernel_test.scryfall_image_assets a "
+            "ON a.id=v.asset_id AND a.image_data IS NOT NULL "
+            "WHERE (SELECT COUNT(*) FROM "
+            " deckkernel_test.scryfall_card_faces f2 "
+            " WHERE f2.card_id=c.id)>=2 "
+            "ORDER BY c.scryfall_id,"
+            "CASE v.variant WHEN 'normal' THEN 0 "
+            "WHEN 'large' THEN 1 ELSE 2 END "
+            "LIMIT 257",
+            2,nullptr,arrParams,nullptr,nullptr,0));
+         if(!aRows || PQresultStatus(aRows.get())!=PGRES_TUPLES_OK)
+            throw std::runtime_error(std::format(
+               "split printings query failed: {}",
+               PQerrorMessage(pConnection)));
+         bool const boTruncated=PQntuples(aRows.get())>256;
+         int const iCount=std::min(256,PQntuples(aRows.get()));
+         std::vector<PrintingCandidate> vecCandidates;
+         vecCandidates.reserve(static_cast<std::size_t>(iCount));
+         for(int iRow=0;iRow<iCount;++iRow) {
+            PrintingCandidate aCandidate;
+            aCandidate.strAssetId=PQgetvalue(aRows.get(),iRow,0);
+            aCandidate.strPrintingId=PQgetvalue(aRows.get(),iRow,1);
+            aCandidate.iFace=std::stoi(PQgetvalue(aRows.get(),iRow,2));
+            aCandidate.strName=PQgetvalue(aRows.get(),iRow,3);
+            aCandidate.strSet=PQgetvalue(aRows.get(),iRow,4);
+            aCandidate.strCollector=PQgetvalue(aRows.get(),iRow,5);
+            aCandidate.strLanguage=PQgetvalue(aRows.get(),iRow,6);
+            aCandidate.strVariant=PQgetvalue(aRows.get(),iRow,7);
+            aCandidate.strTypeLine=PQgetvalue(aRows.get(),iRow,8);
+            aCandidate.strManaCost=PQgetvalue(aRows.get(),iRow,9);
+            aCandidate.strSetName=PQgetvalue(aRows.get(),iRow,10);
+            aCandidate.strRarity=PQgetvalue(aRows.get(),iRow,11);
+            aCandidate.strOracleId=PQgetvalue(aRows.get(),iRow,12);
+            aCandidate.iOrb=optFirst->iOrb;
+            aCandidate.iHash=optFirst->iHash;
+            vecCandidates.push_back(std::move(aCandidate));
+         }
+         // OCR must contain exact set/language/collector tokens, not a
+         // partial substring of a different set or collector number.
+         std::vector<std::string> vecWords;
+         std::string strWord;
+         for(unsigned char const uChar:aTask.strSplitOcr) {
+            if((uChar>='a'&&uChar<='z') ||
+               (uChar>='A'&&uChar<='Z') ||
+               (uChar>='0'&&uChar<='9')) {
+               strWord.push_back(static_cast<char>(
+                  uChar>='a'&&uChar<='z'?uChar-'a'+'A':uChar));
+            }
+            else if(!strWord.empty()) {
+               vecWords.push_back(std::move(strWord));
+               strWord.clear();
+            }
+         }
+         if(!strWord.empty())vecWords.push_back(std::move(strWord));
+         auto const Contains=[&](std::string strValue) {
+            std::ranges::transform(strValue,strValue.begin(),
+               [](unsigned char uChar) {
+                  return static_cast<char>(std::toupper(uChar));
+               });
+            return std::ranges::find(vecWords,strValue)!=vecWords.end();
+         };
+         bool const boSetIdentified=std::ranges::any_of(
+            vecCandidates,[&](PrintingCandidate const& aCandidate) {
+               return Contains(aCandidate.strSet);
+            });
+         if(boSetIdentified) {
+            std::erase_if(vecCandidates,
+               [&](PrintingCandidate const& aCandidate) {
+                  return !Contains(aCandidate.strSet);
+               });
+            // Language/collector are optional independent evidence. Apply
+            // them only when OCR explicitly contains a candidate value.
+            bool const boLanguageKnown=std::ranges::any_of(
+               vecCandidates,[&](PrintingCandidate const& aCandidate) {
+                  return Contains(aCandidate.strLanguage);
+               });
+            if(boLanguageKnown)
+               std::erase_if(vecCandidates,
+                  [&](PrintingCandidate const& aCandidate) {
+                     return !Contains(aCandidate.strLanguage);
+                  });
+            bool const boCollectorKnown=std::ranges::any_of(
+               vecCandidates,[&](PrintingCandidate const& aCandidate) {
+                  return Contains(aCandidate.strCollector);
+               });
+            if(boCollectorKnown)
+               std::erase_if(vecCandidates,
+                  [&](PrintingCandidate const& aCandidate) {
+                     return !Contains(aCandidate.strCollector);
+                  });
+            deckkernel::camera::Trace(
+               "[CAM-SPLIT] first face and set found; skipping second "
+               "global artwork search; printings={}",vecCandidates.size());
+         }
+         else if(!aTask.aSplitSecond.empty() && !boTruncated &&
+            !vecCandidates.empty()) {
+            // Missing set: the other illustration is useful corroboration.
+            // It is never searched when the set already matches.
+            std::optional<Ranked> const optSecond=
+               FindArtwork(pConnection,aTask.aSplitSecond);
+            if(optSecond && AcceptArtwork(*optSecond)) {
+               char const* arrSecond[]{
+                  optSecond->strAssetId.c_str(),
+                  optSecond->strIllustrationId.c_str()
+               };
+               result_ty aSecond(PQexecParams(pConnection,
+                  "SELECT DISTINCT c.scryfall_id "
+                  "FROM deckkernel_test.scryfall_card_image_variants v "
+                  "JOIN deckkernel_test.scryfall_image_assets a "
+                  "ON a.id=v.asset_id "
+                  "JOIN deckkernel_test.scryfall_cards c ON c.id=v.card_id "
+                  "WHERE v.variant='art_crop' AND "
+                  "(v.asset_id=$1::bigint OR "
+                  "($2::text<>'' AND a.illustration_id=$2::text))",
+                  2,nullptr,arrSecond,nullptr,nullptr,0));
+               if(!aSecond ||
+                  PQresultStatus(aSecond.get())!=PGRES_TUPLES_OK)
+                  throw std::runtime_error(
+                     "second split-face cross-check query failed");
+               std::vector<std::string> vecPrintIds;
+               for(int iRow=0;iRow<PQntuples(aSecond.get());++iRow)
+                  vecPrintIds.emplace_back(
+                     PQgetvalue(aSecond.get(),iRow,0));
+               std::erase_if(vecCandidates,
+                  [&](PrintingCandidate const& aCandidate) {
+                     return std::ranges::find(
+                        vecPrintIds,aCandidate.strPrintingId)==
+                        vecPrintIds.end();
+                  });
+               deckkernel::camera::Trace(
+                  "[CAM-SPLIT] no set OCR; second face narrowed to {}",
+                  vecCandidates.size());
+            }
+         }
+         aResult.boArtworkRecognized=true;
+         aResult.boComplete=true;
+         aResult.boCandidatesTruncated=boTruncated;
+         aResult.vecCandidates=std::move(vecCandidates);
+         if(aResult.vecCandidates.empty()) {
+            aResult.strStatus="SPLIT-WEST: artwork found, printing unresolved";
+            return aResult;
+         }
+         SetPrinting(aResult,aResult.vecCandidates.front());
+         aResult.strStatus=std::format(
+            "SPLIT-WEST: first face{}; {} printing candidate(s){}",
+            boSetIdentified?" + set":"",aResult.vecCandidates.size(),
+            boTruncated?" (truncated)":"");
+         aResult.strReferenceLabel="Split card database printing (unverified)";
+         LoadReference(pConnection,aResult);
+         return aResult;
+      }
+
       CardImageMatchResult Match(PGconn* pConnection, Task const& aTask) {
          // PHASE 06: compare BOTH orientations and two card-art windows.
          // Never stop at the first barely acceptable visual match: it may
@@ -1415,6 +1624,8 @@ namespace deckkernel::camera {
                   Publish(AllPrintings(aConnection.get(),aTask));
                else if(aTask.optOcrName)
                   Publish(MatchOcrName(aConnection.get(),aTask));
+               else if(!aTask.aSplitFirst.empty())
+                  Publish(MatchSplitWest(aConnection.get(),aTask));
                else
                   Publish(Match(aConnection.get(),aTask));
                deckkernel::camera::Trace("[CAM-MATCH] card #{} worker finished elapsed={:.2f}s",
@@ -1469,17 +1680,22 @@ namespace deckkernel::camera {
       */
       void Search(cv::Mat const& aCard,unsigned uEvent,
          std::filesystem::path const& aEvidenceDirectory={},
-         bool boKnownUpright=false) {
+         bool boKnownUpright=false,
+         cv::Mat const& aSplitFirst={},
+         cv::Mat const& aSplitSecond={},
+         std::string const& strSplitOcr={}) {
          {
             std::lock_guard const aLock(m_mutex);
             m_uActiveEvent.store(uEvent,std::memory_order_relaxed);
             m_pending=Task{uEvent,aCard.clone(),{},0,aEvidenceDirectory,
-               {},{},boKnownUpright};
+               {},{},boKnownUpright,aSplitFirst.clone(),
+               aSplitSecond.clone(),strSplitOcr};
          }
          m_signal.notify_one();
          deckkernel::camera::Trace(
             "[CAM-MATCH] card #{} queued: {} orientation; capture={}x{}",
-            uEvent,boKnownUpright?"known upright (0 only)":"0/180",
+            uEvent,!aSplitFirst.empty()?"split-west":
+               boKnownUpright?"known upright (0 only)":"0/180",
             aCard.cols,aCard.rows);
       }
 
