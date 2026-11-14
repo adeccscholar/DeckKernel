@@ -977,6 +977,60 @@ module evaluation is unchanged.
 PostgreSQL printing-query duration, preview of `frozen-overscan.png`,
 and OCR success on known printed collector/set fields.
 
+## 2026-11-14: dark-card recovery, split shared type bar and performance instrumentation
+
+This iteration responds to observed standard-card recognition regression (about
+60% reported, **not independently measured**) and nonrecognition of classic
+split printings. It keeps all currently working SDL buttons and existing
+artwork ranking/acceptance criteria unchanged.
+
+Physical-card acquisition now accepts a two-edge rectangular silhouette
+**only with independent inner-panel corroboration**. The earlier strong
+three-edge rule, along with the standard-frame fallback requirement, could
+discard genuine dark-bordered cards before OCR or artwork matching. The
+coarse 1280-pixel contour pass gains a high-detail 1600-pixel recovery scan
+after six consecutive unsuccessful acquisitions; this limits routine scan
+cost while preserving a path for narrow or broken dark outlines. Rounded
+mouse and artwork-only false positives continue to be explicitly excluded
+by the pre-existing self-test. A detected physical card still requires
+stable tracking before it is frozen.
+
+The `CameraSplitWest.h` classifier no longer assumes that **each** face
+has its own type bar or entire standard-frame layout. Two separate upper
+face outlines are required, but the lower artwork boundary may be one
+horizontal separator crossing both panels. Face artwork crops are still
+measured and the second expensive global image search runs only as an
+escalation when first-face evidence cannot resolve the split printing.
+
+A single white point must no longer count as an entirely usable camera
+frame: `MeasureFrame` requires at least 2% of its small grayscale image to
+be lit above threshold. Mean brightness has also been removed as an
+absolute recognition gate for a sharp, dark illustration; sharpness,
+source resolution and highlight clipping remain quality checks.
+Stable fixed-focus capture can complete after six observations and
+220 ms without further detail improvement, subject to a 400 ms minimum;
+the existing three-second deadline remains for truly poor focus.
+
+Rendering now resizes **only the display copy** of live 4K frames to a
+maximum 1280-pixel dimension, preserving full camera pixels for detection,
+OCR, tracking and matching. The dashboard reuses its SDL background
+texture instead of creating/destroying a GPU texture every frame.
+
+With `--verbose`, the diagnostic log reports
+`[CAM-DETECT-TIME]` (candidate count, pass dimensions and detector cost)
+and `[CAM-FRAME-TIME]` every 30 frames (camera read, focus/detection,
+metadata/presentation, render and total microseconds). The existing
+`[CAM-ART-QUERY]` and `[CAM-PRINT-QUERY]` entries distinguish SQL
+latency from ORB work. These numbers are necessary to determine whether
+remaining latency comes from camera delivery, contour detection, capture
+stabilization or database search. Failed detection timings are sampled
+to avoid flooding verbose logs.
+
+The changes are source-level only. No BCC64X build, physical dark-card
+sample, split-card image or measured before/after recognition rate was
+available in this environment. Consequently **accuracy and throughput
+improvements remain unverified** until replay/physical tests on Windows.
+
 ## 2026-11-14: split-west first-face matching and interactive button feedback
 
 The live SDL2/Skia dashboard now uses one shared button hit-test function
