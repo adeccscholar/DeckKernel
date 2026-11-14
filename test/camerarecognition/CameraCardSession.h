@@ -151,9 +151,11 @@ namespace deckkernel::camera {
          auto const aNow=steady_clock::now();
          double const flElapsed=duration<double>(aNow-m_started).count();
          if(flElapsed>=3.0)return true;
-         if(m_uSamples<8 || flElapsed<0.55 ||
+         if(m_uSamples<6 || flElapsed<0.40 ||
             !m_bestMetrics.UsableForMatching())return false;
-         return duration<double>(aNow-m_lastImproved).count()>=0.35;
+         // The sharpest frame is already retained; a short period with no
+         // printed-detail improvement suffices for a fixed-focus camera.
+         return duration<double>(aNow-m_lastImproved).count()>=0.22;
       }
 
       /**
