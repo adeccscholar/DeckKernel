@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <array>
 #include <optional>
+#include <utility>
 
 namespace deckkernel::camera {
    struct SplitWestLayout {
@@ -81,31 +82,96 @@ namespace deckkernel::camera {
       }
       bool const boSharedType=iSharedType>=0 &&
          flBestSharedCoverage>=0.40;
+      // Prefer fully outlined, measured rectangles for traditional splits.
+      bool boMeasured=true;
       for(int iFace=0;iFace<2;++iFace) {
          cv::Mat const aFace=aResult.aAligned(aResult.arrFaces[iFace]);
          FrameGeometry const aGeometry=DetectFrameGeometry(aFace);
-         // Each half needs its own upper frame, but the lower type bar
-         // may be a single shared physical line across both halves.
-         if(!aGeometry.optTitle)return std::nullopt;
+         if(!aGeometry.optTitle) {
+            boMeasured=false;
+            break;
+         }
          cv::Rect const& aTitle=*aGeometry.optTitle;
          int const iTop=aTitle.br().y+
             std::max(2,aFace.rows/120);
          int const iTypeY=aGeometry.optType?
             aGeometry.optType->y:
             boSharedType?iSharedType:-1;
-         if(iTypeY<0)return std::nullopt;
          int const iBottom=iTypeY-
             std::max(2,aFace.rows/120);
-         if(iBottom-iTop<aFace.rows/5 ||
-            iBottom-iTop>aFace.rows*65/100)
-            return std::nullopt;
-         int const iLeft=aTitle.x;
-         int const iRight=aTitle.br().x;
-         if(iRight-iLeft<aFace.cols*55/100)
-            return std::nullopt;
+         if(iTypeY<0 || iBottom-iTop<aFace.rows/5 ||
+            iBottom-iTop>aFace.rows*65/100 ||
+            aTitle.width<aFace.cols*55/100) {
+            boMeasured=false;
+            break;
+         }
          aResult.arrArtwork[iFace]=cv::Rect(
-            aResult.arrFaces[iFace].x+iLeft,iTop,
-            iRight-iLeft,iBottom-iTop);
+            aResult.arrFaces[iFace].x+aTitle.x,iTop,
+            aTitle.width,iBottom-iTop);
+      }
+      if(boMeasured)return aResult;
+
+      // Some real split/room printings have unclosed or shared title/type
+      // frames. Validate two independent horizontal separators per face,
+      // plus matching type-band heights, before accepting a split. This
+      // fallback never rotates or changes the outer physical card.
+      struct FaceSeparators {
+         int iTitle{};
+         int iType{};
+         double flTitle{};
+         double flType{};
+      };
+      std::array<FaceSeparators,2> arrSeparators{};
+      for(int iFace=0;iFace<2;++iFace) {
+         cv::Mat const aFace=aResult.aAligned(aResult.arrFaces[iFace]);
+         cv::Mat aSample,aFaceGray,aGradient;
+         cv::resize(aFace,aSample,cv::Size(240,336),
+            0.0,0.0,cv::INTER_AREA);
+         if(aSample.channels()==4)
+            cv::cvtColor(aSample,aFaceGray,cv::COLOR_BGRA2GRAY);
+         else if(aSample.channels()==3)
+            cv::cvtColor(aSample,aFaceGray,cv::COLOR_BGR2GRAY);
+         else
+            aFaceGray=aSample;
+         cv::Sobel(aFaceGray,aGradient,CV_16S,0,1,3);
+         auto const FindSeparator=[&](int iFirst,int iLast) {
+            double flBest{};
+            int iBest=-1;
+            for(int iY=iFirst;iY<iLast;++iY) {
+               short const* pRow=aGradient.ptr<short>(iY);
+               unsigned uEdges{};
+               for(int iX=24;iX<216;++iX)
+                  uEdges+=std::abs(static_cast<int>(pRow[iX]))>=85;
+               double const flCoverage=static_cast<double>(uEdges)/192.0;
+               if(flCoverage>flBest) {
+                  flBest=flCoverage;
+                  iBest=iY;
+               }
+            }
+            return std::pair<int,double>{iBest,flBest};
+         };
+         auto const [iTitle,flTitle]=FindSeparator(14,68);
+         auto const [iType,flType]=FindSeparator(134,255);
+         if(iTitle<0 || iType<0 || flTitle<0.58 || flType<0.60)
+            return std::nullopt;
+         arrSeparators[iFace]=FaceSeparators{iTitle,iType,flTitle,flType};
+      }
+      // Shared or mirrored type bands should occur at essentially the same
+      // vertical position in the two independently framed halves.
+      if(std::abs(arrSeparators[0].iType-arrSeparators[1].iType)>29)
+         return std::nullopt;
+      for(int iFace=0;iFace<2;++iFace) {
+         cv::Rect const& aFace=aResult.arrFaces[iFace];
+         int const iTop=aFace.height*arrSeparators[iFace].iTitle/336+
+            std::max(2,aFace.height/50);
+         int const iBottom=aFace.height*arrSeparators[iFace].iType/336-
+            std::max(2,aFace.height/50);
+         if(iBottom-iTop<aFace.height/5 ||
+            iBottom-iTop>aFace.height*65/100)
+            return std::nullopt;
+         int const iMargin=std::max(2,aFace.width/10);
+         aResult.arrArtwork[iFace]=cv::Rect(
+            aFace.x+iMargin,iTop,aFace.width-2*iMargin,iBottom-iTop);
       }
       return aResult;
    }
