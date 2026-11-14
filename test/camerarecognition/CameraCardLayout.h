@@ -53,6 +53,8 @@ namespace deckkernel::camera {
    separators must be visible. A landscape artwork rotated into portrait
    by minAreaRect geometry does not acquire these missing text/name bands.
    \param aRectified A geometrically normalized physical-card candidate.
+   \param boCheckBothDirections Evaluate both rotations only in automatic mode.
+   \param boFixedBottomUp In fixed Bottom mode, evaluate the inverted physical frame.
    \returns Whole-card structural evidence and optional orientation.
    \throw cv::Exception If OpenCV processing fails.
    \note This classifier is deliberately restricted to framed standard cards.
@@ -60,7 +62,9 @@ namespace deckkernel::camera {
    physical-card validation globally.
    */
    [[nodiscard]] inline WholeCardFrameEvidence InspectWholeCardFrame(
-      cv::Mat const& aRectified) {
+      cv::Mat const& aRectified,
+      bool boCheckBothDirections=true,
+      bool boFixedBottomUp=false) {
       WholeCardFrameEvidence aEvidence;
       if(aRectified.empty() || aRectified.cols<80 ||
          aRectified.rows<110)return aEvidence;
@@ -109,10 +113,14 @@ namespace deckkernel::camera {
          return Direction{flTitle,flText,
             std::min(flTitle,flText)+0.15*(flTitle+flText),boValid};
       };
-      Direction const aNormal=Evaluate(aGray);
-      cv::Mat aInverted;
-      cv::rotate(aGray,aInverted,cv::ROTATE_180);
-      Direction const aReverse=Evaluate(aInverted);
+      Direction const aNormal=boFixedBottomUp?
+         Direction{}:Evaluate(aGray);
+      Direction aReverse;
+      if(boCheckBothDirections || boFixedBottomUp) {
+         cv::Mat aInverted;
+         cv::rotate(aGray,aInverted,cv::ROTATE_180);
+         aReverse=Evaluate(aInverted);
+      }
       aEvidence.boWholeCard=aNormal.boValid || aReverse.boValid;
       if(!aEvidence.boWholeCard)return aEvidence;
       bool const boReverse=aReverse.boValid && (!aNormal.boValid ||
