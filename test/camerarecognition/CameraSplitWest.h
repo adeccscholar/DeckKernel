@@ -155,7 +155,9 @@ namespace deckkernel::camera {
             static_cast<double>(uEdges)/
                std::max(1,iSharedBottom-iArtStart));
       }
-      if(flDivider<0.16)return std::nullopt;
+      // Some Room cards have a softly printed central artwork divider.
+      // The paired title/art lines already establish both face layouts.
+      if(flDivider<0.11)return std::nullopt;
 
       // A single title across both faces has no comparable central divider
       // in its title band. Detect that separately from the artwork divider.
