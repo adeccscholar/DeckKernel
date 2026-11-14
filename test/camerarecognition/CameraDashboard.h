@@ -597,6 +597,11 @@ public:
          Text(pCanvas,30.f,flPaneTop+flPaneHeight-18.f,
             "Captured: locked | "+m_strOrientation,14.f,0xff9dddb9);
       }
+      else {
+         Text(pCanvas,30.f,flPaneTop+flPaneHeight-18.f,
+            "Not detected? Press D to save diagnostic images",
+            12.f,0xff9dddb9);
+      }
       Text(pCanvas,flRight+14.f,flPaneTop+flPaneHeight-18.f,
          Clip(m_strReferenceLabel,static_cast<int>(flPaneWidth-26.f)),
          14.f,0xff9dddb9);
