@@ -1960,7 +1960,7 @@ namespace deckkernel::camera {
          bool boKnownUpright) {
          {
             std::lock_guard const aLock(m_mutex);
-            if(m_uActiveEvent.load(std::memory_order_rel)!=uEvent)return;
+            if(m_uActiveEvent.load(std::memory_order_relaxed)!=uEvent)return;
             Task aTask;
             aTask.uEvent=uEvent;
             aTask.aCard=aCard.clone();
