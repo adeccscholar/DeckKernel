@@ -3898,6 +3898,7 @@ int CameraApplicationMain(int argc,char** argv) {
       bool appliedFlip=false;
       auto const beginning=interval;
       while(preview.Messages()){
+         auto const aFrameStart=std::chrono::steady_clock::now();
 #if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
          if(preview.ConsumeOptions()) {
             // Open the existing SDL2/Skia settings window without changing
@@ -3957,6 +3958,7 @@ int CameraApplicationMain(int argc,char** argv) {
          }
          failures=0;
          ++count;
+         auto const aFrameRead=std::chrono::steady_clock::now();
          if(preview.ConsumeFocusReset()) {
             // Recalibrate only between physical sessions: never change
             // optical settings while examining a frozen card.
@@ -3999,6 +4001,7 @@ int CameraApplicationMain(int argc,char** argv) {
          } else {
             ++blackFrames;
          }
+         auto const aFrameDetection=std::chrono::steady_clock::now();
          // PHASE 06-09: asynchronous matching and OCR continue while
          // the physical camera detector is paused on its frozen snapshot.
          processor.PollRecognition();
@@ -4088,6 +4091,7 @@ int CameraApplicationMain(int argc,char** argv) {
             processor.CandidateIndex(),processor.CandidateCount(),
             processor.SelectionConfirmed());
 #endif
+         auto const aFramePresentation=std::chrono::steady_clock::now();
          // Only a confirmed card belongs in the right panel. Do not show
          // a transient candidate or a different contour after removal.
 #if defined(DECKKERNEL_CAMERA_HAS_SDL_SKIA)
@@ -4098,6 +4102,21 @@ int CameraApplicationMain(int argc,char** argv) {
             *camera,fps,signal.brightness);
 #endif
          auto now=std::chrono::steady_clock::now();
+         if(verbose && count%30==0) {
+            auto const Micros=[](auto const& aStart,auto const& aEnd) {
+               return std::chrono::duration_cast<
+                  std::chrono::microseconds>(aEnd-aStart).count();
+            };
+            deckkernel::camera::Trace(
+               "[CAM-FRAME-TIME] frame={} capture={}us detect+focus={}us "
+               "metadata+preview={}us render={}us total={}us "
+               "locked={} tracking={}",
+               count,Micros(aFrameStart,aFrameRead),
+               Micros(aFrameRead,aFrameDetection),
+               Micros(aFrameDetection,aFramePresentation),
+               Micros(aFramePresentation,now),Micros(aFrameStart,now),
+               processor.CardLocked(),processor.TrackingActive());
+         }
          double const seconds=std::chrono::duration<double>(now-interval).count();
          if(seconds>=2.0){
             fps=count/seconds;
